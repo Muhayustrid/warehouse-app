@@ -425,6 +425,57 @@
 	box-shadow: none;
 }
 
+/* W19: penanda grup + dialog grup (box bersama utk N WO) */
+.wzrq-grp {
+	font-weight: 400;
+}
+.wzrq-grows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.wzrq-grow {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.wzrq-grow .wzrq-gnum {
+	width: 64px;
+	flex-shrink: 0;
+	font-size: 12px;
+	font-weight: 600;
+}
+.wzrq-grow .wzrq-gkg,
+.wzrq-grow .wzrq-gqty {
+	width: 130px;
+	flex-shrink: 0;
+}
+.wzrq-grow .wzrq-gx {
+	flex-shrink: 0;
+	padding: 0 6px;
+	color: var(--text-muted);
+}
+.wzrq-grow .wzrq-gx:hover {
+	color: var(--text-color);
+}
+.wzrq-gaddbox {
+	padding-left: 0;
+	font-size: 12px;
+	box-shadow: none;
+}
+.wzrq-galloc {
+	margin: 8px 0 0;
+	font-size: 12px;
+}
+@media (max-width: 640px) {
+	.wzrq-grow .wzrq-gkg,
+	.wzrq-grow .wzrq-gqty {
+		width: auto;
+		flex: 1;
+		min-width: 0;
+	}
+}
+
 /* --- layar kecil: papan juga dibuka dari HP/tablet di area gudang --- */
 @media (max-width: 900px) {
 	.wzrq-root {

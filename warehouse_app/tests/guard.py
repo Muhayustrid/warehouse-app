@@ -48,7 +48,10 @@ COMPANY_CDP_BASELINE = (
 )
 
 
-def count_residue(prefix=PREFIX):
+def count_residue(prefix=PREFIX, extra_doctypes=None):
+	"""extra_doctypes: {doctype: [nama persis]} — dokumen bernama non-prefix
+	(mis. Handover Box Plan HBP-#####) dihitung dari daftar nama yang
+	di-track gate pemanggil. Signature lama (prefix saja) tetap jalan."""
 	like = prefix + "%"
 	counts = {
 		# Item dihitung dari name ATAU item_code (situs bisa memakai naming series,
@@ -79,6 +82,8 @@ def count_residue(prefix=PREFIX):
 	# Kolom `for_user` tidak ada di semua versi (v16 di situs ini: tidak ada).
 	if frappe.db.has_column("Activity Log", "for_user"):
 		counts["Activity Log"] += frappe.db.count("Activity Log", {"for_user": ("like", like)})
+	for doctype, names in (extra_doctypes or {}).items():
+		counts[doctype] = sum(1 for name in names or [] if frappe.db.exists(doctype, name))
 	return counts
 
 

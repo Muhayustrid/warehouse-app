@@ -15,6 +15,11 @@
 # parameterized + perm user ditegakkan, jadi tidak ada jalur injection;
 # "Item" adalah field virtual yang di-expand ke production_item via
 # pencarian nama/kode item (bahasa gudang adalah nama item).
+#
+# W19: flag grup — group_item (item di Warehouse App Settings) + box_plan /
+# group_boxes / group_size dari custom_handover_box_plan MR anggota. Bacaan
+# saja; group create/cancel tetap endpoint production_app. Doctype/kolom
+# production_app yang belum ter-migrate (site baru) -> flag netral.
 
 import json
 
@@ -143,7 +148,9 @@ def requestable_work_orders(search=None, filters=None, limit_start=0):
 			as_list=True,
 		)
 	)
-	mr_info, mr_dikirim = _active_request_map(rows)
+	mr_info, mr_dikirim, mr_plan = _active_request_map(rows)
+	group_items = _group_items()
+	plan_info = _group_plan_map(sorted({p for p in mr_plan.values() if p}))
 
 	for r in rows:
 		r.item_name = item_names.get(r.production_item) or r.production_item
@@ -156,6 +163,12 @@ def requestable_work_orders(search=None, filters=None, limit_start=0):
 		# yang belum pernah diminta (operator kebingungan); UI kasih pill
 		# "Shipped" + baris non-selectable.
 		r.request_shipped = bool(mr and docstatus == 1 and mr in mr_dikirim)
+		# W19: info grup box bersama (tanpa grup -> None/[]/0).
+		r.box_plan = mr_plan.get(mr) if mr else None
+		info = plan_info.get(r.box_plan) or {}
+		r.group_boxes = info.get("boxes") or []
+		r.group_size = info.get("size") or 0
+		r.group_item = r.production_item in group_items
 
 	# Satuan qty request mengikuti display UOM produksi (mis. Pcs -> Pack);
 	# logika konversi TIDAK diduplikasi — pakai _enrich_units production_app,
@@ -285,21 +298,19 @@ def _item_filter(operator, value):
 
 
 def _active_request_map(rows):
-	"""(docstatus, status) per MR + set MR yang sudah ada SE submitted."""
+	"""(docstatus, status) per MR + set MR yang sudah ada SE submitted +
+	MR -> custom_handover_box_plan (kolom production_app bisa belum ada)."""
 	mr_names = [
 		r.custom_handover_material_request for r in rows if r.custom_handover_material_request
 	]
 	if not mr_names:
-		return {}, set()
-	mr_info = {
-		name: (docstatus, status)
-		for name, docstatus, status in frappe.get_all(
-			"Material Request",
-			filters=[["name", "in", mr_names]],
-			fields=["name", "docstatus", "status"],
-			as_list=True,
-		)
-	}
+		return {}, set(), {}
+	fields = ["name", "docstatus", "status"]
+	if frappe.db.has_column("Material Request", "custom_handover_box_plan"):
+		fields.append("custom_handover_box_plan")
+	mr_rows = frappe.get_all("Material Request", filters=[["name", "in", mr_names]], fields=fields)
+	mr_info = {d.name: (d.docstatus, d.status) for d in mr_rows}
+	mr_plan = {d.name: d.get("custom_handover_box_plan") for d in mr_rows}
 	mr_dikirim = set(
 		frappe.get_all(
 			"Stock Entry Detail",
@@ -311,4 +322,66 @@ def _active_request_map(rows):
 			pluck="material_request",
 		)
 	)
-	return mr_info, mr_dikirim
+	return mr_info, mr_dikirim, mr_plan
+
+
+def _group_items():
+	"""Set item group-request dari Warehouse App Settings. Doctype belum ada
+	(site baru sebelum migrate) -> anggap kosong; error lain dibiarkan naik
+	supaya bug nyata tidak tersembunyi di balik flag netral."""
+	if not frappe.db.exists("DocType", "Warehouse App Group Item"):
+		return set()
+	return set(
+		frappe.get_all(
+			"Warehouse App Group Item",
+			filters={"parent": "Warehouse App Settings", "parenttype": "Warehouse App Settings"},
+			pluck="item",
+			limit=0,
+		)
+	)
+
+
+def _group_plan_map(plan_names):
+	"""plan -> {boxes, size}: baris child {kg, qty} (dibaca dari field Table
+	pertama Handover Box Plan — nama field child tidak dikontrak) + jumlah MR
+	anggota docstatus 1. Doctype/kolom production_app yang belum ter-migrate
+	-> {} (flag grup netral di papan); error lain dibiarkan naik."""
+	if not plan_names:
+		return {}
+	if not frappe.db.exists("DocType", "Handover Box Plan"):
+		return {}
+	if not frappe.db.has_column("Material Request", "custom_handover_box_plan"):
+		return {}
+	child_dt = next(
+		(
+			df.options
+			for df in frappe.get_meta("Handover Box Plan").fields
+			if df.fieldtype == "Table"
+		),
+		None,
+	)
+	if not child_dt:
+		return {}
+	boxes = {}
+	for parent, kg, qty in frappe.get_all(
+		child_dt,
+		filters={"parent": ("in", plan_names), "parenttype": "Handover Box Plan"},
+		fields=["parent", "kg", "qty"],
+		order_by="parent asc, idx asc",
+		as_list=True,
+		limit=0,
+	):
+		boxes.setdefault(parent, []).append({"kg": flt(kg), "qty": cint(qty)})
+	plan_hits = frappe.get_all(
+		"Material Request",
+		filters=[
+			["custom_handover_box_plan", "in", plan_names],
+			["docstatus", "=", 1],
+		],
+		pluck="custom_handover_box_plan",
+		limit=0,
+	)
+	sizes = {}
+	for p in plan_hits:
+		sizes[p] = sizes.get(p, 0) + 1
+	return {p: {"boxes": boxes.get(p) or [], "size": cint(sizes.get(p, 0))} for p in plan_names}

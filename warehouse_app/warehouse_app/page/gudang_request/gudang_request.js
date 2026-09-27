@@ -10,6 +10,9 @@
 // = hasil WO); (2) panel filter ala list view ERPNext: baris
 // [Field][operator][Nilai] + Tambah Filter — field dibatasi whitelist
 // server (filter_fields), field Item virtual dicocokkan via nama/kode item.
+// W19: group request — pilih ≥2 WO satu item yang terdaftar grup, satu aksi
+// "Create Group Request" dengan box BERSAMA (K box utk N WO) lewat endpoint
+// create_group_request/cancel_group_request production_app.
 
 // state filter modul-level (satu instance page per sesi)
 let WZRQ_FILTERS = []; // [{field, operator, value(array utk between)}]
@@ -170,7 +173,13 @@ frappe.pages['gudang_request'].on_page_load = function (wrapper) {
 	});
 
 	$main.on('click', '.wzrq-cancel', function () {
-		cancel_request($(this).attr('data-mr'), reload);
+		const $btn = $(this);
+		// W19: anggota grup — batal SELURUH grup via cancel_group_request
+		if ($btn.attr('data-plan')) {
+			cancel_group_request($btn.attr('data-plan'), Number($btn.attr('data-size')) || 0, reload);
+		} else {
+			cancel_request($btn.attr('data-mr'), reload);
+		}
 	});
 
 	$main.on('change', '.wzrq-check-all', function () {
@@ -184,6 +193,12 @@ frappe.pages['gudang_request'].on_page_load = function (wrapper) {
 
 	// --- aksi massal ---
 	$main.on('click', '.wzrq-bulk-request', () => {
+		// W19: seleksi ≥2 WO satu item grup -> dialog box BERSAMA, bukan per WO
+		const group_rows = $main_page.data('wzrq_group');
+		if (group_rows && group_rows.length) {
+			group_dialog(group_rows, reload);
+			return;
+		}
 		const wos = wzrq_rows($main_page).filter((r) => selected.has(r.name));
 		if (wos.length) {
 			bulk_dialog(wos, reload);
@@ -532,12 +547,19 @@ const WZRQ_ALL_COLUMNS = [
 		key: 'status',
 		label: __('Status'),
 		cls: 'wzrq-col-status',
-		cell: (r) =>
-			r.request_active
-				? `<span class="indicator-pill orange">${__('Requested')} · <a href="/app/material-request/${wzrq_esc(r.custom_handover_material_request)}">${wzrq_esc(r.custom_handover_material_request)}</a></span>`
-				: r.request_shipped
-					? `<span class="indicator-pill green">${__('Shipped')} · <a href="/app/material-request/${wzrq_esc(r.custom_handover_material_request)}">${wzrq_esc(r.custom_handover_material_request)}</a></span>`
-					: `<span class="indicator-pill blue">${wzrq_esc(r.status)}</span>`,
+		cell: (r) => {
+			// W19: anggota grup box bersama — penanda kecil setelah link MR
+			const grp = r.box_plan
+				? ` <span class="text-muted wzrq-grp">· ${__('Group ({0} WO)', [r.group_size || 0])}</span>`
+				: '';
+			if (r.request_active) {
+				return `<span class="indicator-pill orange">${__('Requested')} · <a href="/app/material-request/${wzrq_esc(r.custom_handover_material_request)}">${wzrq_esc(r.custom_handover_material_request)}</a>${grp}</span>`;
+			}
+			if (r.request_shipped) {
+				return `<span class="indicator-pill green">${__('Shipped')} · <a href="/app/material-request/${wzrq_esc(r.custom_handover_material_request)}">${wzrq_esc(r.custom_handover_material_request)}</a>${grp}</span>`;
+			}
+			return `<span class="indicator-pill blue">${wzrq_esc(r.status)}</span>`;
+		},
 	},
 ];
 
@@ -680,11 +702,28 @@ function wzrq_render($scope, rows) {
 function wzrq_update_bulk($scope, selected) {
 	const rows = wzrq_rows($scope);
 	const selectable = rows.filter((r) => !r.request_active && !r.request_shipped);
-	const n = selectable.filter((r) => selected.has(r.name)).length;
+	const sel_rows = selectable.filter((r) => selected.has(r.name));
+	const n = sel_rows.length;
 	const $main = $scope.find('.layout-main');
 	$main.find('.wzrq-bulk-count').text(n ? __('{0} selected', [n]) : '');
 	$main.find('.wzrq-bulk-request').prop('disabled', !n);
-	$main.find('.wzrq-bulk-request').text(n ? __('Create Request ({0})', [n]) : __('Create Request'));
+	// W19: trigger grup — ≥2 baris, satu item yang sama, item terdaftar grup.
+	// Dinilai ulang di SETIAP perubahan seleksi (fungsi ini satu-satunya
+	// tempat tombol bulk diperbarui).
+	const group_rows =
+		n >= 2 &&
+		sel_rows.every((r) => r.group_item) &&
+		new Set(sel_rows.map((r) => r.production_item)).size === 1
+			? sel_rows
+			: null;
+	$scope.data('wzrq_group', group_rows);
+	$main.find('.wzrq-bulk-request').text(
+		group_rows
+			? __('Create Group Request ({0})', [n])
+			: n
+				? __('Create Request ({0})', [n])
+				: __('Create Request'),
+	);
 	$main.find('.wzrq-bulk-clear').toggle(n > 0);
 	$main
 		.find('.wzrq-check-all')
@@ -701,7 +740,7 @@ function wzrq_row_html(r, cols) {
 	const done = active || r.request_shipped; // requested/shipped: non-selectable
 	const mr = r.custom_handover_material_request;
 	const aksi = active
-		? `<button class="btn btn-xs btn-default wzrq-cancel" data-mr="${wzrq_esc(mr)}">${__('Cancel')}</button>`
+		? `<button class="btn btn-xs btn-default wzrq-cancel" data-mr="${wzrq_esc(mr)}"${r.box_plan ? ` data-plan="${wzrq_esc(r.box_plan)}" data-size="${Number(r.group_size || 0)}"` : ''}>${__('Cancel')}</button>`
 		: '';
 	return `
 		<tr class="wzrq-row${done ? ' is-active' : ''}" data-wo="${wzrq_esc(r.name)}">
@@ -1008,6 +1047,263 @@ function cancel_request(material_request, done) {
 			freeze_message: __('Cancelling request...'),
 		}).then(() => {
 			frappe.show_alert({ message: __('Request cancelled'), indicator: 'orange' });
+			done && done();
+		});
+	});
+}
+
+// ---------------- W19: group request (box bersama utk N WO satu item)
+
+// Dialog alokasi box GRUP: K box dibagi bersama N WO — tanpa baris per WO.
+// Baris = [Box # · kg · qty]; alokasi harus tepat total unit (live hint,
+// tombol utama disabled bila X ≠ Y). Server tetap otoritatif.
+function group_dialog(wos, done) {
+	// uom input qty: preferensi tersimpan -> display uom baris pertama
+	// (pola bulk_dialog); satu item -> satu faktor konversi utk semua baris
+	let dialog_uom = wzrq_load('wzrq_dialog_uom');
+	const uom_opts = wzrq_uom_options(wos);
+	if (!uom_opts.includes(dialog_uom)) {
+		dialog_uom = (wos[0] && (wos[0].display_uom || wos[0].stock_uom)) || '';
+	}
+	const r0 = wos[0] || {};
+	const factor = Number(r0.display_conversion_factor || 1);
+	const f = isFinite(factor) && factor > 0 ? factor : 1;
+	const item_name = r0.item_name || r0.production_item || '';
+	const is_disp_uom = (uom) =>
+		!!(r0.display_uom && r0.display_uom !== r0.stock_uom && f > 0 && uom === r0.display_uom);
+	const total_in = (uom) =>
+		wos.reduce(
+			(s, r) =>
+				s +
+				(wzrq_is_display_uom(r, uom)
+					? Number(r.expected_units != null ? r.expected_units : 0)
+					: Math.round(Number(r.produced_qty || 0))),
+			0,
+		);
+
+	const d = new frappe.ui.Dialog({
+		title: __('Group Box Allocation — {0} · {1} Work Orders', [item_name, wos.length]),
+		size: 'large',
+	});
+	d.$body.html(`
+		<p class="text-muted wzrq-dt-hint">
+			<span>${__('Shared boxes across {0} Work Orders of {1} — allocate the total exactly.', [wos.length, wzrq_esc(item_name)])} <span class="wzrq-gtotal"></span></span>
+			<span class="wzrq-dt-uom">${__('Qty in')} <select class="form-control wzrq-duom">${uom_opts
+				.map((o) => `<option value="${wzrq_esc(o)}"${o === dialog_uom ? ' selected' : ''}>${wzrq_esc(o)}</option>`)
+				.join('')}</select></span>
+		</p>
+		<div class="wzrq-grows"></div>
+		<button type="button" class="btn btn-link wzrq-gaddbox">+ ${__('Add Box')}</button>
+		<p class="text-muted wzrq-galloc"></p>
+	`);
+
+	function grow_html(qty) {
+		return `<div class="wzrq-grow">
+			<span class="wzrq-gnum text-muted"></span>
+			<input type="number" class="form-control wzrq-gkg" min="0" step="0.01" placeholder="kg" title="${__('Box kg')}" />
+			<input type="number" class="form-control wzrq-gqty" min="0" step="any" value="${qty == null ? '' : qty}" title="${__('Box qty')}" />
+			<button type="button" class="btn btn-link wzrq-gx" title="${__('Remove box')}">×</button>
+		</div>`;
+	}
+	function add_grow(qty) {
+		d.$body.find('.wzrq-grows').append(grow_html(qty));
+		renumber_grows();
+		update_galloc();
+	}
+	// nomor box mengikuti urutan DOM; × hanya saat >1 baris. Hanya label/
+	// tombol yang disentuh — nilai input user tidak diotak-atik.
+	function renumber_grows() {
+		const $rows = d.$body.find('.wzrq-grows .wzrq-grow');
+		$rows.each((i, el) => $(el).find('.wzrq-gnum').text(__('Box {0}', [i + 1])));
+		$rows.find('.wzrq-gx').toggle($rows.length > 1);
+	}
+
+	add_grow(total_in(dialog_uom));
+
+	d.$body.on('click', '.wzrq-gaddbox', () => {
+		add_grow('');
+		d.$body.find('.wzrq-grows .wzrq-grow:last .wzrq-gkg').trigger('focus');
+	});
+	d.$body.on('click', '.wzrq-gx', function () {
+		$(this).closest('.wzrq-grow').remove();
+		renumber_grows();
+		update_galloc();
+	});
+
+	// ganti uom qty: KONVERSI nilai terinput display<->stock (pola bulk_dialog)
+	d.$body.on('change', '.wzrq-duom', function () {
+		const next = this.value;
+		const to_display = is_disp_uom(next) && !is_disp_uom(dialog_uom);
+		const to_stock = is_disp_uom(dialog_uom) && !is_disp_uom(next);
+		if (to_display || to_stock) {
+			d.$body.find('.wzrq-gqty').each(function () {
+				const v = parseFloat($(this).val());
+				if (!isFinite(v)) {
+					return; // input kosong dibiarkan kosong
+				}
+				$(this).val(String(wzrq_round3(to_display ? v / f : v * f)));
+			});
+		}
+		dialog_uom = next;
+		wzrq_store('wzrq_dialog_uom', next);
+		update_galloc();
+	});
+
+	// live hint "Allocated X of Y {uom}" + primary disabled bila belum pas
+	function update_galloc() {
+		if (d.wzrq_in_flight) {
+			return; // jangan sentuh state tombol selama submit berjalan
+		}
+		const uom = d.$body.find('.wzrq-duom').val() || dialog_uom;
+		const disp = is_disp_uom(uom);
+		const tot = total_in(uom);
+		let x = 0;
+		let ok = true;
+		d.$body.find('.wzrq-grow').each(function () {
+			const kg_raw = $(this).find('.wzrq-gkg').val();
+			const q_raw = $(this).find('.wzrq-gqty').val();
+			const kg = parseFloat(kg_raw);
+			const q = parseFloat(q_raw);
+			if (kg_raw === '' || q_raw === '' || !isFinite(kg) || kg <= 0 || !isFinite(q) || q <= 0) {
+				ok = false;
+				return;
+			}
+			// display mode kirim parseInt — desimal di hint akan berbohong soal total
+			if (disp && Math.abs(q - Math.round(q)) > 1e-6) {
+				ok = false;
+				return;
+			}
+			x += q;
+		});
+		d.$body
+			.find('.wzrq-gtotal')
+			.text(` ${__('Total {0} {1}', [Number(tot).toLocaleString('en-US'), uom])}`);
+		d.$body.find('.wzrq-galloc').text(
+			__('Allocated {0} of {1} {2}', [Number(x).toLocaleString('en-US'), Number(tot).toLocaleString('en-US'), uom]),
+		);
+		d.$wrapper.find('.modal .btn-primary').prop('disabled', !(ok && Math.abs(x - tot) < 1e-6));
+	}
+	d.$body.on('input change', '.wzrq-gkg, .wzrq-gqty', update_galloc);
+
+	d.set_primary_action(__('Create Group Request'), () => submit_group(d, wos, dialog_uom, is_disp_uom, f, r0, done));
+	d.show();
+	update_galloc();
+}
+
+// qty input (uom terpilih) -> integer display UOM persis pola per-WO:
+// display = parseInt; stock = konversi + cek Pack bulat (abort sebelum kirim)
+async function submit_group(d, wos, dialog_uom, is_disp_uom, f, r0, done) {
+	if (d.wzrq_in_flight) {
+		return; // satu call dalam satu waktu — dobel-klik / input race
+	}
+	d.wzrq_in_flight = true;
+	try {
+		await _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done);
+	} finally {
+		d.wzrq_in_flight = false;
+	}
+}
+
+async function _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done) {
+	const uom = d.$body.find('.wzrq-duom').val() || dialog_uom;
+	const disp = is_disp_uom(uom);
+	const boxes = [];
+	const not_whole = [];
+	let invalid = false;
+	d.$body.find('.wzrq-grow').each(function (i) {
+		const kg_raw = $(this).find('.wzrq-gkg').val();
+		const q_raw = $(this).find('.wzrq-gqty').val();
+		if (kg_raw === '' || kg_raw === null || q_raw === '' || q_raw === null) {
+			invalid = true;
+			return;
+		}
+		const stock_uom = r0.stock_uom || '';
+		const display_uom = r0.display_uom || '';
+		let qty_units;
+		if (disp) {
+			qty_units = parseInt(q_raw, 10);
+		} else {
+			const v = parseFloat(q_raw);
+			const x = v / f;
+			const whole = Math.round(x);
+			if (Math.abs(x - whole) > 1e-6) {
+				not_whole.push(
+					__('Box {0}: {1} {2} is not a whole number of {3} (1 {3} = {4} {2})', [
+						i + 1,
+						v.toLocaleString('en-US'),
+						stock_uom,
+						display_uom || uom,
+						f,
+					]),
+				);
+				return;
+			}
+			qty_units = whole;
+		}
+		boxes.push({ kg: parseFloat(kg_raw), qty: qty_units });
+	});
+	if (invalid) {
+		frappe.msgprint({
+			title: __('Incomplete data'),
+			indicator: 'red',
+			message: __('Fill in kg and qty for every box.'),
+		});
+		return;
+	}
+	if (not_whole.length) {
+		// qty tidak membentuk Pack bulat: nol request terkirim
+		frappe.msgprint({
+			title: __('Invalid quantity'),
+			indicator: 'red',
+			message:
+				not_whole.length === 1
+					? not_whole[0]
+					: `<ul>${not_whole.map((m) => `<li>${m}</li>`).join('')}</ul>`,
+		});
+		return;
+	}
+
+	// v16 new desk tidak punya frappe.freeze — matikan tombol saja selama
+	// submit supaya tidak dobel-klik.
+	const $btn = d.$wrapper.find('.modal .btn-primary');
+	$btn.prop('disabled', true);
+	try {
+		const r = await frappe.call({
+			method: 'production_app.api.handover.create_group_request',
+			args: {
+				work_orders: JSON.stringify(wos.map((w) => w.name)),
+				boxes: JSON.stringify(boxes),
+			},
+		});
+		d.hide();
+		frappe.msgprint({
+			title: __('Group request created'),
+			indicator: 'green',
+			message: __('Group request created: {0} · {1} Work Orders · {2} boxes', [
+				wzrq_esc((r.message && r.message.box_plan) || ''),
+				wos.length,
+				boxes.length,
+			]),
+		});
+		done && done();
+	} catch (e) {
+		// server menolak: dialog tetap terbuka, tidak ada state parsial
+		frappe.msgprint({ title: __('Failed'), indicator: 'red', message: wzrq_err_text(e) });
+	} finally {
+		$btn.prop('disabled', false);
+	}
+}
+
+// batal grup box bersama: satu endpoint utk SEMUA MR anggota
+function cancel_group_request(box_plan, size, done) {
+	frappe.confirm(__('Cancel the ENTIRE group ({0} Work Orders)? Boxes are shared — cancel all.', [size]), () => {
+		frappe.call({
+			method: 'production_app.api.handover.cancel_group_request',
+			args: { box_plan: box_plan },
+			freeze: true,
+			freeze_message: __('Cancelling group request...'),
+		}).then(() => {
+			frappe.show_alert({ message: __('Group request cancelled'), indicator: 'orange' });
 			done && done();
 		});
 	});
