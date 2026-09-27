@@ -331,9 +331,40 @@ def _run_gate(check):
 		frappe.set_user("Administrator")
 		raise GateAborted()
 
-	# --- create_request sebagai user gudang ---
+	# --- Negative W18: Box 3 setengah isi (kg tanpa qty) ditolak, nol tulisan.
+	# Harus SEBELUM create_request utama — guard "sudah aktif" akan menutupi
+	# validasi invariant box bila WO sudah punya permintaan. ---
 	try:
-		res = create_request(work_order=TRACKED["wo"][0], box_1=50, box_1_qty=QTY, box_2=0, box_2_qty=0)
+		create_request(
+			work_order=TRACKED["wo"][0],
+			box_1=50,
+			box_1_qty=QTY,
+			box_2=0,
+			box_2_qty=0,
+			box_3=2,
+			box_3_qty=0,
+		)
+		check("box3_half_rejected", False, "create_request box 3 setengah isi TIDAK ditolak!")
+	except Exception as e:
+		wo_link = frappe.db.get_value("Work Order", TRACKED["wo"][0], "custom_handover_material_request")
+		mri_count = frappe.db.count("Material Request Item", {"custom_work_order": TRACKED["wo"][0]})
+		check(
+			"box3_half_rejected",
+			wo_link in (None, "") and mri_count == 0,
+			f"{type(e).__name__}: {str(e)[:180]}, wo_link={wo_link!r}, mri={mri_count}",
+		)
+
+	# --- create_request sebagai user gudang (W18: split 3 box, total = QTY) ---
+	try:
+		res = create_request(
+			work_order=TRACKED["wo"][0],
+			box_1=10,
+			box_1_qty=40,
+			box_2=5,
+			box_2_qty=35,
+			box_3=3,
+			box_3_qty=25,
+		)
 		mr_name = res["material_request"]
 		TRACKED["mr"].append(mr_name)
 		mr = frappe.db.get_value(
@@ -359,14 +390,31 @@ def _run_gate(check):
 		frappe.set_user("Administrator")
 		raise GateAborted()
 
-	# --- Ringkasan WO terisi + picker request_active=True ---
+	# --- Ringkasan WO terisi (termasuk Box 2/3) + picker request_active=True ---
 	try:
 		summary = frappe.db.get_value(
-			"Work Order", TRACKED["wo"][0], ["custom_handover_material_request", "custom_box_1", "custom_box_1_qty"], as_dict=1
+			"Work Order",
+			TRACKED["wo"][0],
+			[
+				"custom_handover_material_request",
+				"custom_box_1",
+				"custom_box_1_qty",
+				"custom_box_2",
+				"custom_box_2_qty",
+				"custom_box_3",
+				"custom_box_3_qty",
+			],
+			as_dict=1,
 		)
 		check(
 			"wo_summary_filled",
-			summary.custom_handover_material_request == TRACKED["mr"][0] and flt(summary.custom_box_1) == 50 and flt(summary.custom_box_1_qty) == QTY,
+			summary.custom_handover_material_request == TRACKED["mr"][0]
+			and flt(summary.custom_box_1) == 10
+			and flt(summary.custom_box_1_qty) == 40
+			and flt(summary.custom_box_2) == 5
+			and flt(summary.custom_box_2_qty) == 35
+			and flt(summary.custom_box_3) == 3
+			and flt(summary.custom_box_3_qty) == 25,
 			str(summary),
 		)
 		rows = requestable_work_orders(search=ITEM_NAME)
@@ -394,6 +442,10 @@ def _run_gate(check):
 			and brow.get("status_papan") == "Belum Dikirim"
 			and "adonan" in fieldnames
 			and fieldnames.index("adonan") < fieldnames.index("work_order")
+			# W18: kg Box kini dari WO (bukan MR) — split 10/5/3 di atas
+			and flt(brow.get("box_1")) == 10
+			and flt(brow.get("box_2")) == 5
+			and flt(brow.get("box_3")) == 3
 		)
 		check("board_shows_request", ok, f"row={brow and dict(brow)}, adonan@kolom-{fieldnames.index('adonan') if 'adonan' in fieldnames else '?'}")
 	except Exception as e:

@@ -740,6 +740,11 @@ function bulk_dialog(wos, done) {
 						<input type="number" class="form-control wzrq-kg2" min="0" step="0.01" placeholder="kg" title="${__('Box 2 — kg')}" />
 						<input type="number" class="form-control wzrq-qty2" min="0" step="any" value="0" title="${__('Box 2 — qty')}" />
 					</div>
+					<button type="button" class="btn btn-link wzrq-addbox3" style="display:none">+ ${__('Box 3')}</button>
+					<div class="wzrq-box3-inputs" style="display:none">
+						<input type="number" class="form-control wzrq-kg3" min="0" step="0.01" placeholder="kg" title="${__('Box 3 — kg')}" />
+						<input type="number" class="form-control wzrq-qty3" min="0" step="any" value="0" title="${__('Box 3 — qty')}" />
+					</div>
 				</td>
 			</tr>`
 		)
@@ -751,7 +756,7 @@ function bulk_dialog(wos, done) {
 	});
 	d.$body.html(`
 		<p class="text-muted wzrq-dt-hint">
-			<span>${__('Box 1 is required. Box 2 is optional — click + Box 2 to add it.')}</span>
+			<span>${__('Box 1 is required. Box 2 and Box 3 are optional — click + Box 2, then + Box 3, to add them.')}</span>
 			<span class="wzrq-dt-uom">${__('Qty in')} <select class="form-control wzrq-duom">${uom_opts.map((o) => `<option value="${wzrq_esc(o)}"${o === dialog_uom ? ' selected' : ''}>${wzrq_esc(o)}</option>`).join('')}</select></span>
 		</p>
 		<table class="wzrq-dtable">
@@ -760,18 +765,25 @@ function bulk_dialog(wos, done) {
 					<th class="wzrq-dt-wo">${__('Work Order')}</th>
 					<th>${__('Box 1 · kg')}</th>
 					<th>${__('Box 1 · qty')}</th>
-					<th>${__('Box 2 · optional')}</th>
+					<th>${__('Box 2 / 3 · optional')}</th>
 				</tr>
 			</thead>
 			<tbody>${rows_html}</tbody>
 		</table>
 	`);
 
-	// Box 2 opsional: munculkan pasangan input kg/qty saat diminta
+	// Box 2/3 opsional: munculkan pasangan input kg/qty saat diminta.
+	// + Box 3 baru terlihat setelah Box 2 dimunculkan (urutan reveal tetap).
 	d.$body.on('click', '.wzrq-addbox2', function () {
 		const $cell = $(this).closest('.wzrq-dt-cell2');
 		$(this).hide();
+		$cell.find('.wzrq-addbox3').show();
 		$cell.find('.wzrq-box2-inputs').show().find('.wzrq-kg2').trigger('focus');
+	});
+	d.$body.on('click', '.wzrq-addbox3', function () {
+		const $cell = $(this).closest('.wzrq-dt-cell2');
+		$(this).hide();
+		$cell.find('.wzrq-box3-inputs').show().find('.wzrq-kg3').trigger('focus');
 	});
 
 	// ganti uom qty: KONVERSI nilai yang sudah diinput per baris
@@ -787,7 +799,7 @@ function bulk_dialog(wos, done) {
 			if (!to_display && !to_stock) {
 				return;
 			}
-			$tr.find('.wzrq-qty1, .wzrq-qty2').each(function () {
+			$tr.find('.wzrq-qty1, .wzrq-qty2, .wzrq-qty3').each(function () {
 				const v = parseFloat($(this).val());
 				if (!isFinite(v)) {
 					return; // input kosong dibiarkan kosong
@@ -857,7 +869,7 @@ async function submit_bulk(d, done) {
 			return whole;
 		};
 		const box_1_qty = to_display_units(q1);
-		// Box 2 hanya dikirim bila pasangan inputnya dimunculkan
+		// Box 2/3 hanya dikirim bila pasangan inputnya dimunculkan
 		let box_2 = 0;
 		let box_2_qty = 0;
 		if ($tr.find('.wzrq-box2-inputs').is(':visible')) {
@@ -866,7 +878,15 @@ async function submit_bulk(d, done) {
 			const q2 = $tr.find('.wzrq-qty2').val();
 			box_2_qty = q2 === '' || q2 === null ? 0 : to_display_units(q2);
 		}
-		if (box_1_qty === null || box_2_qty === null) {
+		let box_3 = 0;
+		let box_3_qty = 0;
+		if ($tr.find('.wzrq-box3-inputs').is(':visible')) {
+			const kg3 = $tr.find('.wzrq-kg3').val();
+			box_3 = kg3 === '' || kg3 === null ? 0 : parseFloat(kg3);
+			const q3 = $tr.find('.wzrq-qty3').val();
+			box_3_qty = q3 === '' || q3 === null ? 0 : to_display_units(q3);
+		}
+		if (box_1_qty === null || box_2_qty === null || box_3_qty === null) {
 			return; // sudah dicatat di not_whole — abort setelah loop
 		}
 		payloads.push({
@@ -875,6 +895,8 @@ async function submit_bulk(d, done) {
 			box_1_qty,
 			box_2,
 			box_2_qty,
+			box_3,
+			box_3_qty,
 		});
 	});
 	if (invalid) {
