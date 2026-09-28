@@ -160,13 +160,10 @@ add_to_apps_screen = [
 # ---------------
 # Hook on document methods and events
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Item": {"validate": "warehouse_app.inventory_uom.validate_inventory_uom"},
+	"Stock Entry": {"validate": "warehouse_app.inventory_uom.compute_rate_per_uom"},
+}
 
 # Scheduled Tasks
 # ---------------
