@@ -57,6 +57,7 @@ frappe.pages['gudang_settings'].on_page_load = function (wrapper) {
 	const $gitems = $main.find('.wgs-gitems');
 	let warehouses = [];
 	let group_items = []; // salinan kerja lokal; tersimpan saat Save
+	let item_names = {}; // kode -> item_name (W20: chip tampil nama + kode)
 
 	// Link control Item native (frappe.ui.form.ControlLink) — pattern paling
 	// sederhana yang memberi pencarian item standar Desk tanpa dependensi baru.
@@ -92,10 +93,10 @@ frappe.pages['gudang_settings'].on_page_load = function (wrapper) {
 		$gitems.html(
 			group_items.length
 				? group_items
-						.map(
-							(it, i) =>
-								`<div class="wgs-gitem"><span class="wgs-gitem-name">${frappe.utils.escape_html(it)}</span><button class="wgs-gitem-x" data-i="${i}" title="${__('Remove')}">×</button></div>`,
-						)
+						.map((it, i) => {
+							const name = item_names[it] || it;
+							return `<div class="wgs-gitem"><div class="wgs-gitem-main"><span class="wgs-gitem-name">${frappe.utils.escape_html(name)}</span><span class="wgs-gitem-code">${frappe.utils.escape_html(it)}</span></div><button class="wgs-gitem-x" data-i="${i}" title="${__('Remove')}">×</button></div>`;
+						})
 						.join('')
 				: `<div class="text-muted wgs-gempty">${__('No items configured')}</div>`,
 		);
@@ -106,7 +107,7 @@ frappe.pages['gudang_settings'].on_page_load = function (wrapper) {
 		render_group_items();
 	});
 
-	$main.find('.wgs-gadd-btn').on('click', () => {
+	$main.find('.wgs-gadd-btn').on('click', async () => {
 		const item = (item_link.get_value() || '').trim();
 		if (!item) {
 			return;
@@ -114,6 +115,11 @@ frappe.pages['gudang_settings'].on_page_load = function (wrapper) {
 		if (group_items.includes(item)) {
 			frappe.show_alert({ message: __('Item already in the list'), indicator: 'orange' });
 			return;
+		}
+		if (!item_names[item]) {
+			// W20: tampilkan nama item, bukan kode saja — fallback tetap kode
+			const res = await frappe.db.get_value('Item', item, 'item_name');
+			item_names[item] = (res && res.message && res.message.item_name) || item;
 		}
 		group_items.push(item);
 		item_link.set_value('');
@@ -134,6 +140,7 @@ frappe.pages['gudang_settings'].on_page_load = function (wrapper) {
 		fill_select($target, settings.message.target);
 		if (grp) {
 			group_items = (grp.message && grp.message.items) || [];
+			item_names = (grp.message && grp.message.names) || {};
 			render_group_items();
 		}
 	}

@@ -56,9 +56,26 @@
 	border-bottom: 1px solid var(--border-color);
 	font-size: 13px;
 }
+.wgs-gitem-main {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
 .wgs-gitem-name {
 	font-weight: 600;
 	color: var(--text-color);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.wgs-gitem-code {
+	font-size: 11px;
+	color: var(--text-muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .wgs-gitem-x {
 	border: none;

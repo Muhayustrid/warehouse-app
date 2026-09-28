@@ -307,6 +307,12 @@ def _run_gate(check):
 			bool(res_set.get("ok") and res_set.get("items") == [ITEM_CODE] and res_get.get("items") == [ITEM_CODE]),
 			f"set={res_set}, get={res_get}",
 		)
+		# W20: get_group_items balas peta nama utk tampilan chip nama+kode
+		check(
+			"settings_names",
+			(res_get.get("names") or {}).get(ITEM_CODE) == ITEM_NAME,
+			f"names={res_get.get('names')}, want {ITEM_CODE} -> {ITEM_NAME}",
+		)
 	except Exception as e:
 		check("settings_roundtrip", False, f"{type(e).__name__}: {e}")
 		frappe.set_user("Administrator")

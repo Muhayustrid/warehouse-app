@@ -75,17 +75,23 @@ def set_handover_warehouses(source=None, target=None):
 
 @frappe.whitelist()
 def get_group_items():
-	"""Daftar item yang boleh dipakai group request (W19)."""
+	"""Daftar item yang boleh dipakai group request (W19) + peta nama item
+	(W20 — UI menampilkan nama, bukan kode saja)."""
 	_require_set_access()
-	return {
-		"items": frappe.get_all(
-			"Warehouse App Group Item",
-			filters={"parent": GROUP_SETTING, "parenttype": GROUP_SETTING},
-			order_by="idx asc",
-			pluck="item",
-			limit=0,
+	items = frappe.get_all(
+		"Warehouse App Group Item",
+		filters={"parent": GROUP_SETTING, "parenttype": GROUP_SETTING},
+		order_by="idx asc",
+		pluck="item",
+		limit=0,
+	)
+	names = {}
+	if items:
+		rows = frappe.get_all(
+			"Item", filters={"name": ["in", items]}, fields=["name", "item_name"], limit=0
 		)
-	}
+		names = {row.name: row.item_name for row in rows}
+	return {"items": items, "names": names}
 
 
 @frappe.whitelist()
