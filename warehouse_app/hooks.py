@@ -10,6 +10,12 @@ app_license = "mit"
 after_install = "warehouse_app.upgrade.apply"
 after_migrate = ["warehouse_app.upgrade.apply"]
 
+# after_app_install: frappe memanggil auto_generate_icons_and_sidebar-nya
+# duluan — ikon App "Warehouse App" baru dibuat SETELAH after_install kita,
+# jadi fresh install butuh titik ini agar desk langsung satu pintu
+# (lihat upgrade.ensure_single_desk_entry).
+after_app_install = "warehouse_app.upgrade.on_app_installed"
+
 # Fixtures
 # ------------------
 # Role gudang dibawa app (site baru mis. Frappe Cloud tidak memilikinya;

@@ -60,6 +60,7 @@ def apply():
     ensure_role()
     ensure_workspace_sidebar()
     ensure_desktop_icon()
+    ensure_single_desk_entry()
     ensure_item_fields()
     ensure_client_scripts()
     migrate_legacy_uom_field()
@@ -165,6 +166,42 @@ def ensure_desktop_icon():
     doc.insert()
     frappe.db.commit()
     return "created"
+
+
+# ---------------------------------------------------------------- W22 ----
+# Satu pintu desk. Native membuat ikon App dari add_to_apps_screen berlabel
+# JUDUL app ("Warehouse App" -> /app/gudang) DAN ikon Workspace berlabel NAMA
+# workspace ("Gudang" -> group sidebar); dedup native hanya jalan saat keduanya
+# bernama sama (create_desktop_icons_from_workspace: label == app_title ->
+# hidden) — workspace kita "Gudang" ≠ "Warehouse App", jadi keduanya tampil
+# dan menuju halaman yang sama. Ikon grup "Gudang" (mekanisme nav W6) yang
+# dipertahankan; ikon App disembunyikan dari desk. Entri apps screen Frappe
+# Cloud (hook add_to_apps_screen) tidak terpengaruh — itu bukan Desktop Icon.
+APP_TITLE_ICON = "Warehouse App"
+
+
+def ensure_single_desk_entry():
+    name = frappe.db.exists(
+        "Desktop Icon", {"label": APP_TITLE_ICON, "icon_type": "App", "app": APP}
+    )
+    if not name:
+        return "absent"
+    if frappe.db.get_value("Desktop Icon", name, "hidden"):
+        return "unchanged"
+    frappe.db.set_value("Desktop Icon", name, "hidden", 1)
+    # db.set_value tidak lewat on_update — ikuti pola cache-clear ikon standard
+    frappe.cache.delete_key("desktop_icons")
+    frappe.cache.delete_key("bootinfo")
+    frappe.db.commit()
+    return "hidden"
+
+
+def on_app_installed(app_name=None):
+    """after_app_install: native auto_generate_icons_and_sidebar membuat ikon
+    App SETELAH after_install kita (installer.py memanggil hook ini sesudah
+    hook frappe, dgn arg nama app), jadi fresh install butuh titik ini agar
+    langsung satu pintu tanpa menunggu migrate pertama."""
+    ensure_single_desk_entry()
 
 
 # ---------------------------------------------------------------- W21 ----
