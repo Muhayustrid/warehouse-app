@@ -4,6 +4,8 @@
 
 Custom app Frappe/ERPNext untuk **org Gudang (barang jadi)**, berjalan di site yang sama dengan `production_app` (site `frontend`). Prinsip dasar (keputusan resmi user, 2026-09-20): **native ERPNext tidak boleh terpengaruh custom app mana pun** — production_app fokus user manufacturing, dan semua tooling gudang dikembangkan di app ini. Saling lepas: warehouse_app tidak boleh mengubah perilaku produksi, production_app tidak boleh memaksa perilaku native/gudang.
 
+**Konvensi kolom (keputusan user, 2026-09-29):** tambahan kolom/custom field untuk kebutuhan gudang (di Item, Stock Entry, Material Request, atau doctype native lain) **wajib dikemas di warehouse_app** — pola W21: spec di `upgrade.py` + upsert idempoten (`after_install`/`after_migrate`) + gate tests, label Inggris, jangan dibuatkan lewat production_app/core. Kolom yang mengubah perilaku tampilan diberi client script ber-role gate ("Gudang Barang Jadi") sehingga user native tak terpengaruh.
+
 ## Latar (kenapa app ini ada)
 
 - 2026-09-19 (FU48, production_app): gudang sementara pakai Desk ERPNext native; SPA produksi dibersihkan jadi produksi-only.
