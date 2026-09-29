@@ -13,7 +13,6 @@ import frappe
 
 SIDEBAR = "Gudang"
 APP = "warehouse_app"
-ROLE = "Gudang Barang Jadi"
 SIDEBAR_ICON = "package"
 
 # Nav grup "Gudang" di sidebar Desk. Icon = nama set lucide frappe v16
@@ -57,7 +56,6 @@ SIDEBAR_ITEMS = [
 
 
 def apply():
-    ensure_role()
     ensure_workspace_sidebar()
     ensure_desktop_icon()
     ensure_single_desk_entry()
@@ -65,18 +63,6 @@ def apply():
     ensure_sr_fields()
     ensure_client_scripts()
     migrate_legacy_uom_field()
-
-
-def ensure_role():
-    # Site baru (mis. Frappe Cloud) belum punya role ini, padahal workspace
-    # dan Page gudang di-scope ke role ini — jamin ada sejak install/migrate.
-    if frappe.db.exists("Role", ROLE):
-        return "unchanged"
-    doc = frappe.get_doc({"doctype": "Role", "role_name": ROLE, "desk_access": 1})
-    doc.flags.ignore_permissions = 1
-    doc.insert()
-    frappe.db.commit()
-    return "created"
 
 
 def ensure_workspace_sidebar():
@@ -242,9 +228,12 @@ SE_FIELD_SPEC = {
     "description": "Rate per this row's UOM (display only) = Basic Rate × conversion factor",
 }
 
-# Role "Gudang Barang Jadi" — konsisten dengan konstanta ROLE di atas; ditulis
+# Gate role transaksi gudang — native ERPNext saja (keputusan user 2026-09-29:
+# warehouse_app berhenti memakai role custom "Gudang Barang Jadi"; record
+# rolenya dibiarkan hidup di site — nasibnya diatur production_app). Ditulis
 # literal di JS karena script berjalan di sisi klien.
-ROLE_JS = "Gudang Barang Jadi"
+W21_GATE_ROLES = ["Stock Manager", "Stock User", "System Manager"]
+_GATE_ROLES_JS = "[" + ", ".join('"' + role + '"' for role in W21_GATE_ROLES) + "]"
 
 CLIENT_SCRIPT_ITEM = SCRIPT_MARKER + """ — Default Inventory UOM helpers on Item.
 // Link query for the custom field is limited to stock UOM + UOM Conversion
@@ -299,11 +288,15 @@ CLIENT_SCRIPT_ITEM = SCRIPT_MARKER + """ — Default Inventory UOM helpers on It
 # custom_basic_rate_per_uom is live-updated on uom/conversion_factor/basic_rate
 # changes (display-only, mirrors server-side compute_rate_per_uom).
 CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + display rate on Stock Entry.
-// Gudang-only: every handler returns early without the warehouse role, so
-// native users are unaffected.
+// Native stock roles only (Stock Manager / Stock User / System Manager): every
+// handler returns early without one of the gate roles.
 
 (function () {
-	const W21_ROLE = """ + '"' + ROLE_JS + '"' + """;
+	const W21_ROLES = """ + _GATE_ROLES_JS + """;
+
+	function enabled() {
+		return W21_ROLES.some((role) => frappe.user.has_role(role));
+	}
 
 	function update_rate_per_uom(cdt, cdn) {
 		const row = locals[cdt][cdn];
@@ -340,19 +333,19 @@ CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + display ra
 
 	frappe.ui.form.on("Stock Entry Detail", {
 		item_code(frm, cdt, cdn) {
-			if (!frappe.user.has_role(W21_ROLE)) return;
+			if (!enabled()) return;
 			frappe.after_ajax(() => apply_inventory_uom(frm, cdt, cdn));
 		},
 		uom(frm, cdt, cdn) {
-			if (!frappe.user.has_role(W21_ROLE)) return;
+			if (!enabled()) return;
 			update_rate_per_uom(cdt, cdn);
 		},
 		conversion_factor(frm, cdt, cdn) {
-			if (!frappe.user.has_role(W21_ROLE)) return;
+			if (!enabled()) return;
 			update_rate_per_uom(cdt, cdn);
 		},
 		basic_rate(frm, cdt, cdn) {
-			if (!frappe.user.has_role(W21_ROLE)) return;
+			if (!enabled()) return;
 			update_rate_per_uom(cdt, cdn);
 		},
 	});
@@ -367,10 +360,15 @@ CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + display ra
 # (frm.events.get_item_data with the new uom in ctx) so rate/stock_qty
 # reconvert to the chosen UOM.
 CLIENT_SCRIPT_MATERIAL_REQUEST = SCRIPT_MARKER + """ — default row UOM on Material Request.
-// Gudang-only: handler returns early without the warehouse role.
+// Native stock roles only (Stock Manager / Stock User / System Manager): the
+// handler returns early without one of the gate roles.
 
 (function () {
-	const W21_ROLE = """ + '"' + ROLE_JS + '"' + """;
+	const W21_ROLES = """ + _GATE_ROLES_JS + """;
+
+	function enabled() {
+		return W21_ROLES.some((role) => frappe.user.has_role(role));
+	}
 
 	function apply_inventory_uom(frm, doctype, name) {
 		const row = locals[doctype][name];
@@ -402,7 +400,7 @@ CLIENT_SCRIPT_MATERIAL_REQUEST = SCRIPT_MARKER + """ — default row UOM on Mate
 
 	frappe.ui.form.on("Material Request Item", {
 		item_code(frm, doctype, name) {
-			if (!frappe.user.has_role(W21_ROLE)) return;
+			if (!enabled()) return;
 			frappe.after_ajax(() => apply_inventory_uom(frm, doctype, name));
 		},
 	});
@@ -488,9 +486,10 @@ SR_FIELD_SPECS = [
     },
 ]
 
-# Role gate: gudang boleh, tapi Stock Manager/User & System Manager juga — SR
-# dokumen stok umum, bukan milik gudang saja. Dirangkai literal ke JS di bawah.
-SR_GATE_ROLES = ["Gudang Barang Jadi", "Stock Manager", "Stock User", "System Manager"]
+# Role gate: native ERPNext saja (keputusan user 2026-09-29 — role custom
+# "Gudang Barang Jadi" ditinggalkan; record rolenya tetap hidup di site,
+# nasibnya diatur production_app). Dirangkai literal ke JS di bawah.
+SR_GATE_ROLES = ["Stock Manager", "Stock User", "System Manager"]
 
 _SR_ROLES_JS = "[" + ", ".join('"' + role + '"' for role in SR_GATE_ROLES) + "]"
 

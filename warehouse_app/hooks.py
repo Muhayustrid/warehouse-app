@@ -18,14 +18,10 @@ after_app_install = "warehouse_app.upgrade.on_app_installed"
 
 # Fixtures
 # ------------------
-# Role gudang dibawa app (site baru mis. Frappe Cloud tidak memilikinya;
-# workspace + Page kita role-scoped ke role ini).
-fixtures = [
-	{
-		"dt": "Role",
-		"filters": [["name", "in", ["Gudang Barang Jadi"]]],
-	},
-]
+# Kosong sejak 2026-09-29: role custom "Gudang Barang Jadi" tidak lagi dipakai
+# app ini (gate transaksi + visibilitas kini native Stock Manager/Stock User);
+# record rolenya dikelola production_app.
+fixtures = []
 
 
 # Apps

@@ -31,10 +31,10 @@
  "report_type": "Script Report",
  "roles": [
   {
-   "role": "Gudang Barang Jadi"
+   "role": "Stock Manager"
   },
   {
-   "role": "Stock Manager"
+   "role": "Stock User"
   }
  ]
 }

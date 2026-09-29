@@ -58,7 +58,7 @@ def setup():
 		}
 	)
 	user.insert(ignore_permissions=True)
-	user.add_roles("Gudang Barang Jadi", "Stock Manager", "Stock User")
+	user.add_roles("Stock Manager", "Stock User")
 	user.new_password = pwd
 	user.save(ignore_permissions=True)
 	frappe.db.commit()

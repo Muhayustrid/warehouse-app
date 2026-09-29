@@ -32,7 +32,7 @@ from warehouse_app.upgrade import SIDEBAR_ITEMS, ensure_workspace_sidebar
 
 SIDEBAR = "Gudang"
 APP = "warehouse_app"
-ROLE = "Gudang Barang Jadi"
+ROLE = "Stock User"
 PREFIX = "ZZTEST-W16"
 
 # Pasangan (label, link_type, link_to, icon) yang wajib dirender untuk user gudang.
@@ -184,7 +184,7 @@ def _run_gate(check):
 
     # 2) user gudang + pairing Stock User (SOP W7) -> 4 item sesuai desain
     try:
-        _make_user(user_email, PREFIX, [ROLE, "Stock User"])
+        _make_user(user_email, PREFIX, ["Stock Manager", "Stock User"])
         frappe.set_user(user_email)
         items = rendered_items()
         check(

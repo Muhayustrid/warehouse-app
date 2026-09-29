@@ -14,7 +14,7 @@ frappe.pages['gudang_settings'].on_page_load = function (wrapper) {
 
 	// endpoint get/set_group_items di-gate role di server; section hanya
 	// dimuat/fetch user yang punya role (hindari toast PermissionError).
-	const GROUP_ROLES = ['System Manager', 'Gudang Barang Jadi'];
+	const GROUP_ROLES = ['System Manager', 'Stock Manager', 'Stock User'];
 	const can_groups = (frappe.user_roles || []).some((r) => GROUP_ROLES.includes(r));
 
 	const $main = $(wrapper).find('.layout-main');

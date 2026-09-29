@@ -329,7 +329,7 @@ def _run_gate(check):
 
 	try:
 		user = frappe.get_doc("User", USER_EMAIL)
-		user.add_roles("Gudang Barang Jadi", "Stock User")  # varargs
+		user.add_roles("Stock Manager", "Stock User")  # varargs
 		frappe.clear_cache(user=USER_EMAIL)
 
 		# --- Perm ref_doctype (keputusan W3: ref_doctype = "Stock Entry") ---

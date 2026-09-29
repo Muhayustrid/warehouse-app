@@ -15,14 +15,14 @@ SETTING_FIELDS = {
 	"source": "custom_default_handover_source_warehouse",
 	"target": "custom_default_handover_warehouse",
 }
-ROLES_SET = ("System Manager", "Gudang Barang Jadi")
+ROLES_SET = ("System Manager", "Stock Manager", "Stock User")
 GROUP_SETTING = "Warehouse App Settings"
 
 
 def _require_set_access():
 	if not any(role in frappe.get_roles() for role in ROLES_SET):
 		frappe.throw(
-			frappe._("Hanya System Manager atau Gudang Barang Jadi yang dapat mengubah pengaturan."),
+			frappe._("Hanya System Manager, Stock Manager, atau Stock User yang dapat mengubah pengaturan."),
 			frappe.PermissionError,
 		)
 

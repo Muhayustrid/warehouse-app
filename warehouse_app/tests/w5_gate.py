@@ -42,7 +42,8 @@ APP = "warehouse_app"
 # app ini nol custom doctype sehingga modul "Warehouse App" tak pernah lolos
 # gerbang itu. Kepemilikan app tetap di field APP di bawah.
 MODULE = "Stock"
-ROLE = "Gudang Barang Jadi"
+ROLE = "Stock User"
+WORKSPACE_ROLES = ["Stock Manager", "Stock User"]  # keputusan user 2026-09-29: native saja
 HEADER_TEXT = "Gudang — Papan Serah Terima"
 USER_EMAIL = "ZZTEST-W5@example.com"
 PREFIX = "ZZTEST-W5"
@@ -161,8 +162,8 @@ def _run_gate(check):
     ))
     check(
         "workspace_roles",
-        db_roles == [ROLE],
-        f"roles DB={db_roles} (harap tepat [{ROLE!r}])",
+        db_roles == sorted(WORKSPACE_ROLES),
+        f"roles DB={db_roles} (harap tepat {sorted(WORKSPACE_ROLES)})",
     )
 
     # --- Shortcuts child dari DB: >= 1 (kontrak gate) + set 4 shortcut sesuai desain ---

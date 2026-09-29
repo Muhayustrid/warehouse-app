@@ -25,7 +25,10 @@
  "restrict_to_domain": "",
  "roles": [
   {
-   "role": "Gudang Barang Jadi"
+   "role": "Stock Manager"
+  },
+  {
+   "role": "Stock User"
   }
  ],
  "sequence_id": 21.0,

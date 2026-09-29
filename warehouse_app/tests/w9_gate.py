@@ -270,9 +270,9 @@ def _run_gate(check):
 	# --- Beri role gudang ---
 	try:
 		user = frappe.get_doc("User", USER_EMAIL)
-		user.add_roles("Gudang Barang Jadi", "Stock User")
+		user.add_roles("Stock Manager", "Stock User")
 		frappe.clear_cache(user=USER_EMAIL)
-		check("fixture_roles", "Gudang Barang Jadi" in frappe.get_roles(USER_EMAIL), str(frappe.get_roles(USER_EMAIL)))
+		check("fixture_roles", "Stock User" in frappe.get_roles(USER_EMAIL), str(frappe.get_roles(USER_EMAIL)))
 	except Exception as e:
 		check("fixture_roles", False, f"{type(e).__name__}: {e}")
 		raise GateAborted()

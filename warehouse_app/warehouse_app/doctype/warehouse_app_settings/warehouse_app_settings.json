@@ -33,7 +33,13 @@
   {
    "create": 1,
    "read": 1,
-   "role": "Gudang Barang Jadi",
+   "role": "Stock Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Stock User",
    "write": 1
   }
  ],
