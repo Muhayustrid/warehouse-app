@@ -62,6 +62,7 @@ def apply():
     ensure_desktop_icon()
     ensure_single_desk_entry()
     ensure_item_fields()
+    ensure_sr_fields()
     ensure_client_scripts()
     migrate_legacy_uom_field()
 
@@ -408,6 +409,256 @@ CLIENT_SCRIPT_MATERIAL_REQUEST = SCRIPT_MARKER + """ — default row UOM on Mate
 })();
 """
 
+# ---- W23 ----
+# Kolom UOM di baris Stock Reconciliation: hitung stok dalam UOM pilihan
+# baris (default = Default Inventory UOM item, W21). Native qty &
+# valuation_rate tetap sumber kebenaran ledger — dikonversi server-side oleh
+# warehouse_app.inventory_uom.apply_sr_inventory_uom (before_validate). Field
+# kosong = native murni; client script di-gate role (SR_GATE_ROLES).
+
+SR_SCRIPT_MARKER = "// warehouse_app W23 stock-reconciliation-uom"
+SR_UOM_FIELD = "custom_uom"
+SR_FACTOR_FIELD = "custom_conversion_factor"
+SR_BEFORE_FIELD = "custom_qty_before"
+SR_AFTER_FIELD = "custom_qty_after"
+SR_RATE_FIELD = "custom_valuation_rate_per_uom"
+
+SR_FIELD_SPECS = [
+    {
+        "dt": "Stock Reconciliation Item",
+        "fieldname": SR_UOM_FIELD,
+        "label": "UOM",
+        "fieldtype": "Link",
+        "options": "UOM",
+        "in_list_view": 1,
+        "insert_after": "qty",
+        "description": "UOM for counting this row. Defaults to the item's Default Inventory UOM "
+        "and can be changed. Empty = stock UOM.",
+    },
+    {
+        "dt": "Stock Reconciliation Item",
+        "fieldname": SR_FACTOR_FIELD,
+        "label": "Conversion Factor",
+        "fieldtype": "Float",
+        "read_only": 1,
+        "in_list_view": 1,
+        "insert_after": "qty",
+        "description": "Multiplier from the selected UOM to the item's stock UOM.",
+    },
+    {
+        "dt": "Stock Reconciliation Item",
+        "fieldname": SR_BEFORE_FIELD,
+        "label": "Qty Before (as per UOM)",
+        "fieldtype": "Float",
+        "read_only": 1,
+        "in_list_view": 1,
+        "insert_after": "qty",
+        "description": "Current stock quantity expressed in the selected UOM.",
+    },
+    {
+        "dt": "Stock Reconciliation Item",
+        "fieldname": SR_AFTER_FIELD,
+        "label": "Qty After (as per UOM)",
+        "fieldtype": "Float",
+        "in_list_view": 1,
+        "insert_after": "qty",
+        "description": "Counted quantity in the selected UOM. Drives the native Qty (stock UOM) "
+        "via the Conversion Factor.",
+    },
+    {
+        "dt": "Stock Reconciliation Item",
+        "fieldname": SR_RATE_FIELD,
+        "label": "Valuation Rate (as per UOM)",
+        "fieldtype": "Currency",
+        "in_list_view": 1,
+        "insert_after": "qty",
+        "description": "Valuation rate per the selected UOM. Empty = keep the native Valuation "
+        "Rate; an explicit 0 is a real revaluation.",
+    },
+]
+
+# Role gate: gudang boleh, tapi Stock Manager/User & System Manager juga — SR
+# dokumen stok umum, bukan milik gudang saja. Dirangkai literal ke JS di bawah.
+SR_GATE_ROLES = ["Gudang Barang Jadi", "Stock Manager", "Stock User", "System Manager"]
+
+_SR_ROLES_JS = "[" + ", ".join('"' + role + '"' for role in SR_GATE_ROLES) + "]"
+
+CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on Stock Reconciliation.
+// Gudang-only: every handler returns early without one of the gate roles, so
+// native users are unaffected. Native Qty / Valuation Rate stay the ledger's
+// source of truth; the custom columns only drive them. Serial/batch rows are
+// left to the native flow entirely.
+// Race-safety: standard doctype JS evaluates before Client Scripts, so the
+// native item_code handler (get_stock_balance_for) runs first;
+// frappe.after_ajax queues our default-UOM step behind it, hence current_qty
+// is already populated when the custom_uom handler resolves the factor.
+
+(function () {
+	const SR_GATE_ROLES = """ + _SR_ROLES_JS + """;
+
+	function enabled() {
+		return SR_GATE_ROLES.some((role) => frappe.user.has_role(role));
+	}
+
+	function skip_row(row) {
+		return !!(row.serial_no || row.serial_and_batch_bundle || row.use_serial_batch_fields);
+	}
+
+	// Default UOM = the item's Default Inventory UOM (W21). Seeding the field
+	// only — the custom_uom handler resolves factor/qty from there.
+	function apply_default_uom(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row || !row.item_code || row.custom_uom || skip_row(row)) return;
+		frappe.db
+			.get_value("Item", row.item_code, "custom_default_inventory_unit_of_measure")
+			.then((r) => {
+				const target = r.message && r.message.custom_default_inventory_unit_of_measure;
+				const live = locals[cdt][cdn];
+				// re-guard: refresh may fire several promises in parallel
+				if (!target || !live || live.custom_uom || skip_row(live)) return;
+				frappe.model.set_value(cdt, cdn, "custom_uom", target);
+			});
+	}
+
+	function apply_defaults(frm) {
+		// "Fetch Items from Warehouse" appends rows via add_child + $.extend
+		// without the item_code event — redo the default flow for rows whose
+		// custom_uom is still empty (anti-loop guard: only those are processed)
+		(frm.doc.items || []).forEach((d) => {
+			if (d.item_code && !d.custom_uom && !skip_row(d)) {
+				apply_default_uom(frm, d.doctype, d.name);
+			}
+		});
+	}
+
+	// Whitelist client: native get_conversion_factor falls back to 1.0 for UOMs
+	// outside the item's table — reject those before any math happens (server
+	// hook stays the hard guard). Sumber: frappe.client.get Item (read Item
+	// dimiliki role stock) membawa tabel uoms; frappe.db.get_list pada child
+	// table istable 403 utk non-Administrator dan promisenya menggantung —
+	// JANGAN pakai get_list child di sini.
+	const UOM_CACHE = {};
+	function allowed_uoms(item_code) {
+		if (UOM_CACHE[item_code]) return Promise.resolve(UOM_CACHE[item_code]);
+		return Promise.all([
+			frappe.db.get_value("Item", item_code, "stock_uom"),
+			frappe.xcall("frappe.client.get", { doctype: "Item", name: item_code }),
+		])
+			.then(([iv, doc]) => {
+				const list = [iv.message.stock_uom].concat((doc.uoms || []).map((r) => r.uom));
+				UOM_CACHE[item_code] = list;
+				return list;
+			})
+			.catch(() => null);
+	}
+
+	function apply_uom(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row || skip_row(row)) return;
+		if (!row.custom_uom || !row.item_code) {
+			// UOM cleared = back to native-unset state: blank the derived columns
+			// and unset native qty/valuation_rate — native treats an empty qty as
+			// "keep current stock"; a stale 0 or stale converted value would
+			// silently reconcile the bin on save.
+			frappe.model.set_value(cdt, cdn, "custom_conversion_factor", "");
+			frappe.model.set_value(cdt, cdn, "custom_qty_before", "");
+			frappe.model.set_value(cdt, cdn, "custom_qty_after", "");
+			frappe.model.set_value(cdt, cdn, "qty", null);
+			frappe.model.set_value(cdt, cdn, "valuation_rate", null);
+			return;
+		}
+		allowed_uoms(row.item_code).then((allowed) => {
+			const live = locals[cdt][cdn];
+			if (!live || live.custom_uom !== row.custom_uom) return; // stale resolve
+			if (allowed && allowed.indexOf(live.custom_uom) === -1) {
+				frappe.msgprint(
+					__(
+						"UOM {0} is not valid for Item {1}: use the Stock UOM or add it to the item's UOM Conversion table.",
+						[live.custom_uom, live.item_code]
+					)
+				);
+				frappe.model.set_value(cdt, cdn, "custom_uom", "");
+				return;
+			}
+			frappe.xcall("erpnext.stock.get_item_details.get_conversion_factor", {
+				item_code: live.item_code,
+				uom: live.custom_uom,
+			}).then((res) => {
+				const factor = flt(res && res.conversion_factor);
+				if (!factor) return; // server-side validation rejects it on save
+				frappe.model.set_value(cdt, cdn, "custom_conversion_factor", factor).then(() => {
+					const cur = locals[cdt][cdn];
+					if (!cur) return;
+					const before = flt(cur.current_qty) / factor;
+					frappe.model
+						.set_value(cdt, cdn, "custom_qty_before", before)
+						// recount starts from current stock in the chosen UOM; the
+						// custom_qty_after handler drives the native qty
+						.then(() => frappe.model.set_value(cdt, cdn, "custom_qty_after", before))
+						// explicit sync: native qty remains the ledger's source of truth
+						.then(() => frappe.model.set_value(cdt, cdn, "qty", flt(cur.current_qty)));
+				});
+			});
+		});
+	}
+
+	frappe.ui.form.on("Stock Reconciliation Item", {
+		item_code(frm, cdt, cdn) {
+			if (!enabled()) return;
+			frappe.after_ajax(() => apply_default_uom(frm, cdt, cdn));
+		},
+		custom_uom(frm, cdt, cdn) {
+			if (!enabled()) return;
+			apply_uom(frm, cdt, cdn);
+		},
+		custom_qty_after(frm, cdt, cdn) {
+			if (!enabled()) return;
+			const row = locals[cdt][cdn];
+			if (!row || !row.custom_uom || skip_row(row)) return;
+			const factor = flt(row.custom_conversion_factor);
+			if (!factor) return;
+			// the native qty handler computes amount/quantity_difference
+			frappe.model.set_value(cdt, cdn, "qty", flt(row.custom_qty_after) * factor);
+		},
+		custom_valuation_rate_per_uom(frm, cdt, cdn) {
+			if (!enabled()) return;
+			const row = locals[cdt][cdn];
+			const rate = row && row.custom_valuation_rate_per_uom;
+			if (!row || !row.custom_uom || skip_row(row)) return;
+			const factor = flt(row.custom_conversion_factor);
+			// 0 is a valid rate (real revaluation) — only empty passes through
+			if (!factor || rate == null || rate === "") return;
+			frappe.model.set_value(cdt, cdn, "valuation_rate", flt(rate) / factor);
+		},
+		qty(frm, cdt, cdn) {
+			if (!enabled()) return;
+			const row = locals[cdt][cdn];
+			if (!row || !row.custom_uom || skip_row(row)) return;
+			const factor = flt(row.custom_conversion_factor);
+			if (!factor) return;
+			const expected = flt(row.custom_qty_after) * factor;
+			// anti ping-pong: our own custom_qty_after handler lands exactly on
+			// expected; a mismatch means the change came from outside (barcode
+			// scan +1, manual edit on the native qty field) -> resync the column
+			if (Math.abs(flt(row.qty) - expected) > 1e-6) {
+				frappe.model.set_value(cdt, cdn, "custom_qty_after", flt(row.qty) / factor);
+			}
+		},
+	});
+
+	frappe.ui.form.on("Stock Reconciliation", {
+		refresh(frm) {
+			if (!enabled()) return;
+			apply_defaults(frm);
+		},
+		items_on_form_rendered(frm) {
+			if (!enabled()) return;
+			apply_defaults(frm);
+		},
+	});
+})();
+"""
+
 CLIENT_SCRIPTS = [
     # name eksplisit: autoname Client Script = "Prompt" (naming.py menolak
     # insert tanpa name). Lookup idempoten tetap via marker, bukan name.
@@ -418,6 +669,12 @@ CLIENT_SCRIPTS = [
         "dt": "Material Request",
         "script": CLIENT_SCRIPT_MATERIAL_REQUEST,
     },
+    {
+        "name": "warehouse-app-w23-stock-reconciliation-uom",
+        "dt": "Stock Reconciliation",
+        "script": CLIENT_SCRIPT_STOCK_RECONCILIATION,
+        "marker": SR_SCRIPT_MARKER,
+    },
 ]
 
 
@@ -425,6 +682,16 @@ def ensure_item_fields():
     results = [_ensure_custom_field(ITEM_FIELD_SPEC), _ensure_custom_field(SE_FIELD_SPEC)]
     frappe.clear_cache(doctype="Item")
     frappe.clear_cache(doctype="Stock Entry Detail")
+    if "created" in results or "updated" in results:
+        frappe.db.commit()
+    return "created" if "created" in results else ("updated" if "updated" in results else "unchanged")
+
+
+def ensure_sr_fields():
+    """W23: kolom UOM di baris Stock Reconciliation (spec di seksi W23)."""
+    results = [_ensure_custom_field(spec) for spec in SR_FIELD_SPECS]
+    for dt in ("Stock Reconciliation", "Stock Reconciliation Item"):
+        frappe.clear_cache(doctype=dt)
     if "created" in results or "updated" in results:
         frappe.db.commit()
     return "created" if "created" in results else ("updated" if "updated" in results else "unchanged")
@@ -459,9 +726,10 @@ def _ensure_custom_field(spec):
 def ensure_client_scripts():
     results = []
     for spec in CLIENT_SCRIPTS:
+        marker = spec.get("marker", SCRIPT_MARKER)
         name = frappe.db.get_value(
             "Client Script",
-            {"dt": spec["dt"], "script": ("like", "%" + SCRIPT_MARKER + "%")},
+            {"dt": spec["dt"], "script": ("like", "%" + marker + "%")},
             "name",
         )
         if not name and frappe.db.exists("Client Script", spec["name"]):
@@ -492,7 +760,7 @@ def ensure_client_scripts():
         doc.flags.ignore_permissions = 1
         doc.insert()
         results.append("created")
-    for dt in ("Item", "Stock Entry", "Material Request"):
+    for dt in ("Item", "Stock Entry", "Material Request", "Stock Reconciliation"):
         frappe.clear_cache(doctype=dt)
     if "created" in results or "updated" in results:
         frappe.db.commit()

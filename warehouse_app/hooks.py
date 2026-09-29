@@ -169,6 +169,9 @@ add_to_apps_screen = [
 doc_events = {
 	"Item": {"validate": "warehouse_app.inventory_uom.validate_inventory_uom"},
 	"Stock Entry": {"validate": "warehouse_app.inventory_uom.compute_rate_per_uom"},
+	"Stock Reconciliation": {
+		"before_validate": "warehouse_app.inventory_uom.apply_sr_inventory_uom"
+	},
 }
 
 # Scheduled Tasks
