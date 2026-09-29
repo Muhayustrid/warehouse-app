@@ -64,9 +64,12 @@ SR_DIFF_FIELD = "custom_qty_difference_per_uom"
 
 
 def _ledger_qty(doc, row, cache):
-	"""Saldo ledger item+gudang per posting SR (mirror get_sle_for_items native).
-	Dipakai hanya saat current_qty belum ada — draft server-pure yang tak lewat
-	fetch stok form native — supaya kolom before/diff tidak menyesatkan."""
+	"""Saldo ledger item+gudang pada posting timestamp SR (mirror
+	get_stock_balance_for native — dasar deteksi perubahan native). Dipakai
+	UNTUK SEMUA baris: row.current_qty tidak bisa dipercaya di pass insert
+	karena Document._set_defaults menerapkan DocField default "0" ke child
+	row sebelum before_validate (insert programmatic selalu membawa 0.0,
+	bukan None)."""
 	key = (row.item_code, row.warehouse)
 	if key not in cache:
 		from erpnext.stock.stock_ledger import get_previous_sle
@@ -145,10 +148,11 @@ def apply_sr_inventory_uom(doc, method):
 						"tersebut.").format(frappe.bold(uom), frappe.bold(row.item_code))
 				)
 		row.set(SR_FACTOR_FIELD, factor)
-		if row.get("current_qty") is not None:
-			current = flt(row.current_qty)
-		else:
-			current = _ledger_qty(doc, row, ledger_cache)
+		# Saldo before SELALU dari ledger pada posting timestamp — bukan
+		# row.current_qty: pass insert programmatic membawa default 0.0 (lihat
+		# catatan _ledger_qty), dan native sendiri mendeteksi perubahan terhadap
+		# ledger pada posting date/time (get_stock_balance_for).
+		current = _ledger_qty(doc, row, ledger_cache)
 		before = flt(current / factor, row.precision(SR_BEFORE_FIELD))
 		row.set(SR_BEFORE_FIELD, before)
 		row.set("qty", flt(flt(after) * factor, row.precision("qty")))
