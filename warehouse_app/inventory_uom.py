@@ -96,7 +96,9 @@ def apply_sr_inventory_uom(doc, method):
 			not row.item_code
 			or row.get("serial_no")
 			or row.get("serial_and_batch_bundle")
-			or row.get("use_serial_batch_fields")
+			# use_serial_batch_fields TIDAK masuk kondisi: form native menyalakan
+			# flag ini di row baru (user default) walau item tak ber-serial/batch —
+			# konversi tetap aman selama serial/bundle-nya kosong.
 		):
 			continue  # serial/batch = passthrough native
 		uom = row.get(SR_UOM_FIELD)

@@ -500,9 +500,12 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 		return SR_GATE_ROLES.some((role) => frappe.user.has_role(role));
 	}
 
-	function skip_row(row) {
-		return !!(row.serial_no || row.serial_and_batch_bundle || row.use_serial_batch_fields);
-	}
+		// use_serial_batch_fields sengaja TIDAK di-skip: form native menyalakan
+		// flag itu di row baru walau item tak ber-serial/batch — konversi aman
+		// selama serial/bundle kosong.
+		function skip_row(row) {
+			return !!(row.serial_no || row.serial_and_batch_bundle);
+		}
 
 	// Default UOM = the item's Default Inventory UOM (W21). Seeding the field
 	// only — the custom_uom handler resolves factor/qty from there.
