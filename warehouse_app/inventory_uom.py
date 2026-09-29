@@ -44,21 +44,43 @@ def compute_rate_per_uom(doc, method):
 
 # ------------------------------------------------------------------ W23 ----
 # Stock Reconciliation: baris hitung stok boleh dicatat dalam UOM lain lewat
-# kolom custom (custom_uom + custom_qty_after + custom_valuation_rate_per_uom,
-# spec di upgrade.py seksi W23). Hook before_validate mengonversinya ke field
+# kolom custom (custom_uom + custom_qty_after + custom_valuation_rate_per_uom
+# + custom_qty_difference_per_uom display, spec di upgrade.py seksi W23).
+# Hook before_validate mengonversinya ke field
 # native qty & valuation_rate (stock UOM) SEBELUM controller validate, sehingga
 # remove_items_with_no_change(), validate_uom_is_integer, dan SLE melihat nilai
-# akhir hasil konversi. Baris tanpa custom_qty_after dan baris serial/batch =
-# native murni, tidak disentuh.
-# Anti-faktor-1: faktor hanya 1 bila UOM kosong (semantik "kosong = stock UOM")
-# atau memang sama dengan stock UOM; UOM lain wajib tercantum di tabel
-# UOM Conversion item — kalau tidak, dokumen ditolak secara atomik.
+# akhir hasil konversi. Baris native (custom_uom kosong) dan baris serial/batch
+# tidak disentuh.
+# Anti-faktor-1: faktor hanya 1 bila UOM dipilih eksplisit sama dengan stock
+# UOM; UOM lain wajib tercantum di tabel UOM Conversion item — kalau tidak,
+# dokumen ditolak secara atomik.
 
 SR_UOM_FIELD = "custom_uom"
 SR_FACTOR_FIELD = "custom_conversion_factor"
 SR_BEFORE_FIELD = "custom_qty_before"
 SR_AFTER_FIELD = "custom_qty_after"
 SR_RATE_FIELD = "custom_valuation_rate_per_uom"
+SR_DIFF_FIELD = "custom_qty_difference_per_uom"
+
+
+def _ledger_qty(doc, row, cache):
+	"""Saldo ledger item+gudang per posting SR (mirror get_sle_for_items native).
+	Dipakai hanya saat current_qty belum ada — draft server-pure yang tak lewat
+	fetch stok form native — supaya kolom before/diff tidak menyesatkan."""
+	key = (row.item_code, row.warehouse)
+	if key not in cache:
+		from erpnext.stock.stock_ledger import get_previous_sle
+
+		prev = get_previous_sle(
+			{
+				"item_code": row.item_code,
+				"warehouse": row.warehouse,
+				"posting_date": doc.posting_date,
+				"posting_time": doc.posting_time,
+			}
+		)
+		cache[key] = flt(prev.get("qty_after_transaction")) if prev else 0
+	return cache[key]
 
 
 def apply_sr_inventory_uom(doc, method):
@@ -87,11 +109,19 @@ def apply_sr_inventory_uom(doc, method):
 			fields=["parent", "uom", "conversion_factor"],
 		):
 			uoms_map.setdefault(r.parent, {})[r.uom] = r.conversion_factor
+	ledger_cache = {}  # (item, warehouse) -> saldo ledger, utk row tanpa current_qty
 
 	for row in rows:
+		uom = row.get(SR_UOM_FIELD)
 		after = row.get(SR_AFTER_FIELD)
-		if after in (None, ""):
-			continue  # kolom UOM tidak dipakai — baris native murni
+		# Penanda "baris memakai UOM custom" = custom_uom terisi. Layer penyimpanan
+		# Frappe mengubah Float custom yang tak pernah diisi menjadi 0.0 (bukan
+		# NULL) saat baris pertama disimpan — memakai custom_qty_after sebagai
+		# penanda membuat draft baris-native yang di-reload lalu disimpan ulang
+		# dikonversi dengan after=0 → stok terhapus diam-diam. Link (custom_uom)
+		# tetap NULL, jadi dia satu-satunya penanda yang stabil lintas reload.
+		if after in (None, "") or not uom:
+			continue  # baris native murni / after belum diisi
 		if (
 			not row.item_code
 			or row.get("serial_no")
@@ -101,12 +131,11 @@ def apply_sr_inventory_uom(doc, method):
 			# konversi tetap aman selama serial/bundle-nya kosong.
 		):
 			continue  # serial/batch = passthrough native
-		uom = row.get(SR_UOM_FIELD)
 		stock_uom = row.get("stock_uom") or frappe.get_cached_value(
 			"Item", row.item_code, "stock_uom"
 		)
-		if not uom or uom == stock_uom:
-			factor = 1  # kosong / sama dengan stock UOM = tanpa konversi
+		if uom == stock_uom:
+			factor = 1  # eksplisit sama dengan stock UOM = tanpa konversi
 		else:
 			factor = uoms_map.get(row.item_code, {}).get(uom)
 			if not factor:
@@ -117,8 +146,21 @@ def apply_sr_inventory_uom(doc, method):
 				)
 		row.set(SR_FACTOR_FIELD, factor)
 		if row.get("current_qty") is not None:
-			row.set(SR_BEFORE_FIELD, flt(flt(row.current_qty) / factor, row.precision(SR_BEFORE_FIELD)))
+			current = flt(row.current_qty)
+		else:
+			current = _ledger_qty(doc, row, ledger_cache)
+		before = flt(current / factor, row.precision(SR_BEFORE_FIELD))
+		row.set(SR_BEFORE_FIELD, before)
 		row.set("qty", flt(flt(after) * factor, row.precision("qty")))
+		row.set(
+			SR_DIFF_FIELD,
+			flt(flt(after) - flt(before), row.precision(SR_DIFF_FIELD)),
+		)
 		rate = row.get(SR_RATE_FIELD)
-		if rate is not None:  # 0 sah (revaluasi) — hanya None yang lolos native
+		# 0 sah sebagai revaluasi — tapi hanya bila user eksplisit mengizinkan rate
+		# nol (flag native allow_zero_valuation_rate, syarat yang sama dengan
+		# "Valuation Rate required" di update_stock_ledger). Tanpa syarat ini,
+		# rate yang tak pernah diisi (tersimpan 0.0) akan merevaluasi baris ke 0
+		# saat draft di-reload dan disimpan ulang.
+		if rate not in (None, "") and (flt(rate) != 0 or row.get("allow_zero_valuation_rate")):
 			row.set("valuation_rate", flt(flt(rate) / factor, row.precision("valuation_rate")))

@@ -422,6 +422,7 @@ SR_FACTOR_FIELD = "custom_conversion_factor"
 SR_BEFORE_FIELD = "custom_qty_before"
 SR_AFTER_FIELD = "custom_qty_after"
 SR_RATE_FIELD = "custom_valuation_rate_per_uom"
+SR_DIFF_FIELD = "custom_qty_difference_per_uom"
 
 SR_FIELD_SPECS = [
     {
@@ -474,6 +475,16 @@ SR_FIELD_SPECS = [
         "insert_after": "qty",
         "description": "Valuation rate per the selected UOM. Empty = keep the native Valuation "
         "Rate; an explicit 0 is a real revaluation.",
+    },
+    {
+        "dt": "Stock Reconciliation Item",
+        "fieldname": SR_DIFF_FIELD,
+        "label": "Quantity Difference (as per UOM)",
+        "fieldtype": "Float",
+        "read_only": 1,
+        "in_list_view": 1,
+        "insert_after": SR_BEFORE_FIELD,
+        "description": "Counted difference (Qty After − Qty Before) in the selected UOM.",
     },
 ]
 
@@ -566,6 +577,7 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 			frappe.model.set_value(cdt, cdn, "custom_conversion_factor", "");
 			frappe.model.set_value(cdt, cdn, "custom_qty_before", "");
 			frappe.model.set_value(cdt, cdn, "custom_qty_after", "");
+			frappe.model.set_value(cdt, cdn, "custom_qty_difference_per_uom", "");
 			frappe.model.set_value(cdt, cdn, "qty", null);
 			frappe.model.set_value(cdt, cdn, "valuation_rate", null);
 			return;
@@ -622,6 +634,34 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 			if (!factor) return;
 			// the native qty handler computes amount/quantity_difference
 			frappe.model.set_value(cdt, cdn, "qty", flt(row.custom_qty_after) * factor);
+			frappe.model.set_value(
+				cdt,
+				cdn,
+				"custom_qty_difference_per_uom",
+				flt(flt(row.custom_qty_after) - flt(row.custom_qty_before))
+			);
+		},
+		// native refetches current_qty (mis. ganti warehouse) setelah resync qty —
+		// turunkan ulang before dari saldo baru sebelum diff dihitung, kalau tidak
+		// diff live = after baru − before lama (campuran salah).
+		current_qty(frm, cdt, cdn) {
+			if (!enabled()) return;
+			const row = locals[cdt][cdn];
+			if (!row || !row.custom_uom || skip_row(row)) return;
+			const factor = flt(row.custom_conversion_factor);
+			if (!factor || row.current_qty == null) return;
+			frappe.model
+				.set_value(cdt, cdn, "custom_qty_before", flt(row.current_qty) / factor)
+				.then(() => {
+					const cur = locals[cdt][cdn];
+					if (!cur) return; // row re-key saat refresh grid
+					frappe.model.set_value(
+						cdt,
+						cdn,
+						"custom_qty_difference_per_uom",
+						flt(flt(cur.custom_qty_after) - flt(cur.custom_qty_before))
+					);
+				});
 		},
 		custom_valuation_rate_per_uom(frm, cdt, cdn) {
 			if (!enabled()) return;

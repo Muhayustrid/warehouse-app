@@ -13,14 +13,16 @@
 # yang di-raise (bench exit nonzero).
 #
 # Yang diverifikasi:
-#   1. 5 Custom Field di Stock Reconciliation Item sesuai spec (fieldtype,
+#   1. 6 Custom Field di Stock Reconciliation Item sesuai spec (fieldtype,
 #      options, read_only, in_list_view).
 #   2. Client Script SR ber-marker eksis & enabled.
 #   3. Happy path server-pure: baris HANYA ber-custom_uom + custom_qty_after +
 #      custom_valuation_rate_per_uom (tanpa qty native) — submit menghasilkan
 #      qty = after x faktor (2.5x12 = 30), valuation_rate = rate/faktor
-#      (1200/12 = 100), SLE actual_qty = qty_after_transaction = 30.
-#   4. Rate kosong = passthrough native: valuation_rate eksplisit 90 tetap 90.
+#      (1200/12 = 100), SLE actual_qty = qty_after_transaction = 30, dan
+#      custom_qty_difference_per_uom = after − before (2.5 − 0).
+#   4. Rate kosong = passthrough native: valuation_rate eksplisit 90 tetap 90;
+#      diff negatif tercatat (after 1 − before 2.5 = −1.5).
 #   5. Rate 0 sah (allow_zero_valuation_rate) → valuation_rate 0 tersimpan.
 #   6. UOM di luar tabel konversi ditolak (ValidationError menyebut UOM +
 #      Conversion) dan TIDAK menyisakan SR baru.
@@ -28,6 +30,9 @@
 #   8. Qty & rate identik bin → native EmptyStockReconciliationItemsError
 #      (pesan "None of the items have any change in quantity or value.").
 #   9. ensure_sr_fields idempoten (run kedua "unchanged") + client script utuh.
+#  10. Draft di-reload lalu disimpan ulang: baris native tetap (qty tak
+#      menjadi 0) dan baris UOM rate-passthrough tetap (tak berevaluasi ke 0)
+#      — regresi zero-storage Float custom.
 #
 # Fixture (prefix "ZZTEST-W23", TANPA user fixture): 1 Item run-unik
 # (item_code hash, site boleh menimpa via naming series — pakai doc.name
@@ -43,6 +48,8 @@ from frappe.utils import flt, nowdate, nowtime
 from warehouse_app import upgrade
 from warehouse_app.inventory_uom import (
 	SR_AFTER_FIELD,
+	SR_BEFORE_FIELD,
+	SR_DIFF_FIELD,
 	SR_FACTOR_FIELD,
 	SR_RATE_FIELD,
 	SR_UOM_FIELD,
@@ -154,7 +161,7 @@ def _run_gate(check):
 
 	check(
 		"sr_custom_fields",
-		len(fields) == 5 and all(_field_ok(fn) for fn in specs),
+		len(fields) == len(specs) and all(_field_ok(fn) for fn in specs),
 		f"ada={sorted(by_name)}, want={sorted(specs)}",
 	)
 
@@ -281,7 +288,7 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 		row = frappe.db.get_value(
 			"Stock Reconciliation Item",
 			{"parent": sr1.name},
-			["qty", "valuation_rate", SR_FACTOR_FIELD, SR_AFTER_FIELD],
+			["qty", "valuation_rate", SR_FACTOR_FIELD, SR_AFTER_FIELD, SR_BEFORE_FIELD, SR_DIFF_FIELD],
 			as_dict=1,
 		)
 		sle = frappe.db.get_value(
@@ -304,6 +311,8 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 			and abs(flt(row.valuation_rate) - 100) < 0.01  # 1200 / 12
 			and abs(flt(row.get(SR_FACTOR_FIELD)) - 12) < 0.0001
 			and abs(flt(row.get(SR_AFTER_FIELD)) - 2.5) < 0.0001
+			and abs(flt(row.get(SR_BEFORE_FIELD))) < 0.0001  # stok awal 0
+			and abs(flt(row.get(SR_DIFF_FIELD)) - 2.5) < 0.0001  # after − before
 			and sle
 			and abs(flt(sle.qty_after_transaction) - 30) < 0.0001
 			and abs(flt(sle.valuation_rate) - 100) < 0.01
@@ -312,7 +321,7 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 			"sr_server_pure_conversion",
 			ok,
 			f"sr={sr1.name}, row={dict(row) if row else None}, sle={dict(sle) if sle else None}, "
-			"want qty=30 (2.5x12), rate=100 (1200/12)",
+			"want qty=30 (2.5x12), rate=100 (1200/12), diff=2.5",
 		)
 	except Exception as e:
 		check("sr_server_pure_conversion", False, f"{type(e).__name__}: {str(e)[:200]}")
@@ -336,15 +345,23 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 		TRACKED["sr"].append(sr2.name)
 		frappe.db.commit()
 		row = frappe.db.get_value(
-			"Stock Reconciliation Item", {"parent": sr2.name}, ["qty", "valuation_rate"], as_dict=1
+			"Stock Reconciliation Item",
+			{"parent": sr2.name},
+			["qty", "valuation_rate", SR_BEFORE_FIELD, SR_DIFF_FIELD],
+			as_dict=1,
 		)
 		ok = bool(
-			row and abs(flt(row.qty) - 12) < 0.0001 and abs(flt(row.valuation_rate) - 90) < 0.01
+			row
+			and abs(flt(row.qty) - 12) < 0.0001
+			and abs(flt(row.valuation_rate) - 90) < 0.01
+			and abs(flt(row.get(SR_BEFORE_FIELD)) - 2.5) < 0.0001  # 30 / 12
+			and abs(flt(row.get(SR_DIFF_FIELD)) + 1.5) < 0.0001  # 1 − 2.5
 		)
 		check(
 			"rate_empty_passthrough",
 			ok,
-			f"sr={sr2.name}, row={dict(row) if row else None}, want qty=12, rate=90 tetap",
+			f"sr={sr2.name}, row={dict(row) if row else None}, want qty=12, rate=90 tetap, "
+			"before=2.5, diff=-1.5",
 		)
 	except Exception as e:
 		check("rate_empty_passthrough", False, f"{type(e).__name__}: {str(e)[:200]}")
@@ -427,13 +444,23 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 		TRACKED["sr"].append(sr5.name)
 		frappe.db.commit()
 		row = frappe.db.get_value(
-			"Stock Reconciliation Item", {"parent": sr5.name}, ["qty", "valuation_rate"], as_dict=1
+			"Stock Reconciliation Item",
+			{"parent": sr5.name},
+			["qty", "valuation_rate", SR_DIFF_FIELD],
+			as_dict=1,
 		)
-		ok = bool(row and abs(flt(row.qty) - 5) < 0.0001 and abs(flt(row.valuation_rate) - 50) < 0.01)
+		ok = bool(
+			row
+			and abs(flt(row.qty) - 5) < 0.0001
+			and abs(flt(row.valuation_rate) - 50) < 0.01
+			# row native: kolom custom Float tak pernah diisi pun tersimpan 0.0
+			# oleh layer simpan Frappe — diff 0 di sini, bukan NULL
+			and row.get(SR_DIFF_FIELD) in (None, "", 0)
+		)
 		check(
 			"native_row_untouched",
 			ok,
-			f"sr={sr5.name}, row={dict(row) if row else None}, want qty=5, rate=50",
+			f"sr={sr5.name}, row={dict(row) if row else None}, want qty=5, rate=50, diff=0",
 		)
 	except Exception as e:
 		check("native_row_untouched", False, f"{type(e).__name__}: {str(e)[:200]}")
@@ -475,6 +502,80 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 	except Exception as e:
 		frappe.db.rollback()
 		check("no_change_throws_native", False, f"{type(e).__name__}: {str(e)[:180]}")
+
+	# --- Case 7: draft di-reload lalu disimpan ulang tak berubah (regresi
+	# zero-storage: layer simpan Frappe menulis 0.0 — bukan NULL — untuk custom
+	# Float yang tak pernah diisi; penanda baris custom yang stabil = custom_uom
+	# Link yang tetap NULL. Dulu: baris native terkonversi qty→0 (stok terhapus
+	# diam-diam) dan rate custom "kosong" tersimpan 0 → revaluasi ke 0).
+	# Dua draft terpisah — satu SR tak boleh memuat item+warehouse ganda. ---
+	try:
+		sr7a = _make_sr(
+			company,
+			[
+				{  # baris native murni
+					"item_code": item.name,
+					"warehouse": warehouse,
+					"qty": 7,
+					"valuation_rate": 70,
+				}
+			],
+			expense_account=expense_account,
+		)
+		frappe.db.commit()
+		reloaded = frappe.get_doc("Stock Reconciliation", sr7a.name)  # baca ulang dari DB
+		reloaded.save()
+		frappe.db.commit()
+		native_row = frappe.db.get_value(
+			"Stock Reconciliation Item", {"parent": sr7a.name}, ["qty", "valuation_rate"], as_dict=1
+		)
+		ok_native = bool(
+			native_row
+			and abs(flt(native_row.qty) - 7) < 0.0001  # bukan 0 — stok tak terhapus
+			and abs(flt(native_row.valuation_rate) - 70) < 0.01
+		)
+		check(
+			"reload_resave_native_safe",
+			ok_native,
+			f"sr={sr7a.name}, row={dict(native_row) if native_row else None}, want qty=7, rate=70",
+		)
+		sr7b = _make_sr(
+			company,
+			[
+				{  # baris UOM; rate native 90 dibiarkan (rate custom tak pernah diisi)
+					"item_code": item.name,
+					"warehouse": warehouse,
+					SR_UOM_FIELD: alt,
+					SR_AFTER_FIELD: 1,
+					"valuation_rate": 90,
+				}
+			],
+			expense_account=expense_account,
+		)
+		frappe.db.commit()
+		reloaded = frappe.get_doc("Stock Reconciliation", sr7b.name)  # baca ulang dari DB
+		reloaded.save()
+		frappe.db.commit()
+		custom_row = frappe.db.get_value(
+			"Stock Reconciliation Item",
+			{"parent": sr7b.name},
+			["qty", "valuation_rate", SR_AFTER_FIELD, SR_DIFF_FIELD],
+			as_dict=1,
+		)
+		ok_custom = bool(
+			custom_row
+			and abs(flt(custom_row.qty) - 12) < 0.0001  # 1 x 12 tetap terkonversi
+			and abs(flt(custom_row.valuation_rate) - 90) < 0.01  # passthrough tetap, bukan 0
+		)
+		check(
+			"reload_resave_rate_safe",
+			ok_custom,
+			f"sr={sr7b.name}, row={dict(custom_row) if custom_row else None}, "
+			"want qty=12, rate=90 (bukan 0)",
+		)
+	except Exception as e:
+		check("reload_resave_native_safe", False, f"{type(e).__name__}: {str(e)[:200]}")
+		check("reload_resave_rate_safe", False, f"{type(e).__name__}: {str(e)[:200]}")
 
 
 def _teardown(check):
