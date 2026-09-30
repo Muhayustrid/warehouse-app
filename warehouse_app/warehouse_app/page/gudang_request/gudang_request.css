@@ -375,20 +375,10 @@
 	margin: 0 0 10px;
 	font-size: 12px;
 }
-/* kontrol uom qty di kanan hint: kecil ala kontrol panel filter */
-.wzrq-dt-uom {
-	display: flex;
-	align-items: center;
-	gap: 6px;
+/* kolom Qty dialog konfirmasi: teks saja */
+.wzrq-dt-qty {
 	white-space: nowrap;
-}
-.wzrq-dt-uom .form-control {
-	width: auto;
-	min-width: 76px;
-	height: 28px;
-	padding: 4px 8px;
-	font-size: 13px;
-	line-height: 20px;
+	font-weight: 600;
 }
 .wzrq-dtable .wzrq-dt-wo {
 	min-width: 250px;
@@ -401,79 +391,14 @@
 	white-space: nowrap;
 	margin-top: 2px;
 }
-.wzrq-dtable .form-control {
-	width: 100%;
-	min-width: 0;
-}
-.wzrq-dt-cell {
-	width: 110px;
-}
-.wzrq-dt-cell2 {
-	width: 200px;
-}
-.wzrq-box2-inputs {
-	display: flex;
-	gap: 6px;
-}
-.wzrq-box2-inputs .form-control {
-	flex: 1;
-}
-.wzrq-addbox2 {
-	padding: 0;
-	font-size: 12px;
-	height: 28px;
-	box-shadow: none;
-}
 
-/* W19: penanda grup + dialog grup (box bersama utk N WO) */
+/* W19: penanda grup + dialog konfirmasi grup */
 .wzrq-grp {
 	font-weight: 400;
 }
-.wzrq-grows {
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-}
-.wzrq-grow {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-.wzrq-grow .wzrq-gnum {
-	width: 64px;
-	flex-shrink: 0;
-	font-size: 12px;
-	font-weight: 600;
-}
-.wzrq-grow .wzrq-gkg,
-.wzrq-grow .wzrq-gqty {
-	width: 130px;
-	flex-shrink: 0;
-}
-.wzrq-grow .wzrq-gx {
-	flex-shrink: 0;
-	padding: 0 6px;
-	color: var(--text-muted);
-}
-.wzrq-grow .wzrq-gx:hover {
-	color: var(--text-color);
-}
-.wzrq-gaddbox {
-	padding-left: 0;
-	font-size: 12px;
-	box-shadow: none;
-}
-.wzrq-galloc {
-	margin: 8px 0 0;
-	font-size: 12px;
-}
-@media (max-width: 640px) {
-	.wzrq-grow .wzrq-gkg,
-	.wzrq-grow .wzrq-gqty {
-		width: auto;
-		flex: 1;
-		min-width: 0;
-	}
+.wzrq-gsum {
+	margin: 4px 0 0;
+	font-size: 14px;
 }
 
 /* --- layar kecil: papan juga dibuka dari HP/tablet di area gudang --- */

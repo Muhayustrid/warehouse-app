@@ -2,17 +2,20 @@
 // (adonan ke + nama item); pembuatan/pembatalan MR memanggil endpoint
 // production_app (create_request/cancel_request) — satu penulis ringkasan
 // WO, pola sama dengan aksi papan W4 yang memanggil mapper native erpnext.
-// Validasi box (kg + jumlah, harus tepat expected units) andalkan server:
-// atomic, fail-honest, pesan errornya langsung tampil sebagai toast.
+// Validasi andalkan server: atomic, fail-honest, pesan errornya langsung
+// tampil sebagai toast.
 //
 // Revisi umpan balik user: (1) tabel checklist — pilih satu/beberapa WO,
-// satu aksi "Buat Request" (dialog alokasi Box per baris, prefilled jumlah
-// = hasil WO); (2) panel filter ala list view ERPNext: baris
+// satu aksi "Buat Request" (dialog konfirmasi, qty = hasil penuh WO);
+// (2) panel filter ala list view ERPNext: baris
 // [Field][operator][Nilai] + Tambah Filter — field dibatasi whitelist
 // server (filter_fields), field Item virtual dicocokkan via nama/kode item.
 // W19: group request — pilih ≥2 WO satu item yang terdaftar grup, satu aksi
-// "Create Group Request" dengan box BERSAMA (K box utk N WO) lewat endpoint
-// create_group_request/cancel_group_request production_app.
+// "Create Group Request" lewat endpoint create_group_request/
+// cancel_group_request production_app.
+// W30: input Box (kg + alokasi jumlah) dihapus dari kedua dialog — payload
+// tanpa argumen box, qty = hasil penuh WO (butuh production_app yang menerima
+// panggilan tanpa box; lihat HANDOFF_PRODUCTION_APP_BOX.md).
 
 // state filter modul-level (satu instance page per sesi)
 let WZRQ_FILTERS = []; // [{field, operator, value(array utk between)}]
@@ -752,230 +755,51 @@ function wzrq_row_html(r, cols) {
 
 // ---------------- aksi
 
-// Dialog alokasi Box untuk N WO terpilih: satu baris per WO, prefilled
-// jumlah Box 1 mengikuti uom qty terpilih (display -> expected units,
-// stock -> produced qty). Server tetap validator kebenaran — atomic.
+// Dialog konfirmasi request utk N WO terpilih: tanpa input — qty selalu
+// hasil penuh tiap WO (server otoritatif, endpoint menegakkan qty == hasil).
 function bulk_dialog(wos, done) {
-	// uom input qty: preferensi tersimpan -> display uom baris pertama
-	let dialog_uom = wzrq_load('wzrq_dialog_uom');
-	const uom_opts = wzrq_uom_options(wos);
-	if (!uom_opts.includes(dialog_uom)) {
-		dialog_uom = (wos[0] && (wos[0].display_uom || wos[0].stock_uom)) || '';
-	}
-
 	const rows_html = wos
 		.map(
 			(r) => `
-			<tr data-wo="${wzrq_esc(r.name)}" data-factor="${wzrq_esc(r.display_conversion_factor || 1)}" data-item="${wzrq_esc(r.item_name || r.production_item || '')}" data-stock-uom="${wzrq_esc(r.stock_uom || '')}" data-display-uom="${wzrq_esc(r.display_uom || '')}">
+			<tr data-wo="${wzrq_esc(r.name)}">
 				<td class="wzrq-dt-wo">
 					<div class="wzrq-dt-title">${__('Batch')} <b>${wzrq_esc(r.custom_adonan_ke || '-')}</b> · ${wzrq_esc(r.item_name)}</div>
-					<div class="wzrq-dt-meta text-muted">${wzrq_esc(r.name)} · ${__('yield {0} {1}', [Number(r.produced_qty || 0).toLocaleString('en-US'), wzrq_esc(r.stock_uom)])}${r.display_uom && r.display_uom !== r.stock_uom ? ` · ${Number(r.expected_units != null ? r.expected_units : 0).toLocaleString('en-US')} ${wzrq_esc(r.display_uom)}` : ''}</div>
+					<div class="wzrq-dt-meta text-muted">${wzrq_esc(r.name)} · ${__('yield {0} {1}', [Number(r.produced_qty || 0).toLocaleString('en-US'), wzrq_esc(r.stock_uom)])}</div>
 				</td>
-				<td class="wzrq-dt-cell"><input type="number" class="form-control wzrq-kg1" min="0" step="0.01" placeholder="kg" title="${__('Box 1 (kg)')}" /></td>
-				<td class="wzrq-dt-cell"><input type="number" class="form-control wzrq-qty1" min="0" step="1" value="${wzrq_is_display_uom(r, dialog_uom) ? Number(r.expected_units != null ? r.expected_units : 0) : Math.round(Number(r.produced_qty || 0))}" title="${__('Box 1 (qty)')}" /></td>
-				<td class="wzrq-dt-cell2">
-					<button type="button" class="btn btn-link wzrq-addbox2">+ ${__('Box 2')}</button>
-					<div class="wzrq-box2-inputs" style="display:none">
-						<input type="number" class="form-control wzrq-kg2" min="0" step="0.01" placeholder="kg" title="${__('Box 2 (kg)')}" />
-						<input type="number" class="form-control wzrq-qty2" min="0" step="1" value="0" title="${__('Box 2 (qty)')}" />
-					</div>
-					<button type="button" class="btn btn-link wzrq-addbox3" style="display:none">+ ${__('Box 3')}</button>
-					<div class="wzrq-box3-inputs" style="display:none">
-						<input type="number" class="form-control wzrq-kg3" min="0" step="0.01" placeholder="kg" title="${__('Box 3 (kg)')}" />
-						<input type="number" class="form-control wzrq-qty3" min="0" step="1" value="0" title="${__('Box 3 (qty)')}" />
-					</div>
-				</td>
+				<td class="wzrq-dt-qty">${Number(r.expected_units != null ? r.expected_units : Math.round(Number(r.produced_qty || 0))).toLocaleString('en-US')} ${wzrq_esc(r.display_uom || r.stock_uom || '')}</td>
 			</tr>`
 		)
 		.join('');
 
 	const d = new frappe.ui.Dialog({
-		title: __('Box Allocation ({0} Work Orders)', [wos.length]),
+		title: __('Handover Request ({0} Work Orders)', [wos.length]),
 		size: 'large',
 	});
 	d.$body.html(`
 		<p class="text-muted wzrq-dt-hint">
-			<span>${__('Box 1 is required. Box 2 and Box 3 are optional: click + Box 2, then + Box 3, to add them.')}</span>
-			<span class="wzrq-dt-uom">${__('Qty in')} <select class="form-control wzrq-duom">${uom_opts.map((o) => `<option value="${wzrq_esc(o)}"${o === dialog_uom ? ' selected' : ''}>${wzrq_esc(o)}</option>`).join('')}</select></span>
+			<span>${__('Request qty equals the full produced output of each Work Order.')}</span>
 		</p>
 		<table class="wzrq-dtable">
 			<thead>
 				<tr>
 					<th class="wzrq-dt-wo">${__('Work Order')}</th>
-					<th>${__('Box 1 · kg')}</th>
-					<th>${__('Box 1 · qty')}</th>
-					<th>${__('Box 2 / 3 · optional')}</th>
+					<th>${__('Qty')}</th>
 				</tr>
 			</thead>
 			<tbody>${rows_html}</tbody>
 		</table>
 	`);
 
-	// Box 2/3 opsional: munculkan pasangan input kg/qty saat diminta.
-	// + Box 3 baru terlihat setelah Box 2 dimunculkan (urutan reveal tetap).
-	d.$body.on('click', '.wzrq-addbox2', function () {
-		const $cell = $(this).closest('.wzrq-dt-cell2');
-		$(this).hide();
-		$cell.find('.wzrq-addbox3').show();
-		$cell.find('.wzrq-box2-inputs').show().find('.wzrq-kg2').trigger('focus');
-	});
-	d.$body.on('click', '.wzrq-addbox3', function () {
-		const $cell = $(this).closest('.wzrq-dt-cell2');
-		$(this).hide();
-		$cell.find('.wzrq-box3-inputs').show().find('.wzrq-kg3').trigger('focus');
-	});
-
-	// ganti uom qty: KONVERSI nilai yang sudah diinput per baris
-	// (display = stock/factor, stock = display x factor) — jangan reset kerja user
-	d.$body.on('change', '.wzrq-duom', function () {
-		const next = this.value;
-		d.$body.find('.wzrq-dtable tbody tr').each(function () {
-			const $tr = $(this);
-			const factor = Number($tr.attr('data-factor'));
-			const f = isFinite(factor) && factor > 0 ? factor : 1;
-			const to_display = wzrq_tr_is_display($tr, next) && !wzrq_tr_is_display($tr, dialog_uom);
-			const to_stock = wzrq_tr_is_display($tr, dialog_uom) && !wzrq_tr_is_display($tr, next);
-			if (!to_display && !to_stock) {
-				return;
-			}
-			$tr.find('.wzrq-qty1, .wzrq-qty2, .wzrq-qty3').each(function () {
-				const v = parseFloat($(this).val());
-				if (!isFinite(v)) {
-					return; // input kosong dibiarkan kosong
-				}
-				$(this).val(String(wzrq_round3(to_display ? v / f : v * f)));
-			});
-		});
-		dialog_uom = next;
-		wzrq_store('wzrq_dialog_uom', next);
-	});
-
 	d.set_primary_action(__('Create Request'), () => submit_bulk(d, done));
 	d.show();
 }
 
-// varian wzrq_is_display_uom untuk baris dialog (data di atribut tr)
-function wzrq_tr_is_display($tr, uom) {
-	const disp = $tr.attr('data-display-uom') || '';
-	const stock = $tr.attr('data-stock-uom') || '';
-	const factor = Number($tr.attr('data-factor'));
-	return !!(disp && disp !== stock && isFinite(factor) && factor > 0 && uom === disp);
-}
-
-// bulatkan wajar maks 3 desimal tanpa nol ekor (96.5, bukan 96.500)
-function wzrq_round3(x) {
-	return Number(x.toFixed(3));
-}
-
 async function submit_bulk(d, done) {
-	// uom input qty dialog saat submit (mode per baris via atribut tr)
-	const uom = d.$body.find('.wzrq-duom').val() || '';
+	// W30: payload tanpa argumen box — server yang menurunkan qty penuh WO.
 	const payloads = [];
-	let invalid = null;
-	const not_whole = [];
 	d.$body.find('.wzrq-dtable tbody tr').each(function () {
-		if (invalid) {
-			return;
-		}
-		const $tr = $(this);
-		const kg1 = $tr.find('.wzrq-kg1').val();
-		const q1 = $tr.find('.wzrq-qty1').val();
-		if (kg1 === '' || kg1 === null || q1 === '' || q1 === null) {
-			invalid = $tr.attr('data-wo');
-			return;
-		}
-		// qty input (uom terpilih) -> integer display UOM: kontrak payload API.
-		// Kedua jalur wajib bulat: entry langsung di UOM display TIDAK boleh
-		// dipotong diam-diam (parseInt lama mengubah 2.5 -> 2 tanpa pesan).
-		const factor = Number($tr.attr('data-factor'));
-		const f = isFinite(factor) && factor > 0 ? factor : 1;
-		const item = $tr.attr('data-item') || $tr.attr('data-wo');
-		const item_label = wzrq_esc(item);
-		const stock_uom_label = wzrq_esc($tr.attr('data-stock-uom') || '');
-		const disp_uom_label = wzrq_esc($tr.attr('data-display-uom') || '');
-		const to_display_units = (raw) => {
-			if (wzrq_tr_is_display($tr, uom)) {
-				const v = parseFloat(raw);
-				if (!isFinite(v) || Math.abs(v - Math.round(v)) > 1e-9) {
-					not_whole.push(
-						__('{0} {1} is not a whole number for {2}.', [
-							String(raw),
-							wzrq_esc(uom),
-							item_label,
-						])
-					);
-					return null;
-				}
-				return Math.round(v);
-			}
-			const v = parseFloat(raw);
-			const x = v / f;
-			const whole = Math.round(x);
-			if (Math.abs(x - whole) > 1e-6) {
-				not_whole.push(
-					__('{0} {1} is not a whole number of {2} for {3} (1 {2} = {4} {1}).', [
-						v.toLocaleString('en-US'),
-						stock_uom_label,
-						disp_uom_label,
-						item_label,
-						f,
-					])
-				);
-				return null;
-			}
-			return whole;
-		};
-		const box_1_qty = to_display_units(q1);
-		// Box 2/3 hanya dikirim bila pasangan inputnya dimunculkan
-		let box_2 = 0;
-		let box_2_qty = 0;
-		if ($tr.find('.wzrq-box2-inputs').is(':visible')) {
-			const kg2 = $tr.find('.wzrq-kg2').val();
-			box_2 = kg2 === '' || kg2 === null ? 0 : parseFloat(kg2);
-			const q2 = $tr.find('.wzrq-qty2').val();
-			box_2_qty = q2 === '' || q2 === null ? 0 : to_display_units(q2);
-		}
-		let box_3 = 0;
-		let box_3_qty = 0;
-		if ($tr.find('.wzrq-box3-inputs').is(':visible')) {
-			const kg3 = $tr.find('.wzrq-kg3').val();
-			box_3 = kg3 === '' || kg3 === null ? 0 : parseFloat(kg3);
-			const q3 = $tr.find('.wzrq-qty3').val();
-			box_3_qty = q3 === '' || q3 === null ? 0 : to_display_units(q3);
-		}
-		if (box_1_qty === null || box_2_qty === null || box_3_qty === null) {
-			return; // sudah dicatat di not_whole — abort setelah loop
-		}
-		payloads.push({
-			work_order: $tr.attr('data-wo'),
-			box_1: parseFloat(kg1),
-			box_1_qty,
-			box_2,
-			box_2_qty,
-			box_3,
-			box_3_qty,
-		});
+		payloads.push({ work_order: $(this).attr('data-wo') });
 	});
-	if (invalid) {
-		frappe.msgprint({
-			title: __('Incomplete data'),
-			indicator: 'red',
-			message: __('Fill in Box 1 (kg and qty) for every row. Check {0}.', [invalid]),
-		});
-		return;
-	}
-	if (not_whole.length) {
-		// input Pcs tidak membentuk Pack bulat: nol request terkirim
-		frappe.msgprint({
-			title: __('Invalid quantity'),
-			indicator: 'red',
-			message:
-				not_whole.length === 1
-					? not_whole[0]
-					: `<ul>${not_whole.map((m) => `<li>${m}</li>`).join('')}</ul>`,
-		});
-		return;
-	}
 
 	// v16 new desk tidak punya frappe.freeze — matikan tombol saja selama
 	// submit supaya tidak dobel-klik (frappe.call error tetap tampil normal).
@@ -1070,224 +894,42 @@ function cancel_request(material_request, done) {
 	});
 }
 
-// ---------------- W19: group request (box bersama utk N WO satu item)
+// ---------------- W19: group request (N WO satu item, satu paket)
 
-// Dialog alokasi box GRUP: K box dibagi bersama N WO — tanpa baris per WO.
-// Baris = [Box # · kg · qty]; alokasi harus tepat total unit (live hint,
-// tombol utama disabled bila X ≠ Y). Server tetap otoritatif.
+// Dialog konfirmasi GRUP: tanpa input — total qty = hasil penuh semua
+// anggota; server otoritatif (membentuk Handover Box Plan-nya sendiri).
 function group_dialog(wos, done) {
-	// uom input qty: preferensi tersimpan -> display uom baris pertama
-	// (pola bulk_dialog); satu item -> satu faktor konversi utk semua baris
-	let dialog_uom = wzrq_load('wzrq_dialog_uom');
-	const uom_opts = wzrq_uom_options(wos);
-	if (!uom_opts.includes(dialog_uom)) {
-		dialog_uom = (wos[0] && (wos[0].display_uom || wos[0].stock_uom)) || '';
-	}
 	const r0 = wos[0] || {};
-	const factor = Number(r0.display_conversion_factor || 1);
-	const f = isFinite(factor) && factor > 0 ? factor : 1;
 	const item_name = r0.item_name || r0.production_item || '';
-	const is_disp_uom = (uom) =>
-		!!(r0.display_uom && r0.display_uom !== r0.stock_uom && f > 0 && uom === r0.display_uom);
-	const total_in = (uom) =>
-		wos.reduce(
-			(s, r) =>
-				s +
-				(wzrq_is_display_uom(r, uom)
-					? Number(r.expected_units != null ? r.expected_units : 0)
-					: Math.round(Number(r.produced_qty || 0))),
-			0,
-		);
+	const uom = r0.display_uom || r0.stock_uom || '';
+	const total = wos.reduce(
+		(s, r) => s + Number(r.expected_units != null ? r.expected_units : Math.round(Number(r.produced_qty || 0))),
+		0,
+	);
 
 	const d = new frappe.ui.Dialog({
-		title: __('Group Box Allocation ({0} · {1} Work Orders)', [item_name, wos.length]),
+		title: __('Group Request ({0} · {1} Work Orders)', [item_name, wos.length]),
 		size: 'large',
 	});
 	d.$body.html(`
 		<p class="text-muted wzrq-dt-hint">
-			<span>${__('Shared boxes across {0} Work Orders of {1}. Allocate the total exactly.', [wos.length, wzrq_esc(item_name)])} <span class="wzrq-gtotal"></span></span>
-			<span class="wzrq-dt-uom">${__('Qty in')} <select class="form-control wzrq-duom">${uom_opts
-				.map((o) => `<option value="${wzrq_esc(o)}"${o === dialog_uom ? ' selected' : ''}>${wzrq_esc(o)}</option>`)
-				.join('')}</select></span>
+			<span>${__('One request for {0} Work Orders of {1}. The qty is their full produced output.', [wos.length, wzrq_esc(item_name)])}</span>
 		</p>
-		<div class="wzrq-grows"></div>
-		<button type="button" class="btn btn-link wzrq-gaddbox">+ ${__('Add Box')}</button>
-		<p class="text-muted wzrq-galloc"></p>
+		<p class="wzrq-gsum"><b>${Number(total).toLocaleString('en-US')} ${wzrq_esc(uom)}</b> <span class="text-muted">${__('total from {0} Work Orders', [wos.length])}</span></p>
 	`);
 
-	function grow_html(qty) {
-		return `<div class="wzrq-grow">
-			<span class="wzrq-gnum text-muted"></span>
-			<input type="number" class="form-control wzrq-gkg" min="0" step="0.01" placeholder="kg" title="${__('Box kg')}" />
-			<input type="number" class="form-control wzrq-gqty" min="0" step="1" value="${qty == null ? '' : qty}" title="${__('Box qty')}" />
-			<button type="button" class="btn btn-link wzrq-gx" title="${__('Remove box')}">×</button>
-		</div>`;
-	}
-	function add_grow(qty) {
-		d.$body.find('.wzrq-grows').append(grow_html(qty));
-		renumber_grows();
-		update_galloc();
-	}
-	// nomor box mengikuti urutan DOM; × hanya saat >1 baris. Hanya label/
-	// tombol yang disentuh — nilai input user tidak diotak-atik.
-	function renumber_grows() {
-		const $rows = d.$body.find('.wzrq-grows .wzrq-grow');
-		$rows.each((i, el) => $(el).find('.wzrq-gnum').text(__('Box {0}', [i + 1])));
-		$rows.find('.wzrq-gx').toggle($rows.length > 1);
-	}
-
-	add_grow(total_in(dialog_uom));
-
-	d.$body.on('click', '.wzrq-gaddbox', () => {
-		add_grow('');
-		d.$body.find('.wzrq-grows .wzrq-grow:last .wzrq-gkg').trigger('focus');
-	});
-	d.$body.on('click', '.wzrq-gx', function () {
-		$(this).closest('.wzrq-grow').remove();
-		renumber_grows();
-		update_galloc();
-	});
-
-	// ganti uom qty: KONVERSI nilai terinput display<->stock (pola bulk_dialog)
-	d.$body.on('change', '.wzrq-duom', function () {
-		const next = this.value;
-		const to_display = is_disp_uom(next) && !is_disp_uom(dialog_uom);
-		const to_stock = is_disp_uom(dialog_uom) && !is_disp_uom(next);
-		if (to_display || to_stock) {
-			d.$body.find('.wzrq-gqty').each(function () {
-				const v = parseFloat($(this).val());
-				if (!isFinite(v)) {
-					return; // input kosong dibiarkan kosong
-				}
-				$(this).val(String(wzrq_round3(to_display ? v / f : v * f)));
-			});
-		}
-		dialog_uom = next;
-		wzrq_store('wzrq_dialog_uom', next);
-		update_galloc();
-	});
-
-	// live hint "Allocated X of Y {uom}" + primary disabled bila belum pas
-	function update_galloc() {
-		if (d.wzrq_in_flight) {
-			return; // jangan sentuh state tombol selama submit berjalan
-		}
-		const uom = d.$body.find('.wzrq-duom').val() || dialog_uom;
-		const disp = is_disp_uom(uom);
-		const tot = total_in(uom);
-		let x = 0;
-		let ok = true;
-		d.$body.find('.wzrq-grow').each(function () {
-			const kg_raw = $(this).find('.wzrq-gkg').val();
-			const q_raw = $(this).find('.wzrq-gqty').val();
-			const kg = parseFloat(kg_raw);
-			const q = parseFloat(q_raw);
-			if (kg_raw === '' || q_raw === '' || !isFinite(kg) || kg <= 0 || !isFinite(q) || q <= 0) {
-				ok = false;
-				return;
-			}
-			// display mode kirim parseInt — desimal di hint akan berbohong soal total
-			if (disp && Math.abs(q - Math.round(q)) > 1e-6) {
-				ok = false;
-				return;
-			}
-			x += q;
-		});
-		d.$body
-			.find('.wzrq-gtotal')
-			.text(` ${__('Total {0} {1}', [Number(tot).toLocaleString('en-US'), uom])}`);
-		d.$body.find('.wzrq-galloc').text(
-			__('Allocated {0} of {1} {2}', [Number(x).toLocaleString('en-US'), Number(tot).toLocaleString('en-US'), uom]),
-		);
-		d.$wrapper.find('.modal .btn-primary').prop('disabled', !(ok && Math.abs(x - tot) < 1e-6));
-	}
-	d.$body.on('input change', '.wzrq-gkg, .wzrq-gqty', update_galloc);
-
-	d.set_primary_action(__('Create Group Request'), () => submit_group(d, wos, dialog_uom, is_disp_uom, f, r0, done));
+	d.set_primary_action(__('Create Group Request'), () => submit_group(d, wos, done));
 	d.show();
-	update_galloc();
 }
 
-// qty input (uom terpilih) -> integer display UOM persis pola per-WO:
-// display = parseInt; stock = konversi + cek Pack bulat (abort sebelum kirim)
-async function submit_group(d, wos, dialog_uom, is_disp_uom, f, r0, done) {
+// satu call create_group_request — payload tanpa boxes (W30): server yang
+// membentuk rencana & menurunkan total qty. Guard in_flight mencegah
+// dobel-klik / submit bertumpuk.
+async function submit_group(d, wos, done) {
 	if (d.wzrq_in_flight) {
 		return; // satu call dalam satu waktu — dobel-klik / input race
 	}
 	d.wzrq_in_flight = true;
-	try {
-		await _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done);
-	} finally {
-		d.wzrq_in_flight = false;
-	}
-}
-
-async function _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done) {
-	const uom = d.$body.find('.wzrq-duom').val() || dialog_uom;
-	const disp = is_disp_uom(uom);
-	const boxes = [];
-	const not_whole = [];
-	let invalid = false;
-	d.$body.find('.wzrq-grow').each(function (i) {
-		const kg_raw = $(this).find('.wzrq-gkg').val();
-		const q_raw = $(this).find('.wzrq-gqty').val();
-		if (kg_raw === '' || kg_raw === null || q_raw === '' || q_raw === null) {
-			invalid = true;
-			return;
-		}
-		const stock_uom = r0.stock_uom || '';
-		const display_uom = r0.display_uom || '';
-		let qty_units;
-		if (disp) {
-			// kontrak API = integer display UOM: tolak desimal eksplisit,
-			// jangan potong diam-diam (parseInt lama mengubah 2.5 -> 2)
-			const v = parseFloat(q_raw);
-			if (!isFinite(v) || Math.abs(v - Math.round(v)) > 1e-9) {
-				not_whole.push(__('Box {0}: {1} {2} is not a whole number.', [i + 1, String(q_raw), uom]));
-				return;
-			}
-			qty_units = Math.round(v);
-		} else {
-			const v = parseFloat(q_raw);
-			const x = v / f;
-			const whole = Math.round(x);
-			if (Math.abs(x - whole) > 1e-6) {
-				not_whole.push(
-					__('Box {0}: {1} {2} is not a whole number of {3} (1 {3} = {4} {2})', [
-						i + 1,
-						v.toLocaleString('en-US'),
-						stock_uom,
-						display_uom || uom,
-						f,
-					]),
-				);
-				return;
-			}
-			qty_units = whole;
-		}
-		boxes.push({ kg: parseFloat(kg_raw), qty: qty_units });
-	});
-	if (invalid) {
-		frappe.msgprint({
-			title: __('Incomplete data'),
-			indicator: 'red',
-			message: __('Fill in kg and qty for every box.'),
-		});
-		return;
-	}
-	if (not_whole.length) {
-		// qty tidak membentuk Pack bulat: nol request terkirim
-		frappe.msgprint({
-			title: __('Invalid quantity'),
-			indicator: 'red',
-			message:
-				not_whole.length === 1
-					? not_whole[0]
-					: `<ul>${not_whole.map((m) => `<li>${m}</li>`).join('')}</ul>`,
-		});
-		return;
-	}
-
 	// v16 new desk tidak punya frappe.freeze — matikan tombol saja selama
 	// submit supaya tidak dobel-klik.
 	const $btn = d.$wrapper.find('.modal .btn-primary');
@@ -1297,17 +939,15 @@ async function _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done)
 			method: 'production_app.api.handover.create_group_request',
 			args: {
 				work_orders: JSON.stringify(wos.map((w) => w.name)),
-				boxes: JSON.stringify(boxes),
 			},
 		});
 		d.hide();
 		frappe.msgprint({
 			title: __('Group request created'),
 			indicator: 'green',
-			message: __('Group request created: {0} · {1} Work Orders · {2} boxes', [
+			message: __('Group request created: {0} · {1} Work Orders', [
 				wzrq_esc((r.message && r.message.box_plan) || ''),
 				wos.length,
-				boxes.length,
 			]),
 		});
 		done && done();
@@ -1316,6 +956,7 @@ async function _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done)
 		frappe.msgprint({ title: __('Failed'), indicator: 'red', message: wzrq_err_text(e) });
 	} finally {
 		$btn.prop('disabled', false);
+		d.wzrq_in_flight = false;
 	}
 }
 
