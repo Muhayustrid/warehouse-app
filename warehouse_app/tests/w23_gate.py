@@ -40,6 +40,7 @@
 # finally, residu prefix = 0. Alur stok fixture: 0 → 30 → 12 → 24 → 5.
 
 import json
+import time
 import traceback
 
 import frappe
@@ -613,6 +614,22 @@ def _sweep():
 			doc.cancel()
 		frappe.delete_doc(doctype, name, force=1, ignore_missing=True)
 
+	def delete_versions():
+		# W31: MariaDB 1020 "Record has changed since last read in tabVersion"
+		# bisa kena bila transaksi gate ini memegang snapshot basi saat worker
+		# queue (memproses pasca-run gate sebelumnya, mis. cancel SE/PL + repost
+		# dari gate W31 yang kini berjalan sebelum gate ini di pipeline) menulis
+		# baris Version — mulai snapshot baru dengan commit + satu retry.
+		for attempt in (1, 2):
+			try:
+				frappe.db.commit()
+				frappe.db.delete("Version", {"docname": ("like", PREFIX + "%")})
+				return
+			except Exception:
+				if attempt == 2:
+					raise
+				time.sleep(0.5)
+
 	items = frappe.get_all(
 		"Item",
 		or_filters=[
@@ -638,7 +655,7 @@ def _sweep():
 	# Item
 	for name in items:
 		safe(f"Item {name}", lambda n=name: frappe.delete_doc("Item", n, force=1, ignore_missing=True))
-	safe("Version", lambda: frappe.db.delete("Version", {"docname": ("like", PREFIX + "%")}))
+	safe("Version", delete_versions)
 
 	return (not errors), ("bersih" if not errors else "; ".join(errors[:5]))
 

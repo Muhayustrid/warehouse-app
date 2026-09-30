@@ -131,9 +131,11 @@ def apply_sr_inventory_uom(doc, method):
 			or row.get("serial_and_batch_bundle")
 			# use_serial_batch_fields TIDAK masuk kondisi: form native menyalakan
 			# flag ini di row baru (user default) walau item tak ber-serial/batch —
-			# konversi tetap aman selama serial/bundle-nya kosong.
+			# konversi tetap aman selama serial/bundle-nya kosong. batch_no (direct
+			# field) sejak W31 juga TIDAK di-skip: baris batch langsung dikonversi
+			# seperti baris biasa (entries bundle tetap satuan stock di server).
 		):
-			continue  # serial/batch = passthrough native
+			continue  # serial/bundle = passthrough native
 		stock_uom = row.get("stock_uom") or frappe.get_cached_value(
 			"Item", row.item_code, "stock_uom"
 		)
@@ -168,3 +170,78 @@ def apply_sr_inventory_uom(doc, method):
 		# saat draft di-reload dan disimpan ulang.
 		if rate not in (None, "") and (flt(rate) != 0 or row.get("allow_zero_valuation_rate")):
 			row.set("valuation_rate", flt(flt(rate) / factor, row.precision("valuation_rate")))
+
+
+# ------------------------------------------------------------------ W31 ----
+# Pick List: picking boleh dicatat dalam UOM baris (default = Default Inventory
+# UOM item, W21) lewat custom_picked_qty; picked_qty native tetap selalu stock
+# UOM karena dipakai validate_stock_qty, cap set_item_locations (before_save,
+# pick_manually = 0), dan pembuatan bundle on_submit. Hook before_validate
+# menjaga keduanya selaras SEBELUM controller validate (doc_events custom jalan
+# lebih dulu; controller Pick List tidak punya before_validate sendiri).
+# after_save klien melakukan reload penuh — semua nilai wajib persist di DB.
+
+PL_PICKED_FIELD = "custom_picked_qty"
+
+
+def apply_pl_inventory_uom(doc, method):
+	"""Pick List before_validate: selaraskan custom_picked_qty (UOM baris) dan
+	picked_qty (stock UOM). Aturan ASIMETRIS anti silent-zero (Float custom yang
+	tak pernah diisi tersimpan 0.0, bukan NULL):
+	(1) custom > 0 -> picked_qty = custom x faktor (precision row);
+	(2) elif picked_qty > 0 -> backfill custom = picked / faktor HANYA bila
+	    hasil pembulatan != 0 (picked tidak pernah ditimpa);
+	(3) else no-op (0 = belum dipick, netral native).
+	Baris native (tanpa uom / uom == stock_uom, mis. mapper Work Order) tidak
+	disentuh. pick_manually = 0: custom di-clamp ke qty baris (mirror cap native
+	lalu recompute picked)."""
+	for row in doc.get("locations") or []:
+		if not row.item_code:
+			continue
+		stock_uom = row.get("stock_uom") or frappe.get_cached_value("Item", row.item_code, "stock_uom")
+		uom = row.get("uom")
+		if not uom or uom == stock_uom:
+			continue  # baris native murni: hook no-op
+		factor = flt(row.get("conversion_factor"))
+		if factor <= 0:
+			frappe.throw(
+				_("UOM {0} untuk Item {1} pada Pick List tidak valid: conversion factor kosong atau nol, "
+					"periksa tabel UOM Conversion pada item tersebut.").format(
+					frappe.bold(uom), frappe.bold(row.item_code)
+				)
+			)
+		custom = flt(row.get(PL_PICKED_FIELD))
+		picked = flt(row.get("picked_qty"))
+		if custom > 0:
+			qty = flt(row.get("qty"))
+			# mirror cap set_item_locations: picked tak boleh melebihi permintaan
+			# baris saat gudang tidak memilih manual
+			if not doc.get("pick_manually") and qty > 0 and custom > qty:
+				custom = qty
+				row.set(PL_PICKED_FIELD, custom)
+			row.set("picked_qty", flt(custom * factor, row.precision("picked_qty")))
+		elif picked > 0:
+			value = flt(picked / factor, row.precision(PL_PICKED_FIELD))
+			if value:  # pembulatan 0 = terlalu kecil utk direpresentasikan: biarkan 0
+				row.set(PL_PICKED_FIELD, value)
+
+
+def _pl_backfill(doc, method):
+	"""Pick List on_submit: jalur auto-fill native (scan_mode 0 dan picked 0 ->
+	picked_qty = stock_qty di before_submit) tidak melewati hook konversi —
+	isi customnya di sini agar submit tetap meninggalkan pasangan konsisten."""
+	for row in doc.get("locations") or []:
+		if not row.item_code:
+			continue
+		stock_uom = row.get("stock_uom") or frappe.get_cached_value("Item", row.item_code, "stock_uom")
+		uom = row.get("uom")
+		if not uom or uom == stock_uom:
+			continue
+		if flt(row.get("picked_qty")) <= 0 or flt(row.get(PL_PICKED_FIELD)) > 0:
+			continue
+		factor = flt(row.get("conversion_factor"))
+		if factor <= 0:
+			continue
+		value = flt(flt(row.get("picked_qty")) / factor, row.precision(PL_PICKED_FIELD))
+		if value:
+			row.db_set(PL_PICKED_FIELD, value, update_modified=False)

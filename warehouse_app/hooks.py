@@ -168,6 +168,11 @@ doc_events = {
 	"Stock Reconciliation": {
 		"before_validate": "warehouse_app.inventory_uom.apply_sr_inventory_uom"
 	},
+	# W31: hooks berubah wajib bench clear-cache saat deploy.
+	"Pick List": {
+		"before_validate": "warehouse_app.inventory_uom.apply_pl_inventory_uom",
+		"on_submit": "warehouse_app.inventory_uom._pl_backfill",
+	},
 }
 
 # Scheduled Tasks

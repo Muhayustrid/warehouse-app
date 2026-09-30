@@ -61,6 +61,7 @@ def apply():
     ensure_single_desk_entry()
     ensure_item_fields()
     ensure_sr_fields()
+    ensure_pl_fields()
     retire_client_scripts()
     ensure_client_scripts()
     migrate_legacy_uom_field()
@@ -513,7 +514,9 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 
 		// use_serial_batch_fields sengaja TIDAK di-skip: form native menyalakan
 		// flag itu di row baru walau item tak ber-serial/batch — konversi aman
-		// selama serial/bundle kosong.
+		// selama serial/bundle kosong. batch_no (direct field) juga TIDAK
+		// di-skip sejak W31: baris batch langsung dikonversi seperti baris
+		// biasa; hanya serial_no / serial_and_batch_bundle yang passthrough.
 		function skip_row(row) {
 			return !!(row.serial_no || row.serial_and_batch_bundle);
 		}
@@ -912,6 +915,496 @@ CLIENT_SCRIPT_SR_FORM = SR_FORM_SCRIPT_MARKER + """ — Import Stock Count on th
 })();
 """
 
+# ---- W31 ----
+# Pick List dalam UOM inventaris: kolom custom_picked_qty di baris locations
+# (picking diucapkan dalam UOM baris; picked_qty native tetap stock UOM karena
+# dipakai validate_stock_qty, cap set_item_locations, dan bundle on_submit) +
+# patch klien BarcodeScanner / SerialBatchPackageSelector (prototype, simpan
+# referensi original + delegasi utk konteks lain) + hint konversi display-only
+# di form Batch. Konversi & clamp server-side:
+# warehouse_app.inventory_uom.apply_pl_inventory_uom (before_validate).
+
+PL_SCRIPT_MARKER = "// warehouse_app W31 pick-list-inventory-uom"
+PL_SE_SCRIPT_MARKER = "// warehouse_app W31 serial-batch-selector-patch"
+PL_BATCH_SCRIPT_MARKER = "// warehouse_app W31 batch-conversion-hint"
+PL_PICKED_FIELD = "custom_picked_qty"
+
+PL_FIELD_SPEC = {
+    "dt": "Pick List Item",
+    "fieldname": PL_PICKED_FIELD,
+    "label": "Picked Qty (as per UOM)",
+    "fieldtype": "Float",
+    "in_list_view": 1,
+    "insert_after": "picked_qty",
+    # tanpa default: 0 = belum dipick (netral native), penanda konversi = uom
+    # baris != stock_uom (field native), faktor = conversion_factor native.
+    "description": "Picked quantity in this row's UOM. Drives Picked Qty (in Stock UOM) via the "
+    "UOM Conversion Factor. Leave empty for rows that are not picked yet.",
+}
+
+# Installer patch SerialBatchPackageSelector — sama persis disematkan di script
+# Pick List DAN Stock Entry (dialog batch/serial dibuka dari kedua form);
+# flag proto.__w31 menjaga install tunggal walau kedua script dimuat bersama.
+# Prinsip: dialog bicara dalam UOM BARIS (target qty, qty per batch, input
+# scan +1), tapi entries yang ditulis ke bundle TETAP SATUAN STOCK karena
+# server memvalidasi total bundle == stock_qty baris
+# (serial_and_batch_bundle.validate_quantity).
+_SELECTOR_PATCH_JS = """
+	// Cache item -> Default Inventory UOM (null = tidak ada). Diprima oleh form
+	// script (refresh + item_code); dialog membacanya sinkron.
+	const UOM_CACHE = (frappe.w31_uom_cache = frappe.w31_uom_cache || {});
+
+	function prime_uom(item_code) {
+		if (!item_code || UOM_CACHE[item_code] !== undefined) return;
+		UOM_CACHE[item_code] = null; // penanda in-flight / negatif
+		frappe.db.get_value("Item", item_code, "custom_default_inventory_unit_of_measure").then((r) => {
+			UOM_CACHE[item_code] = (r.message && r.message.custom_default_inventory_unit_of_measure) || null;
+		});
+	}
+
+	function patch_selector() {
+		const cls = window.erpnext && erpnext.SerialBatchPackageSelector;
+		const proto = cls && cls.prototype;
+		if (!proto || proto.__w31) return;
+		const hooks = ["make", "get_auto_data", "get_batch_qty", "render_data", "create_bundle_entries"];
+		if (hooks.some((m) => typeof proto[m] !== "function")) return; // struktur tak dikenal: diam
+
+		// Baris yang dikonversi: dialog dibuka dari form Pick List / Stock Entry
+		// saja (lingkup W31; form lain user bergate tetap native), UOM baris beda
+		// dari stock UOM, item punya Default Inventory UOM, faktor sehat. Baris
+		// serial tetap native (qty-nya adalah hitungan unit stock).
+		const factor_for = (item, frm) => {
+			const dt = frm && frm.doctype;
+			if (dt !== "Pick List" && dt !== "Stock Entry") return 1;
+			if (!item || !item.item_code || item.has_serial_no) return 1;
+			if (!item.uom || !item.stock_uom || item.uom === item.stock_uom) return 1;
+			if (!UOM_CACHE[item.item_code]) return 1;
+			const factor = flt(item.conversion_factor);
+			return factor > 0 ? factor : 1;
+		};
+
+		const orig_make = proto.make;
+		proto.make = function () {
+			const factor = factor_for(this.item, this.frm);
+			if (factor === 1) return orig_make.apply(this, arguments);
+			// make() mengambil target qty dari item.stock_qty/transfer_qty/qty:
+			// berikan salinan dangkal yang sudah diskalakan agar dialog terbuka
+			// dalam UOM baris.
+			const real = this.item;
+			const scaled = Object.assign({}, real);
+			["stock_qty", "transfer_qty", "qty", "rejected_qty"].forEach((f) => {
+				if (flt(scaled[f])) scaled[f] = flt(flt(scaled[f]) / factor, 9);
+			});
+			this.item = scaled;
+			try {
+				return orig_make.call(this);
+			} finally {
+				this.item = real; // callback lain memakai row hidup lagi
+			}
+		};
+
+		const orig_auto = proto.get_auto_data;
+		proto.get_auto_data = function () {
+			const factor = factor_for(this.item, this.frm);
+			const entries = this.dialog && this.dialog.fields_dict && this.dialog.fields_dict.entries;
+			if (factor === 1 || !entries) return orig_auto.apply(this, arguments);
+			let { qty, based_on } = this.dialog.get_values();
+			if (this.item.serial_and_batch_bundle || this.item.rejected_serial_and_batch_bundle) {
+				// this.qty = item.qty (UOM transaksi) — dialog hasil make() memuat
+				// stock_qty/faktor yang bernilai sama, jadi bandingkan langsung
+				if (this.qty && qty === Math.abs(this.qty)) return;
+			}
+			if (this.item.serial_no || this.item.batch_no) return;
+			if (!based_on) based_on = this.based_on;
+			let warehouse = this.item.warehouse || this.item.s_warehouse;
+			if (this.item?.is_rejected) warehouse = this.item.rejected_warehouse;
+			if (!qty) return;
+			frappe.call({
+				method: "erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle.get_auto_data",
+				args: {
+					item_code: this.item.item_code,
+					warehouse: warehouse,
+					has_serial_no: this.item.has_serial_no,
+					has_batch_no: this.item.has_batch_no,
+					qty: flt(flt(qty) * factor, 9), // server fetch dalam satuan stock
+					based_on: based_on,
+					posting_date: this.frm.doc.posting_date,
+					posting_time: this.frm.doc.posting_time,
+					scio_detail: this.item.scio_detail,
+				},
+				callback: (r) => {
+					if (!r.message) return;
+					entries.df.data = r.message.map((d) =>
+						Object.assign({}, d, { qty: flt(flt(d.qty) / factor, 9) }) // tampil di UOM baris
+					);
+					entries.grid.refresh();
+				},
+			});
+		};
+
+		const orig_batch_qty = proto.get_batch_qty;
+		proto.get_batch_qty = function (batch_no, callback) {
+			const factor = factor_for(this.item, this.frm);
+			if (factor === 1) return orig_batch_qty.apply(this, arguments);
+			orig_batch_qty.call(this, batch_no, (qty) => callback(flt(flt(qty) / factor, 9)));
+		};
+
+		const orig_render = proto.render_data;
+		proto.render_data = function () {
+			const factor = factor_for(this.item, this.frm);
+			if (factor === 1) return orig_render.apply(this, arguments);
+			// HANYA jalur bundle eksisting yang dikonversi: rows ledger kembali
+			// dalam satuan stock -> tampilkan dalam UOM baris. set_data sengaja
+			// TIDAK dipatch: jalur upload CSV memanggilnya dengan angka yang
+			// diketik user (semantik native: satuan stock, divalidasi server
+			// sebagaimana adanya) dan tidak boleh ikut terbagi faktor.
+			if (!(this.bundle || (this.frm.doc.is_return && this.frm.doc.return_against))) return;
+			frappe
+				.call({
+					method: "erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle.get_serial_batch_ledgers",
+					args: {
+						item_code: this.item.item_code,
+						name: this.bundle,
+						voucher_no: !this.frm.is_new() ? this.item.parent : "",
+						child_row: this.frm.doc.is_return ? this.item : "",
+					},
+				})
+				.then((r) => {
+					if (!r.message) return;
+					this.set_data(
+						r.message.map((d) =>
+							Object.assign({}, d, { qty: flt(flt(d.qty) / factor, 9) })
+						)
+					);
+				});
+		};
+
+		const orig_create = proto.create_bundle_entries;
+		proto.create_bundle_entries = function (entries, warehouse) {
+			const factor = factor_for(this.item, this.frm);
+			if (factor !== 1 && Array.isArray(entries)) {
+				// entries bundle ditulis dalam SATUAN STOCK: server memvalidasi
+				// total bundle terhadap stock_qty baris
+				entries = entries.map((d) =>
+					d.qty == null ? d : Object.assign({}, d, { qty: flt(flt(d.qty) * factor, 9) })
+				);
+			}
+			return orig_create.call(this, entries, warehouse);
+		};
+
+		proto.__w31 = true;
+	}
+"""
+
+# Race-safety (i): standard doctype JS dievaluasi sebelum Client Script, jadi
+# handler item_code native (get_item_details -> uom = stock_uom, factor 1)
+# selesai lebih dulu; frappe.after_ajax mengantre override di belakangnya.
+# Set uom memakai ulang rantai handler native (refetch conversion_factor ->
+# stock_qty = qty x faktor). Batas yang diterima: scan pertama pada baris baru
+# yang UOM-nya belum terset (+1 satuan stock) — server rule (2) menyelaraskan
+# custom_picked_qty saat simpan.
+CLIENT_SCRIPT_PICK_LIST = PL_SCRIPT_MARKER + """ — Pick List rows in the item's Default Inventory UOM.
+// Native stock roles only (Stock Manager / Stock User / System Manager): every
+// handler returns early without one of the gate roles, so native users are
+// unaffected. (i) new rows default to the item's Default Inventory UOM (W21
+// field); (ii) custom_picked_qty <-> picked_qty stay in lockstep (picked is
+// always stock UOM); (iii) erpnext.utils.BarcodeScanner is patched so a scan
+// adds one unit of the ROW's UOM and row matching compares stock units; (iv)
+// erpnext.SerialBatchPackageSelector speaks the row's UOM while bundle rows
+// stay in stock units. Every patch delegates to the original implementation
+// outside its branch.
+
+(function () {
+	const W31_ROLES = """ + _GATE_ROLES_JS + """;
+
+	function enabled() {
+		return W31_ROLES.some((role) => frappe.user.has_role(role));
+	}
+
+	const PICKED = \"""" + PL_PICKED_FIELD + """\";
+
+	function converts(row) {
+		return !!(row && row.item_code && row.uom && row.stock_uom && row.uom !== row.stock_uom);
+	}
+
+	function factor_of(row) {
+		return flt(row && row.conversion_factor);
+	}
+""" + _SELECTOR_PATCH_JS + """
+	function apply_inventory_uom(frm, cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row || !row.item_code) return;
+		prime_uom(row.item_code);
+		frappe.db
+			.get_value("Item", row.item_code, "custom_default_inventory_unit_of_measure")
+			.then((r) => {
+				const target = r.message && r.message.custom_default_inventory_unit_of_measure;
+				const live = locals[cdt][cdn];
+				// sama dengan stock UOM = tak ada yang perlu dikonversi
+				if (!target || !live || live.uom === target || target === live.stock_uom) return;
+				frappe.xcall("erpnext.stock.get_item_details.get_conversion_factor", {
+					item_code: live.item_code,
+					uom: target,
+				}).then((res) => {
+					const factor = flt(res && res.conversion_factor);
+					const cur = locals[cdt][cdn];
+					if (!factor || !cur || cur.uom === target) return;
+					frappe.model.set_value(cdt, cdn, "uom", target);
+					frappe.model.set_value(cdt, cdn, "conversion_factor", factor);
+				});
+			});
+	}
+
+	// (ii) lockstep: custom -> picked dikali faktor; picked -> custom dibagi,
+	// dengan pita 1e-6 agar tulisan sendiri tidak saling memantul.
+	function sync_picked(cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!converts(row)) return;
+		const factor = factor_of(row);
+		if (!factor) return;
+		frappe.model.set_value(
+			cdt,
+			cdn,
+			"picked_qty",
+			flt(flt(row[PICKED]) * factor, precision("picked_qty", row))
+		);
+	}
+
+	function sync_custom(cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!converts(row)) return;
+		const factor = factor_of(row);
+		if (!factor) return;
+		const expected = flt(flt(row[PICKED]) * factor);
+		if (Math.abs(flt(row.picked_qty) - expected) <= 1e-6) return; // tulisan sendiri
+		frappe.model.set_value(
+			cdt,
+			cdn,
+			PICKED,
+			flt(flt(row.picked_qty) / factor, precision(PICKED, row))
+		);
+	}
+
+	// (iii) BarcodeScanner: scan menambah SATU UNIT UOM BARIS pada baris
+	// inventaris (native menambah satu unit stock, mis. satu gram). Level
+	// prototype + flag di function; delegasi ke original untuk form lain /
+	// user tanpa role / struktur tak dikenal.
+	function patch_barcode_scanner() {
+		const cls = window.erpnext && erpnext.utils && erpnext.utils.BarcodeScanner;
+		const proto = cls && cls.prototype;
+		if (!proto) return;
+		if (typeof proto.set_item !== "function") return;
+		if (typeof proto.get_row_to_modify_on_scan !== "function") return;
+
+		if (!proto.set_item.__w31) {
+			const original_set_item = proto.set_item;
+			proto.set_item = function (row, item_code, barcode, batch_no, serial_no) {
+				if (!(this.frm && this.frm.doctype === "Pick List" && converts(row))) {
+					return original_set_item.apply(this, arguments);
+				}
+				return new Promise((resolve) => {
+					const increment = async (value = 1) => {
+						const factor = factor_of(row) || 1;
+						const custom = flt(row[PICKED]) + flt(value);
+						const picked = flt(custom * factor, precision("picked_qty", row));
+						const item_data = { item_code: item_code, use_serial_batch_fields: 1.0 };
+						frappe.flags.trigger_from_barcode_scanner = true;
+						// PICKED duluan agar handler picked_qty melihat pasangan konsisten
+						item_data[PICKED] = custom;
+						item_data[this.qty_field] = picked;
+						await frappe.model.set_value(row.doctype, row.name, item_data);
+						return value;
+					};
+					if (this.prompt_qty) {
+						frappe.prompt(__("Please enter quantity for item {0}", [item_code]), ({ value }) => {
+							increment(value).then((value) => resolve(value));
+						});
+					} else if (this.frm.has_items) {
+						this.prepare_item_for_scan(row, item_code, barcode, batch_no, serial_no);
+					} else {
+						increment().then((value) => resolve(value));
+					}
+				});
+			};
+			proto.set_item.__w31 = true;
+		}
+
+		if (!proto.get_row_to_modify_on_scan.__w31) {
+			const original_match = proto.get_row_to_modify_on_scan;
+			proto.get_row_to_modify_on_scan = function (item_code, batch_no, uom, barcode, default_warehouse) {
+				if (!(this.frm && this.frm.doctype === "Pick List")) {
+					return original_match.apply(this, arguments);
+				}
+				const field = this.frm.fields_dict[this.items_table_name];
+				const cur_grid = field && field.grid;
+				if (!cur_grid || typeof this.get_warehouse_field !== "function") {
+					return original_match.apply(this, arguments);
+				}
+				const is_batch_no_scan = batch_no && frappe.meta.has_field(cur_grid.doctype, this.batch_no_field);
+				const warehouse_field = this.has_last_scanned_warehouse && this.get_warehouse_field();
+				const has_warehouse_field =
+					warehouse_field && frappe.meta.has_field(cur_grid.doctype, warehouse_field);
+				const warehouse = has_warehouse_field
+					? this.frm.doc.last_scanned_warehouse || default_warehouse
+					: null;
+				const matching_row = (row) => {
+					const item_match = row.item_code == item_code;
+					const batch_match = !row[this.batch_no_field] || row[this.batch_no_field] == batch_no;
+					const uom_match = !uom || this.max_qty_field || row[this.uom_field] == uom;
+					const has_demand_qty = this.demand_ref_fields.some((fieldname) => row[fieldname]);
+					// bug native: membandingkan picked_qty (stock UOM) dengan max
+					// field (UOM transaksi). Dua sisi satuan stock di sini.
+					const qty_in_limit = !has_demand_qty || flt(row.picked_qty) < flt(row.stock_qty);
+					const item_scanned = row.has_item_scanned;
+					let warehouse_match = true;
+					if (has_warehouse_field && warehouse && row[warehouse_field]) {
+						warehouse_match = row[warehouse_field] === warehouse;
+					}
+					return (
+						item_match &&
+						uom_match &&
+						warehouse_match &&
+						!item_scanned &&
+						(!is_batch_no_scan || batch_match) &&
+						qty_in_limit
+					);
+				};
+				const items_table = this.frm.doc[this.items_table_name] || [];
+				return items_table.find(matching_row) || items_table.find((d) => !d.item_code);
+			};
+			proto.get_row_to_modify_on_scan.__w31 = true;
+		}
+	}
+
+	frappe.ui.form.on("Pick List Item", {
+		item_code(frm, cdt, cdn) {
+			if (!enabled()) return;
+			frappe.after_ajax(() => apply_inventory_uom(frm, cdt, cdn));
+		},
+		picked_qty(frm, cdt, cdn) {
+			if (!enabled()) return;
+			sync_custom(cdt, cdn);
+		},
+		custom_picked_qty(frm, cdt, cdn) {
+			if (!enabled()) return;
+			sync_picked(cdt, cdn);
+		},
+		// ganti uom me-refetch faktor secara native; hitung ulang picked ikut
+		// menumpang di sini. custom > 0 disyaratkan agar picked native baris
+		// yang belum dipick lewat UOM tidak pernah dinoikan menjadi 0.
+		conversion_factor(frm, cdt, cdn) {
+			if (!enabled()) return;
+			const row = locals[cdt][cdn];
+			if (!converts(row) || flt(row[PICKED]) <= 0) return;
+			sync_picked(cdt, cdn);
+		},
+	});
+
+	frappe.ui.form.on("Pick List", {
+		refresh(frm) {
+			if (!enabled()) return;
+			patch_barcode_scanner();
+			patch_selector();
+			(frm.doc.locations || []).forEach((d) => prime_uom(d.item_code));
+		},
+	});
+})();
+"""
+
+CLIENT_SCRIPT_STOCK_ENTRY_SELECTOR = PL_SE_SCRIPT_MARKER + """ — activate the batch dialog UOM patch on Stock Entry.
+// The SerialBatchPackageSelector patch is shared with the Pick List W31
+// script; this loader only installs it (idempotently) and primes the item UOM
+// cache so dialogs opened from Stock Entry rows convert too. The W21 Stock
+// Entry script is a separate document and is not touched.
+
+(function () {
+	const W31_ROLES = """ + _GATE_ROLES_JS + """;
+
+	function enabled() {
+		return W31_ROLES.some((role) => frappe.user.has_role(role));
+	}
+""" + _SELECTOR_PATCH_JS + """
+
+	frappe.ui.form.on("Stock Entry", {
+		refresh(frm) {
+			if (!enabled()) return;
+			patch_selector();
+			(frm.doc.items || []).forEach((d) => prime_uom(d.item_code));
+		},
+	});
+
+	frappe.ui.form.on("Stock Entry Detail", {
+		item_code(frm, cdt, cdn) {
+			if (!enabled()) return;
+			const row = locals[cdt][cdn];
+			if (row) prime_uom(row.item_code);
+		},
+	});
+})();
+"""
+
+CLIENT_SCRIPT_BATCH_HINT = PL_BATCH_SCRIPT_MARKER + """ — conversion hint on the Batch form.
+// Display-only: when the batch's item has a Default Inventory UOM different
+// from its stock UOM, a hint line under the form dashboard approximates the
+// batch quantity in that UOM. Native numbers are never changed; if the
+// dashboard node is missing the script bails silently.
+
+(function () {
+	const W31_ROLES = """ + _GATE_ROLES_JS + """;
+
+	function enabled() {
+		return W31_ROLES.some((role) => frappe.user.has_role(role));
+	}
+
+	function render_hint(frm, text) {
+		// frappe.ui.form.Dashboard v16 hanya punya `parent` + section wrapper
+		// (progress_area/links_area dst.) — TIDAK ada properti `wrapper`, jadi
+		// anchor ke node dashboard itu sendiri (.form-dashboard); bila struktur
+		// tak ketemu, diam.
+		const dash = frm.dashboard && frm.dashboard.parent;
+		if (!dash || !dash.length) return;
+		dash.find(".w31-uom-hint").remove();
+		$('<div class="w31-uom-hint text-muted" style="margin: 4px 0 8px 2px; font-size: 12px;"></div>')
+			.text(__("approx. {0} (Default Inventory UOM)", [text]))
+			.appendTo(dash);
+	}
+
+	frappe.ui.form.on("Batch", {
+		refresh(frm) {
+			if (!enabled() || !frm.doc.item) return;
+			frappe.db
+				.get_value("Item", frm.doc.item, ["stock_uom", "custom_default_inventory_unit_of_measure"])
+				.then((r) => {
+					const m = (r && r.message) || {};
+					const inv_uom = m.custom_default_inventory_unit_of_measure;
+					if (!inv_uom || inv_uom === m.stock_uom) return;
+					frappe.xcall("erpnext.stock.get_item_details.get_conversion_factor", {
+						item_code: frm.doc.item,
+						uom: inv_uom,
+					}).then((res) => {
+						const factor = flt(res && res.conversion_factor);
+						if (!factor) return;
+						// get_batch_qty tanpa warehouse mengembalikan baris per warehouse
+						return frappe
+							.xcall("erpnext.stock.doctype.batch.batch.get_batch_qty", {
+								batch_no: frm.doc.name,
+							})
+							.then((batches) => {
+								const total = (batches || []).reduce((t, d) => t + flt(d.qty), 0);
+								if (!flt(total)) return;
+								render_hint(
+									frm,
+									flt(flt(total) / factor, 2) + " " + inv_uom
+								);
+							});
+					});
+				})
+				.catch(() => {});
+		},
+	});
+})();
+"""
+
 CLIENT_SCRIPTS = [
     # name eksplisit: autoname Client Script = "Prompt" (naming.py menolak
     # insert tanpa name). Lookup idempoten tetap via marker, bukan name.
@@ -935,6 +1428,24 @@ CLIENT_SCRIPTS = [
         "marker": SR_FORM_SCRIPT_MARKER,
         "view": "Form",
     },
+    {
+        "name": "warehouse-app-w31-pick-list-uom",
+        "dt": "Pick List",
+        "script": CLIENT_SCRIPT_PICK_LIST,
+        "marker": PL_SCRIPT_MARKER,
+    },
+    {
+        "name": "warehouse-app-w31-stock-entry-selector",
+        "dt": "Stock Entry",
+        "script": CLIENT_SCRIPT_STOCK_ENTRY_SELECTOR,
+        "marker": PL_SE_SCRIPT_MARKER,
+    },
+    {
+        "name": "warehouse-app-w31-batch-hint",
+        "dt": "Batch",
+        "script": CLIENT_SCRIPT_BATCH_HINT,
+        "marker": PL_BATCH_SCRIPT_MARKER,
+    },
 ]
 
 
@@ -951,6 +1462,16 @@ def ensure_sr_fields():
     """W23: kolom UOM di baris Stock Reconciliation (spec di seksi W23)."""
     results = [_ensure_custom_field(spec) for spec in SR_FIELD_SPECS]
     for dt in ("Stock Reconciliation", "Stock Reconciliation Item"):
+        frappe.clear_cache(doctype=dt)
+    if "created" in results or "updated" in results:
+        frappe.db.commit()
+    return "created" if "created" in results else ("updated" if "updated" in results else "unchanged")
+
+
+def ensure_pl_fields():
+    """W31: kolom Picked Qty (as per UOM) di baris Pick List (spec W31)."""
+    results = [_ensure_custom_field(PL_FIELD_SPEC)]
+    for dt in ("Pick List", "Pick List Item"):
         frappe.clear_cache(doctype=dt)
     if "created" in results or "updated" in results:
         frappe.db.commit()
@@ -1050,7 +1571,15 @@ def ensure_client_scripts():
         doc.flags.ignore_permissions = 1
         doc.insert()
         results.append("created")
-    for dt in ("Item", "Stock Entry", "Material Request", "Stock Reconciliation"):
+    for dt in (
+        "Item",
+        "Stock Entry",
+        "Material Request",
+        "Stock Reconciliation",
+        "Pick List",
+        "Pick List Item",
+        "Batch",
+    ):
         frappe.clear_cache(doctype=dt)
     if "created" in results or "updated" in results:
         frappe.db.commit()
