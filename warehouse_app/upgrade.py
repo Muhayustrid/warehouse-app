@@ -61,6 +61,7 @@ def apply():
     ensure_single_desk_entry()
     ensure_item_fields()
     ensure_sr_fields()
+    retire_client_scripts()
     ensure_client_scripts()
     migrate_legacy_uom_field()
 
@@ -701,32 +702,39 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 })();
 """
 
-# ---- W25 ----
-# "Import Stock Count" di list Stock Reconciliation: dialog download template
-# opname ter-prefill (open_url_post, respons binary) + upload via
-# frappe.ui.FileUploader(method=...) yang mem-POST file ke /api/method/
-# upload_file dengan field "method" — handler v16 menaruh byte di
-# frappe.local.uploaded_file TANPA membuat dokumen File, lalu memanggil
-# warehouse_app.warehouse_app.sr_import.upload_stock_count.
-# Role gate native stock sama dengan W21/W23; role lain tak melihat tombol.
+# ---- W26 ----
+# "Import Stock Count" pindah dari list view (W25, DIPENSIUNKAN — script-nya
+# dihapus oleh retire_client_scripts; markernya dipertahankan khusus untuk
+# pensiunan) ke FORM Stock Reconciliation: dialog di dokumen, Warehouse
+# difilter company dokumen (multicompany-safe), dan upload — FileUploader
+# as_dataurl (v16: TANPA POST upload_file, tak ada dokumen File) → klien POST
+# base64 sendiri ke endpoint MENGEMBALIKAN baris grid terhitung penuh
+# server-side (fill grid programatik tidak menjalankan handler baris klien).
+# Tidak ada dokumen yang dibuat endpoint. Role gate native stock sama dengan
+# W21/W23; role lain tak melihat tombol.
 
 SR_LIST_SCRIPT_MARKER = "// warehouse_app W25 stock-count-import"
 
-CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialog on the SR list.
-// Download posts to sr_import.download_stock_count_template (open_url_post →
-// binary attachment); the "before" quantity shown in the template is a
-// download-time snapshot, the upload always re-reads the live ledger.
+SR_FORM_SCRIPT_MARKER = "// warehouse_app W26 stock-count-import-form"
+
+CLIENT_SCRIPT_SR_FORM = SR_FORM_SCRIPT_MARKER + """ — Import Stock Count on the Stock Reconciliation FORM.
+// Company comes from the document (multicompany-safe): the dialog's Warehouse
+// picker is filtered to doc.company and the upload validates every row's
+// warehouse against it. Grid fill mirrors the native "Fetch Items from
+// Warehouse" pattern (clear_table + add_child + refresh_field); per-row client
+// handlers do NOT run for programmatic fills, so the server returns every
+// derived column pre-computed.
 
 (function () {
-	const W25_ROLES = """ + _SR_ROLES_JS + """;
+	const W26_ROLES = """ + _SR_ROLES_JS + """;
 
 	function enabled() {
-		return W25_ROLES.some((role) => frappe.user.has_role(role));
+		return W26_ROLES.some((role) => frappe.user.has_role(role));
 	}
 
 	const SR_IMPORT = "warehouse_app.warehouse_app.sr_import.";
 
-	function download(d, file_type) {
+	function download(frm, d, file_type) {
 		const warehouse = d.get_value("warehouse");
 		if (!warehouse) {
 			frappe.msgprint(__("Please choose a Warehouse first."));
@@ -739,7 +747,20 @@ CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialo
 		});
 	}
 
-	function finish(d, res) {
+	function fill_grid(frm, d, res) {
+		frm.clear_table("items");
+		(res.rows || []).forEach((r) => {
+			$.extend(frm.add_child("items"), r);
+		});
+		frm.refresh_field("items");
+		d.hide();
+		frappe.show_alert({
+			message: __("{0} rows imported — review and Save.", [res.added]),
+			indicator: "green",
+		});
+	}
+
+	function finish(frm, d, res) {
 		if (!res) return;
 		const warnings = res.warnings || [];
 		if (warnings.length) {
@@ -749,22 +770,28 @@ CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialo
 				message: warnings.join("<br>"),
 			});
 		}
-		if (res.created && res.sr) {
-			d.hide();
-			frappe.show_alert({
-				message: __("Draft {0} created — review it and Submit.", [res.sr]),
-				indicator: "green",
-			});
-			frappe.set_route("Form", "Stock Reconciliation", res.sr);
+		if (!res.rows || !res.rows.length) {
+			frappe.msgprint(res.message || __("Nothing was imported."));
 			return;
 		}
-		frappe.msgprint(res.message || __("No Stock Reconciliation was created."));
+		const existing = (frm.doc.items || []).filter((r) => !r.__deleted && !r.__removed).length;
+		if (existing) {
+			frappe.confirm(
+				__("Replace the {0} rows already in the table with the imported count?", [existing]),
+				() => fill_grid(frm, d, res)
+			);
+		} else {
+			fill_grid(frm, d, res);
+		}
 	}
 
-	function upload(d) {
+	function upload(frm, d) {
+		// FileUploader's FormData is hardcoded (no custom fields), so we take the
+		// file as a data URL (v16: no upload_file POST happens for as_dataurl)
+		// and POST it ourselves with the document context.
 		new frappe.ui.FileUploader({
 			dialog_title: __("Upload Count File"),
-			method: SR_IMPORT + "upload_stock_count",
+			as_dataurl: true,
 			allow_multiple: false,
 			allow_web_link: false,
 			restrictions: {
@@ -773,13 +800,29 @@ CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialo
 				allowed_file_types: [".csv", ".xlsx"],
 			},
 			upload_notes: __("Counted Qty (as per UOM) is the only required column; blank rows are skipped."),
-			on_success(_file, r) {
-				finish(d, r && r.message);
+			on_success(file) {
+				frappe.call({
+					method: SR_IMPORT + "upload_stock_count",
+					args: {
+						filename: file.name,
+						data: file.dataurl,
+						company: frm.doc.company,
+						posting_date: frm.doc.posting_date,
+						posting_time: frm.doc.posting_time,
+					},
+					callback(r) {
+						finish(frm, d, r && r.message);
+					},
+				});
 			},
 		});
 	}
 
-	function open_dialog() {
+	function open_dialog(frm) {
+		if (!frm.doc.company) {
+			frappe.msgprint(__("Please set the Company first."));
+			return;
+		}
 		const d = new frappe.ui.Dialog({
 			title: __("Import Stock Count"),
 			size: "large",
@@ -792,7 +835,7 @@ CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialo
 					options:
 						'<p class="text-muted" style="margin: -4px 0 4px;">' +
 						__(
-							"Download the count template for a warehouse — it comes pre-filled with every item and its current quantity in the item's inventory UOM. Fill in the Counted Qty column after the physical count, then upload the file here to create a draft Stock Reconciliation."
+							"Download the count template for a warehouse — it comes pre-filled with every item and its current quantity in the item's inventory UOM. Fill in the Counted Qty column after the physical count, then upload the file here to fill this document's item table."
 						) +
 						"</p>",
 				},
@@ -802,7 +845,9 @@ CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialo
 					fieldtype: "Link",
 					options: "Warehouse",
 					reqd: 1,
-					get_query: () => ({ filters: { is_group: 0, disabled: 0 } }),
+					get_query: () => ({
+						filters: { company: frm.doc.company, is_group: 0, disabled: 0 },
+					}),
 				},
 				{
 					fieldname: "include_zero_stock",
@@ -818,13 +863,13 @@ CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialo
 					fieldname: "dl_xlsx",
 					label: __("Download Excel Template"),
 					fieldtype: "Button",
-					click: () => download(d, "xlsx"),
+					click: () => download(frm, d, "xlsx"),
 				},
 				{
 					fieldname: "dl_csv",
 					label: __("Download CSV Template"),
 					fieldtype: "Button",
-					click: () => download(d, "csv"),
+					click: () => download(frm, d, "csv"),
 				},
 				{
 					fieldname: "sec_upload",
@@ -845,29 +890,30 @@ CLIENT_SCRIPT_SR_LIST = SR_LIST_SCRIPT_MARKER + """ — Import Stock Count dialo
 						"<li>" +
 						__("Count and upload on the same day — the before quantity is always recalculated from the live ledger.") +
 						"</li>" +
+						"<li>" +
+						__("Fill the file and upload it without changing the Posting Date afterwards — the count is a snapshot of that date.") +
+						"</li>" +
 						"</ul>",
 				},
 				{
 					fieldname: "upload_btn",
 					label: __("Upload Count File"),
 					fieldtype: "Button",
-					click: () => upload(d),
+					click: () => upload(frm, d),
 				},
 			],
 		});
 		d.show();
 	}
 
-	frappe.listview_settings["Stock Reconciliation"] =
-		frappe.listview_settings["Stock Reconciliation"] || {};
-	const settings = frappe.listview_settings["Stock Reconciliation"];
-	const native_onload = settings.onload;
-	settings.onload = function (listview) {
-		if (native_onload) native_onload(listview);
-		if (!enabled()) return;
-		// add_inner_button v16 sudah dedup tombol berdasar label — tanpa guard
-		listview.page.add_inner_button(__("Import Stock Count"), open_dialog);
-	};
+	frappe.ui.form.on("Stock Reconciliation", {
+		refresh(frm) {
+			if (!enabled()) return;
+			// drafts and unsaved new docs only (native Fetch button pattern)
+			if (frm.doc.docstatus > 0) return;
+			frm.add_custom_button(__("Import Stock Count"), () => open_dialog(frm));
+		},
+	});
 })();
 """
 
@@ -888,11 +934,11 @@ CLIENT_SCRIPTS = [
         "marker": SR_SCRIPT_MARKER,
     },
     {
-        "name": "warehouse-app-w25-stock-count-import",
+        "name": "warehouse-app-w26-stock-count-import",
         "dt": "Stock Reconciliation",
-        "script": CLIENT_SCRIPT_SR_LIST,
-        "marker": SR_LIST_SCRIPT_MARKER,
-        "view": "List",
+        "script": CLIENT_SCRIPT_SR_FORM,
+        "marker": SR_FORM_SCRIPT_MARKER,
+        "view": "Form",
     },
 ]
 
@@ -940,6 +986,34 @@ def _ensure_custom_field(spec):
     doc.flags.ignore_permissions = 1
     doc.insert()
     return "created"
+
+
+def retire_client_scripts():
+    """Pensiunkan Client Script versi lama: docs yang skripsnya masih memuat
+    marker yang sudah dihapus dari CLIENT_SCRIPTS (W25 list-view "Import Stock
+    Count" diganti W26 form-view). Idempoten — tanpa docs lama = no-op."""
+    names = frappe.get_all(
+        "Client Script",
+        filters={"script": ("like", "%" + SR_LIST_SCRIPT_MARKER + "%")},
+        pluck="name",
+    )
+    retired = 0
+    for name in names:
+        try:
+            frappe.delete_doc(
+                "Client Script", name, force=1, ignore_permissions=1, ignore_missing=True
+            )
+            retired += 1
+        except Exception:
+            # satu doc macet (mis. hook pihak ketiga) tak boleh menjatuhkan migrate
+            frappe.log_error(
+                title="warehouse_app.upgrade",
+                message=f"Gagal retire Client Script {name!r}.",
+            )
+    if retired:
+        frappe.clear_cache(doctype="Stock Reconciliation")
+        frappe.db.commit()
+    return f"retired {retired}"
 
 
 def ensure_client_scripts():

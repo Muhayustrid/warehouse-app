@@ -1,39 +1,48 @@
 # Copyright (c) 2026, Muhammad Yusuf Tri Daryanto
 # License: MIT
 
-# W25 — Import Stock Reconciliation via template opname yang ramah.
+# W25/W26 — Import Stock Reconciliation via template opname yang ramah.
 #
 # Masalah: template Data Import native (parent/child row, kolom teknis, tanpa
 # prefill stok) tidak layak pakai untuk tim gudang. Fitur ini: download template
 # SATU BARIS PER ITEM yang sudah terisi stok saat ini dalam UOM inventaris item
-# (W21/W23), tim mengisi kolom "Counted Qty" offline, lalu upload file untuk
-# membuat SATU draft Stock Reconciliation (review + Submit tetap manual).
+# (W21/W23), tim mengisi kolom "Counted Qty" offline, lalu upload file dari
+# FORM Stock Reconciliation (sejak W26; versi list-view W25 dipensiunkan —
+# lihat retire_client_scripts di upgrade.py): endpoint TIDAK membuat dokumen
+# apa pun, ia mengembalikan baris grid yang sudah dihitung penuh dan klien
+# mengisi tabel items dokumennya sendiri (review + Submit tetap manual).
 #
 # Keputusan desain (plan W25 disetujui user + ruling advisor 2026-09-29):
 #   - Custom flat importer, BUKAN reuse Data Import (formatnya tetap musuh
 #     pengguna; hak aksesnya pun teritori System/Import Manager).
-#   - Konversi UOM LEWAT HOOK W23 (apply_sr_inventory_uom, before_validate):
-#     baris SR hanya diberi custom field (custom_uom + custom_qty_after + rate
-#     per UOM); native qty/valuation_rate/current_qty TIDAK disentuh import —
-#     satu jalur konversi yang sudah teruji gate W23/W23b.
+#   - Konversi UOM tetap DIJAGA hook W23 (apply_sr_inventory_uom,
+#     before_validate) saat draft disimpan. Endpoint menghitung qty/rate native
+#     untuk grid dengan MATEMATIKA YANG SAMA, karena fill grid programatik
+#     (add_child + $.extend + refresh_field) TIDAK menjalankan handler baris
+#     klien (custom_uom/custom_qty_after dst) — baris tanpa kolom turunan akan
+#     menyimpan nilai mentah.
+#   - Multicompany-safe: company dari DOKUMEN — dialog memfilter Warehouse ke
+#     doc.company dan validasi menolak gudang milik perusahaan lain.
 #   - Kolom "Current Qty" di template = snapshot info saat download; saldo
-#     "before" saat upload selalu dihitung ulang dari ledger (get_previous_sle).
+#     "before" saat upload selalu dihitung ulang dari ledger (get_previous_sle)
+#     dengan posting date/time DOKUMEN, jadi SR backdated tetap benar.
 #   - Draft-only: titik komit tetap tombol Submit manusia.
 #   - Atomik: semua baris divalidasi dulu; error bernomor baris spreadsheet.
-#   - Baris "counted == saldo ledger & rate kosong" di-strip sebelum insert
-#     (native remove_items_with_no_change akan membuangnya juga; tanpa strip,
-#     file yang seluruhnya cocok melempar EmptyStockReconciliationItemsError).
+#   - Baris "counted == saldo ledger & rate kosong" di-strip dari hasil —
+#     native remove_items_with_no_change akan membuangnya juga saat simpan;
+#     tanpa strip, file yang seluruhnya cocok jadi EmptyStockReconciliation.
 #
-# Alur upload v16: frappe.ui.FileUploader POST /api/method/upload_file dengan
-# field "method" — handler menaruh byte file di frappe.local.uploaded_file /
-# uploaded_filename TANPA membuat dokumen File, lalu memanggil method ini
-# (lihat frappe/handler.py upload_file). Path POST langsung ke method
-# (frappe.request.files["file"]) tetap didukung untuk curl/E2E.
+# Alur upload W26: klien pakai frappe.ui.FileUploader(as_dataurl) — v16
+# mengembalikan data URL via on_success TANPA POST /api/method/upload_file
+# (FileUploader tak bisa membawa konteks dokumen di FormData-nya) — lalu klien
+# POST base64 itu sendiri ke endpoint ini.
 #
 # Izin: kedua endpoint mengecek has_permission("Stock Reconciliation",
 # "create") — mengikuti semantik permission native (di site ini pemegang
 # create adalah Stock Manager).
 
+import base64
+import binascii
 import csv
 import io
 import re
@@ -45,6 +54,9 @@ from frappe.utils import cint, cstr, escape_html, flt, nowdate, nowtime
 from warehouse_app.inventory_uom import (
 	ITEM_UOM_FIELD,
 	SR_AFTER_FIELD,
+	SR_BEFORE_FIELD,
+	SR_DIFF_FIELD,
+	SR_FACTOR_FIELD,
 	SR_RATE_FIELD,
 	SR_UOM_FIELD,
 )
@@ -434,17 +446,30 @@ def parse_count_content(content, filename):
 
 
 # ---------------------------------------------------------------------------
-# Pembuatan draft SR
+# Validasi + baris grid (W26 — murni, endpoint TIDAK membuat dokumen)
 # ---------------------------------------------------------------------------
 
 
-def create_reconciliation(parsed):
-	"""parsed (hasil parse_count_content, atau dict bentuk sama) → SATU draft
-	Stock Reconciliation. Validasi semantik semua baris dulu (error bernomor
-	baris, atomik), strip baris yang cocok dengan ledger, lalu insert dengan
-	HANYA custom field W23 — konversi native qty/rate oleh hook
-	apply_sr_inventory_uom (before_validate). Return: created, sr, added,
-	skipped, matched, warnings, message."""
+def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
+	"""parsed (hasil parse_count_content, atau dict bentuk sama) → baris grid
+	SIAP PAKAI untuk tabel items form Stock Reconciliation (W26). TIDAK membuat
+	dokumen — klien mengisi grid-nya sendiri (review + Submit tetap manual).
+
+	Validasi semantik semua baris dulu (error bernomor baris spreadsheet,
+	atomik). `company` WAJIB dan menjadi acak keabsahan gudang
+	(multicompany-safe): setiap gudang wajib milik company dokumen.
+
+	Setiap kolom turunan (custom W23 + qty/valuation_rate native) dihitung
+	server-side di sini — matematika mengikuti hook apply_sr_inventory_uom
+	(satu jalur konversi yang teruji); saat draft disimpan, hook menghitung
+	ulang nilai yang sama. Ledger dibaca pada posting_date/posting_time yang
+	DIBERIKAN (mirror native get_items) supaya SR backdated tetap benar."""
+	company = cstr(company).strip()
+	if not company:
+		frappe.throw(_("Company is required to import a stock count."))
+	posting_date = posting_date or nowdate()
+	posting_time = posting_time or nowtime()
+
 	rows = [dict(r) for r in (parsed or {}).get("rows") or []]
 	if not rows:
 		frappe.throw(_("No counted rows to import."))
@@ -458,6 +483,7 @@ def create_reconciliation(parsed):
 			filters={"name": ("in", sorted({r["item_code"] for r in rows}))},
 			fields=[
 				"name",
+				"item_name",
 				"stock_uom",
 				"disabled",
 				"has_batch_no",
@@ -488,7 +514,6 @@ def create_reconciliation(parsed):
 		):
 			factors[(d.parent, d.uom)] = flt(d.conversion_factor)
 
-	company = None
 	seen = set()
 	# Semua nilai r[...] berasal dari file upload → escape sebelum masuk pesan
 	# HTML (frappe.msgprint merender HTML di sisi klien).
@@ -532,13 +557,16 @@ def create_reconciliation(parsed):
 				)
 			)
 			continue
-		if company is None:
-			company = wh.company
-		elif wh.company != company:
+		if wh.company != company:
 			errors.append(
 				_(
-					"Row {0}: Warehouse {1} belongs to company {2}, but the file already uses company {3}."
-				).format(n, frappe.bold(escape_html(r["warehouse"])), wh.company, company)
+					"Row {0}: Warehouse {1} belongs to company {2}, but this reconciliation is for {3}."
+				).format(
+					n,
+					frappe.bold(escape_html(r["warehouse"])),
+					frappe.bold(wh.company),
+					frappe.bold(escape_html(company)),
+				)
 			)
 			continue
 		if not r["uom"]:
@@ -591,10 +619,11 @@ def create_reconciliation(parsed):
 			+ ("<br>…" if len(errors) > MAX_ERRORS_SHOWN else "")
 		)
 
-	posting_date, posting_time = nowdate(), nowtime()
 	ledger_cache = {}
 
-	def ledger_qty(item_code, warehouse):
+	def ledger_snapshot(item_code, warehouse):
+		"""→ (qty_after_transaction, valuation_rate) pada posting timestamp —
+		satu panggilan per item+gudang, kedua kolom dipakai sekaligus."""
 		key = (item_code, warehouse)
 		if key not in ledger_cache:
 			from erpnext.stock.stock_ledger import get_previous_sle
@@ -606,18 +635,24 @@ def create_reconciliation(parsed):
 					"posting_date": posting_date,
 					"posting_time": posting_time,
 				}
+			) or {}
+			ledger_cache[key] = (
+				flt(prev.get("qty_after_transaction")),
+				flt(prev.get("valuation_rate")),
 			)
-			ledger_cache[key] = flt(prev.get("qty_after_transaction")) if prev else 0
 		return ledger_cache[key]
 
 	kept, matched = [], 0
 	for r in rows:
-		current = ledger_qty(r["item_code"], r["warehouse"])
+		current, system_rate = ledger_snapshot(r["item_code"], r["warehouse"])
 		before = flt(current) / r["_factor"]
-		# Baris yang sama persis dengan ledger (dan tanpa revaluasi) akan dibuang
-		# native remove_items_with_no_change — strip di sini supaya file yang
-		# seluruhnya cocok jadi pesan sukses, bukan EmptyStockReconciliation.
-		if r["rate"] is None and flt(r["counted"]) == flt(before):
+		# Toleransi 0.0005 (di bawah presisi 3 desimal kolom before): pembulatan
+		# bisa membuat qty "berubah" versi parse ternyata identik versi native —
+		# native remove_items_with_no_change akan membuangnya juga saat simpan.
+		# Strip di sini supaya baris tsb tak pernah sampai ke grid; tanpa ini,
+		# file yang seluruhnya cocok melempar EmptyStockReconciliationItemsError
+		# mentah di form.
+		if r["rate"] is None and abs(flt(r["counted"]) - flt(before)) < 0.0005:
 			matched += 1
 			continue
 		if not current and flt(r["counted"]) > 0 and r["rate"] is None:
@@ -626,82 +661,88 @@ def create_reconciliation(parsed):
 					"Row {0}: Item {1} currently has zero stock — fill Valuation Rate (as per UOM) or the draft cannot be submitted."
 				).format(r["row_no"], frappe.bold(escape_html(r["item_code"])))
 			)
+		r["_snapshot"] = (current, system_rate, before)
 		kept.append(r)
 
 	stats = {
-		"created": False,
-		"sr": None,
+		"company": company,
 		"added": 0,
 		"skipped": cint((parsed or {}).get("skipped")),
 		"matched": matched,
 		"warnings": warnings,
+		"rows": [],
 	}
 	if not kept:
 		stats["message"] = _("All counts match the current stock — no Stock Reconciliation is needed.")
 		return stats
 
-	sr_rows = []
+	use_serial_batch_fields = cint(
+		frappe.db.get_single_value("Stock Settings", "use_serial_batch_fields")
+	)
+	grid_rows = []
 	for r in kept:
+		current, system_rate, before = r["_snapshot"]
+		factor = r["_factor"]
+		counted = flt(r["counted"])
 		row = {
 			"item_code": r["item_code"],
+			"item_name": items[r["item_code"]].item_name or r["item_code"],
 			"warehouse": r["warehouse"],
+			"stock_uom": items[r["item_code"]].stock_uom,
 			SR_UOM_FIELD: r["uom"],
-			SR_AFTER_FIELD: r["counted"],
+			SR_FACTOR_FIELD: factor,
+			"current_qty": current,
+			"current_valuation_rate": system_rate,
+			SR_BEFORE_FIELD: flt(before, 3),
+			SR_AFTER_FIELD: counted,
+			SR_DIFF_FIELD: flt(counted - flt(before, 3), 3),
+			# native qty (stock UOM) & valuation_rate — matematika hook W23.
+			# Rate kosong = saldo ledger (prefill gaya native fetch); saldo-0 →
+			# None (bukan 0 eksplisit) supaya native backfill saat submit,
+			# bukan "Valuation Rate required".
+			"qty": flt(counted * factor),
+			"valuation_rate": flt(r["rate"] / factor) if r["rate"] is not None else (system_rate or None),
+			"use_serial_batch_fields": use_serial_batch_fields,
 		}
 		if r["rate"] is not None:
+			# Kolom review W23 ikut diisi bila file memberi rate eksplisit —
+			# hook menghitung ulang rate/factor yang identik saat simpan
+			# (rate ≠ 0 lolos guard zero-storage-nya).
 			row[SR_RATE_FIELD] = r["rate"]
-		sr_rows.append(row)
+		grid_rows.append(row)
 
-	try:
-		sr = frappe.get_doc(
-			{
-				"doctype": "Stock Reconciliation",
-				"purpose": "Stock Reconciliation",
-				"company": company,
-				"posting_date": posting_date,
-				"posting_time": posting_time,
-				"items": sr_rows,
-			}
-		).insert()
-	except frappe.ValidationError as e:
-		# Pembulatan bisa membuat qty "berubah" versi parse ternyata identik
-		# versi native → semua baris dibuang native. Samakan dengan all-match.
-		if "None of the items have any change" in cstr(e):
-			frappe.db.rollback()
-			stats["matched"] = matched + len(kept)
-			stats["message"] = _(
-				"All counts match the current stock — no Stock Reconciliation is needed."
-			)
-			return stats
-		raise
-
-	stats.update(
-		{
-			"created": True,
-			"sr": sr.name,
-			"added": len(kept),
-			"message": _("Draft {0} created — review it and Submit.").format(sr.name),
-		}
-	)
+	stats["added"] = len(grid_rows)
+	stats["rows"] = grid_rows
 	return stats
 
 
 @frappe.whitelist(methods=["POST"])
-def upload_stock_count():
+def upload_stock_count(filename=None, data=None, company=None, posting_date=None, posting_time=None):
+	"""File count (base64 murni atau data URL dari FileUploader as_dataurl) +
+	konteks dokumen (company, posting date/time) → dict baris grid untuk form
+	SR. TIDAK membuat dokumen (W26)."""
 	frappe.has_permission("Stock Reconciliation", "create", throw=True)
-	# Jalur FileUploader v16: handler upload_file sudah membaca file dan
-	# menyimpannya di frappe.local (tanpa dokumen File). Jalur POST langsung
-	# (curl/E2E) tetap dibaca dari request files.
-	content = getattr(frappe.local, "uploaded_file", None)
-	filename = getattr(frappe.local, "uploaded_filename", None) or ""
-	if content is None:
-		files = getattr(frappe.request, "files", None) or {}
-		if "file" in files:
-			content = files["file"].read()
-			filename = files["file"].filename or filename
-	if content is None:
+	filename = cstr(filename).strip()
+	data = cstr(data).strip()
+	if not filename or not data:
 		frappe.throw(_("Please choose a .xlsx or .csv count file to upload."))
-	if isinstance(content, str):
-		content = content.encode("utf-8")
+	# Data URL "data:<mime>;base64,<payload>" — buang prefix-nya; base64 murni
+	# (curl/gate) tetap diterima apa adanya.
+	if data[:5].lower() == "data:":
+		data = data.split(",", 1)[1] if "," in data else ""
+	# Fail-fast sebelum decode: base64 membengkak ~4/3 — tolak payload raksasa
+	# agar tidak di-decode percuma (cap byte akhir tetap di parse_count_content).
+	if len(data) > (MAX_FILE_BYTES * 4 // 3) + 1024:
+		frappe.throw(
+			_("The file is larger than {0} MB.").format(frappe.bold(MAX_FILE_BYTES // (1024 * 1024)))
+		)
+	try:
+		content = base64.b64decode(data, validate=False)
+	except binascii.Error:
+		frappe.throw(
+			_(
+				"The uploaded file could not be decoded — please re-download the template and edit that copy."
+			)
+		)
 	parsed = parse_count_content(content, filename)
-	return create_reconciliation(parsed)
+	return validate_count_rows(parsed, company, posting_date, posting_time)

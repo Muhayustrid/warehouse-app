@@ -1,8 +1,9 @@
 # Copyright (c) 2026, Muhammad Yusuf Tri Daryanto
 # License: MIT
 
-# Gate W25 — import opname Stock Reconciliation (template ter-prefill →
-# upload CSV/Excel → SATU draft SR; konversi UOM via hook W23).
+# Gate W25/W26 — import opname Stock Reconciliation (template ter-prefill →
+# upload CSV/Excel → baris grid terhitung penuh → klien mengisi form SR;
+# konversi UOM dijaga hook W23).
 #
 # Jalankan:
 #   docker exec erpnext-new-backend-1 bench --site frontend execute \
@@ -12,33 +13,41 @@
 # error: opsional). Cek gagal -> ok=false TANPA raise; hanya crash tak terduga
 # yang di-raise (bench exit nonzero).
 #
-# Yang diverifikasi:
-#   1. Modul sr_import + 2 endpoint whitelisted POST-only ber-cek
-#      has_permission create SR.
-#   2. Client Script List-view SR (marker W25, enabled, view "List", label
-#      tombol) — dua script SR (Form W23 + List W25) hidup berdampingan.
+# Yang diverifikasi (nomor = urut eksekusi):
+#   1. Client Script SR: list-view W25 PENSIUN (tak ada doc memuat markernya),
+#      form-view W26 import (enabled, view Form, marker + role gate), dan
+#      form-view W23 UOM tetap hidup berdampingan.
+#   2. Modul sr_import + 2 endpoint whitelisted POST-only ber-cek
+#      has_permission create SR + smoke decode base64/data-URL via
+#      upload_stock_count (endpoint murni — tanpa insert).
 #   3. build_count_rows: prefill UOM inventaris (Box) + current qty ÷ faktor
 #      (24/12 = 2); stok-0 hanya muncul dengan toggle; item batch dikecualikan.
 #   4. Roundtrip file: xlsx (edit sel Counted/Rate via openpyxl) + csv
-#      (+ varian delimiter ";" & desimal koma "3,5" & grouping "1.500").
-#   5. create_reconciliation: draft SR (3 Box @1200) → qty 36, faktor 12,
-#      before 2, after 3, diff 1, rate 100, docstatus 0.
-#   6. Baris tanpa Counted Qty terskip oleh parser (stat skipped, bukan row).
-#   7. Semua baris cocok ledger → sukses TANPA membuat SR (matched stat).
-#   8. Error parse (ekstensi salah / kolom wajib hilang / rate 0 / angka
-#      sampah / pemisah campuran) + error create atomik bernomor baris
-#      (item tak dikenal / duplikat / UOM kosong / negatif / rate 0) —
-#      tak ada baris SR tersisa.
-#   9. Permission: user tanpa role ditolak has_permission create SR.
-#  10. Item stok-0 tanpa rate → warning "Valuation Rate", draft tetap dibuat.
-#  11. Submit draft hasil import → SLE qty_after_transaction 36 @ 100.
-#  12. ensure_client_scripts idempoten (run kedua "unchanged").
+#      (+ varian delimiter ";" & desimal koma "3,5" & grouping "1.500"); baris
+#      tanpa Counted Qty terskip oleh parser (stat skipped, bukan row).
+#   5. validate_count_rows: baris grid terhitung penuh (qty = counted × faktor
+#      = 36, before 2, after 3, diff 1, rate 1200/12 = 100, current 24, rate
+#      per UOM 1200) — lalu SR dibangun persis seperti klien dari baris tsb →
+#      hook W23 mengonversi ke nilai sama (docstatus 0).
+#   6. Semua baris cocok ledger → added=0, rows=[], pesan match, TANPA membuat
+#      dokumen SR apa pun.
+#   7. Error parse (ekstensi salah / kolom wajib hilang / rate 0 / angka
+#      sampah / pemisah campuran) + error validate atomik bernomor baris
+#      (item tak dikenal / duplikat / UOM kosong / negatif / rate 0 /
+#      mismatch company) — murni, tak ada dokumen tersisa.
+#   8. Permission: user tanpa role ditolak upload_stock_count.
+#   9. Item stok-0 tanpa rate → warning "Valuation Rate", baris tetap
+#      dikembalikan (draft disimpan klien).
+#  10. Submit draft hasil import → SLE qty_after_transaction 36 @ 100.
+#  11. upgrade.apply() idempoten dua kali: list W25 tetap absen, form W26
+#      tetap ada + enabled.
 #
 # Fixture (prefix "ZZTEST-W25"): item1 Nos+Box×12 (default Box) disemai SE
 # Material Receipt 24 Nos @100; item2 (stok 0, Bin programmatik) utk kasus
 # warning; item3 (has_batch_no) utk eksklusi. Teardown di finally, residu
 # prefix = 0 (termasuk user + Sessions/Activity Log).
 
+import base64
 import csv
 import inspect
 import io
@@ -46,7 +55,7 @@ import json
 import traceback
 
 import frappe
-from frappe.utils import flt, nowdate
+from frappe.utils import flt, nowdate, nowtime
 
 from warehouse_app import upgrade
 from warehouse_app.inventory_uom import (
@@ -54,12 +63,14 @@ from warehouse_app.inventory_uom import (
 	SR_BEFORE_FIELD,
 	SR_DIFF_FIELD,
 	SR_FACTOR_FIELD,
+	SR_RATE_FIELD,
+	SR_UOM_FIELD,
 )
 from warehouse_app.tests.guard import count_residue
 from warehouse_app.warehouse_app import sr_import
 
 PREFIX = "ZZTEST-W25"
-MARKER = upgrade.SR_LIST_SCRIPT_MARKER
+MARKER = upgrade.SR_LIST_SCRIPT_MARKER  # marker W25 yang DIPENSIUNKAN
 TRACKED = {"sr": [], "se": [], "item": [], "user": []}
 
 
@@ -179,56 +190,47 @@ def _run_gate(check):
 	if not (stock and alt and item_group and company and warehouse):
 		raise GateAborted()
 
-	# --- 1. Modul + endpoint ---
+	# --- 1. Client Script SR (W25 pensiun + W26 form import + W23 form UOM) ---
 	try:
-		ok = (
-			hasattr(sr_import, "download_stock_count_template")
-			and hasattr(sr_import, "upload_stock_count")
-			and frappe.allowed_http_methods_for_whitelisted_func.get(
-				sr_import.upload_stock_count
-			)
-			== ["POST"]
-			and frappe.allowed_http_methods_for_whitelisted_func.get(
-				sr_import.download_stock_count_template
-			)
-			== ["POST"]
-			and "has_permission" in inspect.getsource(sr_import.upload_stock_count)
-			and "has_permission" in inspect.getsource(sr_import.download_stock_count_template)
+		list_left = frappe.get_all(
+			"Client Script",
+			filters={"script": ("like", "%" + MARKER + "%")},
+			pluck="name",
 		)
-		check(
-			"module_endpoints",
-			ok,
-			"sr_import: download/upload whitelisted POST + has_permission create SR",
+		w26 = frappe.db.get_value(
+			"Client Script",
+			"warehouse-app-w26-stock-count-import",
+			["dt", "enabled", "view", "script"],
+			as_dict=1,
 		)
-	except Exception as e:
-		check("module_endpoints", False, f"{type(e).__name__}: {str(e)[:200]}")
-
-	# --- 2. Client Script List-view SR ---
-	row = frappe.db.get_value(
-		"Client Script",
-		{"dt": "Stock Reconciliation", "script": ("like", "%" + MARKER + "%")},
-		["enabled", "view", "script"],
-		as_dict=1,
-	)
-	form_script = frappe.db.get_value(
-		"Client Script",
-		{"dt": "Stock Reconciliation", "script": ("like", "%" + upgrade.SR_SCRIPT_MARKER + "%")},
-		["enabled", "view"],
-		as_dict=1,
-	)
-	check(
-		"client_script_list",
-		bool(
-			row
-			and int(row.enabled or 0) == 1
-			and row.view == "List"
-			and "Import Stock Count" in (row.script or "")
+		form_script = frappe.db.get_value(
+			"Client Script",
+			{"dt": "Stock Reconciliation", "script": ("like", "%" + upgrade.SR_SCRIPT_MARKER + "%")},
+			["enabled", "view"],
+			as_dict=1,
+		)
+		ok = bool(
+			not list_left
+			and w26
+			and w26.dt == "Stock Reconciliation"
+			and int(w26.enabled or 0) == 1
+			and w26.view == "Form"
+			and upgrade.SR_FORM_SCRIPT_MARKER in (w26.script or "")
+			and "has_role" in (w26.script or "")
+			and "Import Stock Count" in (w26.script or "")
 			and form_script
 			and int(form_script.enabled or 0) == 1
 			and form_script.view == "Form"
-		),
-		f"list={dict(row) if row else None}, form={dict(form_script) if form_script else None}",
-	)
+		)
+		check(
+			"client_scripts",
+			ok,
+			f"w25_left={list_left}, "
+			f"w26={ {k: w26.get(k) for k in ('dt', 'enabled', 'view')} if w26 else None }, "
+			f"form23={dict(form_script) if form_script else None}",
+		)
+	except Exception as e:
+		check("client_scripts", False, f"{type(e).__name__}: {str(e)[:200]}")
 
 	# --- Fixture: item1 (stok 24), item2 (stok 0), item3 (batch) ---
 	try:
@@ -247,6 +249,49 @@ def _run_gate(check):
 	except Exception as e:
 		check("fixture_item", False, f"{type(e).__name__}: {str(e)[:200]}")
 		raise GateAborted()
+
+	# --- 2. Modul + endpoint (smoke decode base64/data-URL via endpoint, murni) ---
+	try:
+		def methods_for(module, name):
+			# dict allowed_http_methods ber-key OBJECT fungsi — bandingkan via
+			# module+name agar tahan bila whitelist membungkus fungsi
+			return next(
+				(
+					m
+					for fn, m in frappe.allowed_http_methods_for_whitelisted_func.items()
+					if getattr(fn, "__module__", "") == module
+					and getattr(fn, "__name__", "") == name
+				),
+				None,
+			)
+
+		header = ",".join(sr_import.TEMPLATE_HEADERS)
+		tiny = f"{header}\n{item1.name},X,{warehouse},{alt},2,3,1200".encode()
+		res = sr_import.upload_stock_count(
+			filename="x.csv",
+			data="data:text/csv;base64," + base64.b64encode(tiny).decode(),
+			company=company,
+		)
+		g = (res.get("rows") or [{}])[0]
+		ok = bool(
+			methods_for(sr_import.__name__, "upload_stock_count") == ["POST"]
+			and methods_for(sr_import.__name__, "download_stock_count_template") == ["POST"]
+			and "has_permission" in inspect.getsource(sr_import.upload_stock_count)
+			and "has_permission" in inspect.getsource(sr_import.download_stock_count_template)
+			and "base64" in inspect.getsource(sr_import.upload_stock_count)
+			and res.get("company") == company
+			and res.get("added") == 1
+			and abs(flt(g.get("qty")) - 36) < 1e-4  # 3 × 12
+		)
+		check(
+			"module_endpoints",
+			ok,
+			f"sr_import: download/upload whitelisted POST + has_permission create SR + "
+			f"data-URL decode; smoke added={res.get('added')}, qty={g.get('qty')}",
+		)
+	except Exception as e:
+		frappe.db.rollback()
+		check("module_endpoints", False, f"{type(e).__name__}: {str(e)[:200]}")
 
 	if not _seed_stock(check, item1.name, warehouse, company):
 		raise GateAborted()
@@ -277,78 +322,100 @@ def _run_gate(check):
 	# --- 4. Roundtrip file (xlsx + csv + varian locale) ---
 	_check_roundtrip(check, item1, item2, alt, warehouse)
 
-	# --- 5. create_reconciliation: draft SR ---
+	# --- 5. import_rows: validate → baris grid → SR dibangun klien-style ---
 	draft_name = None
+	posting_date = nowdate()
+	posting_time = nowtime()
 	try:
-		parsed = {
-			"rows": [
-				{
-					"row_no": 2,
-					"item_code": item1.name,
-					"warehouse": warehouse,
-					"uom": alt,
-					"counted": 3.0,
-					"rate": 1200.0,
-				}
-			],
-			"skipped": 1,
-			"warnings": [],
-		}
-		res = sr_import.create_reconciliation(parsed)
-		row = (
-			frappe.db.get_value(
-				"Stock Reconciliation Item",
-				{"parent": res["sr"]},
-				[
-					"qty",
-					"valuation_rate",
-					SR_FACTOR_FIELD,
-					SR_AFTER_FIELD,
-					SR_BEFORE_FIELD,
-					SR_DIFF_FIELD,
-				],
-				as_dict=1,
-			)
-			if res.get("sr")
-			else None
-		)
-		docstatus = (
-			frappe.db.get_value("Stock Reconciliation", res["sr"], "docstatus") if res.get("sr") else None
-		)
-		ok = bool(
-			res.get("created")
+		from openpyxl import load_workbook
+
+		rows = sr_import.build_count_rows(warehouse, True)
+		xlsx_bytes = sr_import.make_template_bytes(rows, "xlsx")
+		wb = load_workbook(io.BytesIO(xlsx_bytes))
+		ws = wb.active
+		idx = next(i for i, r in enumerate(rows) if r["item_code"] == item1.name)
+		ws.cell(row=idx + 2, column=6, value=3)  # Counted Qty (as per UOM)
+		ws.cell(row=idx + 2, column=7, value=1200)  # Valuation Rate (as per UOM)
+		buf = io.BytesIO()
+		wb.save(buf)
+		parsed = sr_import.parse_count_content(buf.getvalue(), "count.xlsx")
+		res = sr_import.validate_count_rows(parsed, company, posting_date, posting_time)
+		g = (res.get("rows") or [{}])[0]
+		grid_ok = bool(
+			res.get("company") == company
 			and res.get("added") == 1
-			and res.get("skipped") == 1
-			and row
+			and res.get("skipped") >= 1  # baris item lain tanpa Counted Qty terskip
+			and g.get("item_code") == item1.name
+			and g.get("warehouse") == warehouse
+			and g.get("stock_uom") == stock
+			and g.get(SR_UOM_FIELD) == alt
+			and abs(flt(g.get(SR_FACTOR_FIELD)) - 12) < 1e-6
+			and abs(flt(g.get("current_qty")) - 24) < 1e-4
+			and abs(flt(g.get(SR_BEFORE_FIELD)) - 2) < 1e-6
+			and abs(flt(g.get(SR_AFTER_FIELD)) - 3) < 1e-6
+			and abs(flt(g.get(SR_DIFF_FIELD)) - 1) < 1e-6
+			and abs(flt(g.get("qty")) - 36) < 1e-4  # 3 × 12
+			and abs(flt(g.get("valuation_rate")) - 100) < 1e-4  # 1200 ÷ 12
+		)
+		# Bangun SR persis seperti klien (fill grid dengan hasil endpoint, lalu
+		# Save) — hook W23 yang mengonversi native qty/rate saat simpan.
+		doc = frappe.get_doc(
+			{
+				"doctype": "Stock Reconciliation",
+				"purpose": "Stock Reconciliation",
+				"company": company,
+				"posting_date": posting_date,
+				"posting_time": posting_time,
+				"items": res.get("rows") or [],
+			}
+		).insert()
+		row = frappe.db.get_value(
+			"Stock Reconciliation Item",
+			{"parent": doc.name},
+			[
+				"qty",
+				"valuation_rate",
+				SR_FACTOR_FIELD,
+				SR_AFTER_FIELD,
+				SR_BEFORE_FIELD,
+				SR_DIFF_FIELD,
+				SR_RATE_FIELD,
+			],
+			as_dict=1,
+		)
+		docstatus = frappe.db.get_value("Stock Reconciliation", doc.name, "docstatus")
+		ok = grid_ok and bool(
+			row
 			and abs(flt(row.qty) - 36) < 1e-4
 			and abs(flt(row.valuation_rate) - 100) < 1e-4
 			and abs(flt(row.get(SR_FACTOR_FIELD)) - 12) < 1e-6
 			and abs(flt(row.get(SR_AFTER_FIELD)) - 3) < 1e-6
 			and abs(flt(row.get(SR_BEFORE_FIELD)) - 2) < 1e-6
 			and abs(flt(row.get(SR_DIFF_FIELD)) - 1) < 1e-6
+			and abs(flt(row.get(SR_RATE_FIELD)) - 1200) < 1e-6
 			and docstatus == 0
 		)
-		if res.get("sr"):
-			TRACKED["sr"].append(res["sr"])
-			draft_name = res["sr"]
-			frappe.db.commit()
+		TRACKED["sr"].append(doc.name)
+		draft_name = doc.name
+		frappe.db.commit()
 		check(
-			"create_draft",
+			"import_rows",
 			ok,
-			f"res={ {k: res.get(k) for k in ('created', 'sr', 'added', 'skipped', 'matched')} }, "
-			f"row={dict(row) if row else None}, docstatus={docstatus}",
+			f"grid added={res.get('added')}, skipped={res.get('skipped')}, g={g}; "
+			f"sr={doc.name}, row={dict(row) if row else None}, docstatus={docstatus}",
 		)
 	except Exception as e:
-		check("create_draft", False, f"{type(e).__name__}: {str(e)[:200]}")
+		frappe.db.rollback()
+		check("import_rows", False, f"{type(e).__name__}: {str(e)[:200]}")
 
-	# --- 7. Semua baris cocok ledger → tanpa SR ---
+	# --- 6. Semua baris cocok ledger → tanpa dokumen ---
 	try:
 		before_srs = set(
 			frappe.get_all(
 				"Stock Reconciliation Item", filters={"item_code": item1.name}, pluck="parent"
 			)
 		)
-		res = sr_import.create_reconciliation(
+		res = sr_import.validate_count_rows(
 			{
 				"rows": [
 					{
@@ -362,7 +429,8 @@ def _run_gate(check):
 				],
 				"skipped": 0,
 				"warnings": [],
-			}
+			},
+			company,
 		)
 		after_srs = set(
 			frappe.get_all(
@@ -370,26 +438,26 @@ def _run_gate(check):
 			)
 		)
 		ok = bool(
-			not res.get("created")
-			and not res.get("sr")
+			res.get("added") == 0
+			and res.get("rows") == []
 			and res.get("matched") == 1
 			and "match" in (res.get("message") or "").lower()
 			and before_srs == after_srs
 		)
 		check(
-			"matched_all_no_sr",
+			"matched_all_no_rows",
 			ok,
-			f"res={ {k: res.get(k) for k in ('created', 'sr', 'matched', 'message')} }, "
-			f"srs before==after: {before_srs == after_srs}",
+			f"res={{'added': {res.get('added')}, 'matched': {res.get('matched')}, "
+			f"'message': {res.get('message')!r}}}, srs before==after: {before_srs == after_srs}",
 		)
 	except Exception as e:
-		check("matched_all_no_sr", False, f"{type(e).__name__}: {str(e)[:200]}")
+		check("matched_all_no_rows", False, f"{type(e).__name__}: {str(e)[:200]}")
 
-	# --- 8. Error parse + error create atomik ---
+	# --- 7. Error parse + error validate atomik ---
 	_check_parse_errors(check, item1, alt, warehouse)
-	_check_atomic_errors(check, item1, alt, warehouse)
+	_check_atomic_errors(check, item1, alt, warehouse, company)
 
-	# --- 9. Permission user tanpa role ---
+	# --- 8. Permission user tanpa role (upload_stock_count langsung) ---
 	try:
 		email = (PREFIX + "-" + frappe.generate_hash(length=6) + "@example.com").lower()
 		frappe.get_doc(
@@ -407,19 +475,23 @@ def _run_gate(check):
 		denied = False
 		frappe.set_user(email)
 		try:
-			frappe.has_permission("Stock Reconciliation", "create", throw=True)
+			sr_import.upload_stock_count(filename="x.csv", data="aGk=", company=company)
 		except frappe.PermissionError:
 			denied = True
 		finally:
 			frappe.set_user("Administrator")
-		check("permission_gate", denied, f"user={email} tanpa role → create SR ditolak: {denied}")
+		check(
+			"permission_gate",
+			denied,
+			f"user={email} tanpa role → upload_stock_count ditolak: {denied}",
+		)
 	except Exception as e:
 		frappe.set_user("Administrator")
 		check("permission_gate", False, f"{type(e).__name__}: {str(e)[:200]}")
 
-	# --- 10. Item stok-0 tanpa rate → warning + draft tetap dibuat ---
+	# --- 9. Item stok-0 tanpa rate → warning + baris tetap dikembalikan ---
 	try:
-		res = sr_import.create_reconciliation(
+		res = sr_import.validate_count_rows(
 			{
 				"rows": [
 					{
@@ -433,39 +505,28 @@ def _run_gate(check):
 				],
 				"skipped": 0,
 				"warnings": [],
-			}
+			},
+			company,
 		)
-		row = (
-			frappe.db.get_value(
-				"Stock Reconciliation Item",
-				{"parent": res["sr"]},
-				["qty"],
-				as_dict=1,
-			)
-			if res.get("sr")
-			else None
-		)
+		g = (res.get("rows") or [{}])[0]
 		ok = bool(
-			res.get("created")
+			res.get("added") == 1
+			and len(res.get("rows") or []) == 1
 			and any("Valuation Rate" in w for w in res.get("warnings") or [])
-			and row
-			and abs(flt(row.qty) - 60) < 1e-4  # 5 × 12
+			and abs(flt(g.get("qty")) - 60) < 1e-4  # 5 × 12
 		)
-		if res.get("sr"):
-			TRACKED["sr"].append(res["sr"])
-			frappe.db.commit()
 		check(
 			"zero_ledger_warning",
 			ok,
-			f"res={ {k: res.get(k) for k in ('created', 'sr', 'warnings')} }, qty={row.qty if row else None}",
+			f"res={{'added': {res.get('added')}, 'warnings': {res.get('warnings')}}}, qty={g.get('qty')}",
 		)
 	except Exception as e:
 		check("zero_ledger_warning", False, f"{type(e).__name__}: {str(e)[:200]}")
 
-	# --- 11. Submit draft hasil import → SLE ---
+	# --- 10. Submit draft hasil import → SLE ---
 	try:
 		if not draft_name:
-			check("submit_draft_sle", False, "draft dari create_draft tidak tersedia")
+			check("submit_draft_sle", False, "draft dari import_rows tidak tersedia")
 		else:
 			doc = frappe.get_doc("Stock Reconciliation", draft_name)
 			doc.submit()
@@ -490,14 +551,24 @@ def _run_gate(check):
 		frappe.db.rollback()
 		check("submit_draft_sle", False, f"{type(e).__name__}: {str(e)[:200]}")
 
-	# --- 12. ensure_client_scripts idempoten ---
+	# --- 11. apply() idempoten: pensiunan W25 no-op, W26 tetap hidup ---
 	try:
-		first = upgrade.ensure_client_scripts()
-		second = upgrade.ensure_client_scripts()
+		upgrade.apply()
+		upgrade.apply()
+		list_left = frappe.get_all(
+			"Client Script", filters={"script": ("like", "%" + MARKER + "%")}, pluck="name"
+		)
+		w26 = frappe.db.get_value(
+			"Client Script",
+			"warehouse-app-w26-stock-count-import",
+			["enabled", "view"],
+			as_dict=1,
+		)
+		ok = bool(not list_left and w26 and int(w26.enabled or 0) == 1 and w26.view == "Form")
 		check(
 			"upgrade_idempotent",
-			second == "unchanged",
-			f"first={first!r}, second={second!r}",
+			ok,
+			f"apply()×2 ok, w25_left={list_left}, w26={dict(w26) if w26 else None}",
 		)
 	except Exception as e:
 		check("upgrade_idempotent", False, f"{type(e).__name__}: {str(e)[:200]}")
@@ -640,7 +711,7 @@ def _check_parse_errors(check, item1, alt, warehouse):
 		check("parse_errors", False, f"{type(e).__name__}: {str(e)[:200]}")
 
 
-def _check_atomic_errors(check, item1, alt, warehouse):
+def _check_atomic_errors(check, item1, alt, warehouse, company):
 	try:
 		def rowdict(row_no, item, counted, rate=None, uom=None):
 			return {
@@ -653,23 +724,34 @@ def _check_atomic_errors(check, item1, alt, warehouse):
 			}
 
 		cases = [
-			("unknown_item", [rowdict(2, PREFIX + "-NOPE", 1)], "not found", 2),
+			("unknown_item", [rowdict(2, PREFIX + "-NOPE", 1)], "not found", 2, company),
 			# duplikat dilaporkan pada kemunculan KEDUA (Row 3)
-			("duplicate", [rowdict(2, item1.name, 1), rowdict(3, item1.name, 2)], "more than once", 3),
-			("uom_empty", [rowdict(2, item1.name, 1, uom="")], "UOM is required", 2),
-			("negative", [rowdict(2, item1.name, -5)], "negative", 2),
-			("rate_zero", [rowdict(2, item1.name, 1, rate=0)], "leave the cell blank", 2),
+			("duplicate", [rowdict(2, item1.name, 1), rowdict(3, item1.name, 2)], "more than once", 3, company),
+			("uom_empty", [rowdict(2, item1.name, 1, uom="")], "UOM is required", 2, company),
+			("negative", [rowdict(2, item1.name, -5)], "negative", 2, company),
+			("rate_zero", [rowdict(2, item1.name, 1, rate=0)], "leave the cell blank", 2, company),
+			# Mismatch TANPA membuat Company (insert Company = berat, membangun
+			# chart of accounts): param company sengaja TIDAK ADA di site,
+			# gudangnya milik company JURI → cabang "belongs to company" terpicu
+			# dan pesan memuat nama company milik gudang.
+			(
+				"company_mismatch",
+				[rowdict(2, item1.name, 1)],
+				f"belongs to company|{company}",
+				2,
+				PREFIX + "-NOCO",
+			),
 		]
 		results = {}
-		for name, rows, needle, want_row in cases:
+		for name, rows, needle, want_row, use_company in cases:
 			try:
-				sr_import.create_reconciliation({"rows": rows, "skipped": 0, "warnings": []})
+				sr_import.validate_count_rows({"rows": rows, "skipped": 0, "warnings": []}, use_company)
 				results[name] = "NO-THROW"
 			except frappe.ValidationError as e:
 				msg = str(e)
 				results[name] = (
 					"OK"
-					if (f"Row {want_row}" in msg and needle in msg)
+					if (f"Row {want_row}" in msg and all(x in msg for x in needle.split("|")))
 					else f"WRONG-MSG: {msg[:120]}"
 				)
 				frappe.db.rollback()
@@ -678,7 +760,7 @@ def _check_atomic_errors(check, item1, alt, warehouse):
 		check(
 			"atomic_errors",
 			ok,
-			f"{results}; baris SR item1 tersisa={persisted} (hanya draft create_draft)",
+			f"{results}; baris SR item1 tersisa={persisted} (hanya draft import_rows)",
 		)
 	except Exception as e:
 		frappe.db.rollback()
@@ -706,8 +788,10 @@ def _teardown(check):
 
 
 def _sweep():
-	"""Bersihkan residu W25: SR/SE ter-track + via item prefix, user fixture
-	(+ Sessions/Activity Log), SLE/Bin/Repost per item, Item, Version. Idempoten."""
+	"""Bersihkan residu W25/W26: SR/SE ter-track + via item prefix, user fixture
+	(+ Sessions/Activity Log), SLE/Bin/Repost Item Valuation per item (delete
+	tabel repost di-guard safe() — tabelnya tak selalu ada di site), Item,
+	Version. Idempoten."""
 	errors = []
 
 	def safe(label, fn):
@@ -757,7 +841,7 @@ def _sweep():
 					"GL Entry", {"voucher_type": "Stock Entry", "voucher_no": n}
 				),
 			)
-	# SLE/Bin/Repost per item (jaga-jaga bila cancel tak sempat membersihkan)
+	# SLE/Bin per item (jaga-jaga bila cancel tak sempat membersihkan)
 	safe(
 		"SLE",
 		lambda: frappe.db.delete("Stock Ledger Entry", {"item_code": ("in", items or [""])})
@@ -777,7 +861,7 @@ def _sweep():
 	# SELURUH transaksi berjalan — tanpa komit antar fase, kegagalan di fase user
 	# mengembalikan pembersihan dokumen yang sudah dilakukan di atasnya.
 	frappe.db.commit()
-	# User fixture + jejak sesi/aktivitas. Ditemukan via TRACKEN maupun pola
+	# User fixture + jejak sesi/aktivitas. Ditemukan via TRACKED maupun pola
 	# prefix — residu run sebelumnya yang crash tidak ada di TRACKED run ini.
 	# Contact dihapus dulu di txn terpisah: delete_doc User menyentuh Contact
 	# terkait dan memicu QueryDeadlockError tabContact bila Contact itu basi
