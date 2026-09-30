@@ -771,18 +771,18 @@ function bulk_dialog(wos, done) {
 					<div class="wzrq-dt-title">${__('Batch')} <b>${wzrq_esc(r.custom_adonan_ke || '-')}</b> · ${wzrq_esc(r.item_name)}</div>
 					<div class="wzrq-dt-meta text-muted">${wzrq_esc(r.name)} · ${__('yield {0} {1}', [Number(r.produced_qty || 0).toLocaleString('en-US'), wzrq_esc(r.stock_uom)])}${r.display_uom && r.display_uom !== r.stock_uom ? ` · ${Number(r.expected_units != null ? r.expected_units : 0).toLocaleString('en-US')} ${wzrq_esc(r.display_uom)}` : ''}</div>
 				</td>
-				<td class="wzrq-dt-cell"><input type="number" class="form-control wzrq-kg1" min="0" step="0.01" placeholder="kg" title="${__('Box 1 — kg')}" /></td>
-				<td class="wzrq-dt-cell"><input type="number" class="form-control wzrq-qty1" min="0" step="any" value="${wzrq_is_display_uom(r, dialog_uom) ? Number(r.expected_units != null ? r.expected_units : 0) : Math.round(Number(r.produced_qty || 0))}" title="${__('Box 1 — qty')}" /></td>
+				<td class="wzrq-dt-cell"><input type="number" class="form-control wzrq-kg1" min="0" step="0.01" placeholder="kg" title="${__('Box 1 (kg)')}" /></td>
+				<td class="wzrq-dt-cell"><input type="number" class="form-control wzrq-qty1" min="0" step="1" value="${wzrq_is_display_uom(r, dialog_uom) ? Number(r.expected_units != null ? r.expected_units : 0) : Math.round(Number(r.produced_qty || 0))}" title="${__('Box 1 (qty)')}" /></td>
 				<td class="wzrq-dt-cell2">
 					<button type="button" class="btn btn-link wzrq-addbox2">+ ${__('Box 2')}</button>
 					<div class="wzrq-box2-inputs" style="display:none">
-						<input type="number" class="form-control wzrq-kg2" min="0" step="0.01" placeholder="kg" title="${__('Box 2 — kg')}" />
-						<input type="number" class="form-control wzrq-qty2" min="0" step="any" value="0" title="${__('Box 2 — qty')}" />
+						<input type="number" class="form-control wzrq-kg2" min="0" step="0.01" placeholder="kg" title="${__('Box 2 (kg)')}" />
+						<input type="number" class="form-control wzrq-qty2" min="0" step="1" value="0" title="${__('Box 2 (qty)')}" />
 					</div>
 					<button type="button" class="btn btn-link wzrq-addbox3" style="display:none">+ ${__('Box 3')}</button>
 					<div class="wzrq-box3-inputs" style="display:none">
-						<input type="number" class="form-control wzrq-kg3" min="0" step="0.01" placeholder="kg" title="${__('Box 3 — kg')}" />
-						<input type="number" class="form-control wzrq-qty3" min="0" step="any" value="0" title="${__('Box 3 — qty')}" />
+						<input type="number" class="form-control wzrq-kg3" min="0" step="0.01" placeholder="kg" title="${__('Box 3 (kg)')}" />
+						<input type="number" class="form-control wzrq-qty3" min="0" step="1" value="0" title="${__('Box 3 (qty)')}" />
 					</div>
 				</td>
 			</tr>`
@@ -790,12 +790,12 @@ function bulk_dialog(wos, done) {
 		.join('');
 
 	const d = new frappe.ui.Dialog({
-		title: __('Box Allocation — {0} Work Orders', [wos.length]),
+		title: __('Box Allocation ({0} Work Orders)', [wos.length]),
 		size: 'large',
 	});
 	d.$body.html(`
 		<p class="text-muted wzrq-dt-hint">
-			<span>${__('Box 1 is required. Box 2 and Box 3 are optional — click + Box 2, then + Box 3, to add them.')}</span>
+			<span>${__('Box 1 is required. Box 2 and Box 3 are optional: click + Box 2, then + Box 3, to add them.')}</span>
 			<span class="wzrq-dt-uom">${__('Qty in')} <select class="form-control wzrq-duom">${uom_opts.map((o) => `<option value="${wzrq_esc(o)}"${o === dialog_uom ? ' selected' : ''}>${wzrq_esc(o)}</option>`).join('')}</select></span>
 		</p>
 		<table class="wzrq-dtable">
@@ -884,23 +884,41 @@ async function submit_bulk(d, done) {
 			invalid = $tr.attr('data-wo');
 			return;
 		}
-		// qty input (uom terpilih) -> integer display UOM: kontrak payload API
+		// qty input (uom terpilih) -> integer display UOM: kontrak payload API.
+		// Kedua jalur wajib bulat: entry langsung di UOM display TIDAK boleh
+		// dipotong diam-diam (parseInt lama mengubah 2.5 -> 2 tanpa pesan).
 		const factor = Number($tr.attr('data-factor'));
 		const f = isFinite(factor) && factor > 0 ? factor : 1;
 		const item = $tr.attr('data-item') || $tr.attr('data-wo');
+		const item_label = wzrq_esc(item);
+		const stock_uom_label = wzrq_esc($tr.attr('data-stock-uom') || '');
+		const disp_uom_label = wzrq_esc($tr.attr('data-display-uom') || '');
 		const to_display_units = (raw) => {
 			if (wzrq_tr_is_display($tr, uom)) {
-				return parseInt(raw, 10);
+				const v = parseFloat(raw);
+				if (!isFinite(v) || Math.abs(v - Math.round(v)) > 1e-9) {
+					not_whole.push(
+						__('{0} {1} is not a whole number for {2}.', [
+							String(raw),
+							wzrq_esc(uom),
+							item_label,
+						])
+					);
+					return null;
+				}
+				return Math.round(v);
 			}
 			const v = parseFloat(raw);
 			const x = v / f;
 			const whole = Math.round(x);
 			if (Math.abs(x - whole) > 1e-6) {
 				not_whole.push(
-					__('{0} Pcs is not a whole number of Packs for {1} (1 Pack = {2} Pcs)', [
+					__('{0} {1} is not a whole number of {2} for {3} (1 {2} = {4} {1}).', [
 						v.toLocaleString('en-US'),
-						wzrq_esc(item),
-						wzrq_esc(f),
+						stock_uom_label,
+						disp_uom_label,
+						item_label,
+						f,
 					])
 				);
 				return null;
@@ -942,7 +960,7 @@ async function submit_bulk(d, done) {
 		frappe.msgprint({
 			title: __('Incomplete data'),
 			indicator: 'red',
-			message: __('Fill in Box 1 (kg and qty) for every row — check {0}.', [invalid]),
+			message: __('Fill in Box 1 (kg and qty) for every row. Check {0}.', [invalid]),
 		});
 		return;
 	}
@@ -1101,7 +1119,7 @@ function group_dialog(wos, done) {
 		return `<div class="wzrq-grow">
 			<span class="wzrq-gnum text-muted"></span>
 			<input type="number" class="form-control wzrq-gkg" min="0" step="0.01" placeholder="kg" title="${__('Box kg')}" />
-			<input type="number" class="form-control wzrq-gqty" min="0" step="any" value="${qty == null ? '' : qty}" title="${__('Box qty')}" />
+			<input type="number" class="form-control wzrq-gqty" min="0" step="1" value="${qty == null ? '' : qty}" title="${__('Box qty')}" />
 			<button type="button" class="btn btn-link wzrq-gx" title="${__('Remove box')}">×</button>
 		</div>`;
 	}
@@ -1221,7 +1239,14 @@ async function _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done)
 		const display_uom = r0.display_uom || '';
 		let qty_units;
 		if (disp) {
-			qty_units = parseInt(q_raw, 10);
+			// kontrak API = integer display UOM: tolak desimal eksplisit,
+			// jangan potong diam-diam (parseInt lama mengubah 2.5 -> 2)
+			const v = parseFloat(q_raw);
+			if (!isFinite(v) || Math.abs(v - Math.round(v)) > 1e-9) {
+				not_whole.push(__('Box {0}: {1} {2} is not a whole number.', [i + 1, String(q_raw), uom]));
+				return;
+			}
+			qty_units = Math.round(v);
 		} else {
 			const v = parseFloat(q_raw);
 			const x = v / f;
