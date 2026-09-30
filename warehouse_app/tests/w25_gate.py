@@ -695,7 +695,7 @@ def _check_parse_errors(check, item1, alt, warehouse):
 			and "not a valid .xlsx" in results["bad_xlsx"]
 			and results["rate_zero"]
 			and "Row 2" in results["rate_zero"]
-			and "leave the cell blank" in results["rate_zero"]
+			and "Leave the cell blank" in results["rate_zero"]
 			and results["garbage_number"]
 			and "not a recognized number" in results["garbage_number"]
 			and results["mixed_sep"]
@@ -729,7 +729,7 @@ def _check_atomic_errors(check, item1, alt, warehouse, company):
 			("duplicate", [rowdict(2, item1.name, 1), rowdict(3, item1.name, 2)], "more than once", 3, company),
 			("uom_empty", [rowdict(2, item1.name, 1, uom="")], "UOM is required", 2, company),
 			("negative", [rowdict(2, item1.name, -5)], "negative", 2, company),
-			("rate_zero", [rowdict(2, item1.name, 1, rate=0)], "leave the cell blank", 2, company),
+			("rate_zero", [rowdict(2, item1.name, 1, rate=0)], "Leave the cell blank", 2, company),
 			# Mismatch TANPA membuat Company (insert Company = berat, membangun
 			# chart of accounts): param company sengaja TIDAK ADA di site,
 			# gudangnya milik company JURI → cabang "belongs to company" terpicu

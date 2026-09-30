@@ -755,7 +755,7 @@ CLIENT_SCRIPT_SR_FORM = SR_FORM_SCRIPT_MARKER + """ — Import Stock Count on th
 		frm.refresh_field("items");
 		d.hide();
 		frappe.show_alert({
-			message: __("{0} rows imported — review and Save.", [res.added]),
+			message: __("{0} rows imported. Review and Save.", [res.added]),
 			indicator: "green",
 		});
 	}
@@ -799,7 +799,7 @@ CLIENT_SCRIPT_SR_FORM = SR_FORM_SCRIPT_MARKER + """ — Import Stock Count on th
 				max_number_of_files: 1,
 				allowed_file_types: [".csv", ".xlsx"],
 			},
-			upload_notes: __("Counted Qty (as per UOM) is the only required column; blank rows are skipped."),
+			upload_notes: __("Only the Counted Qty column is required."),
 			on_success(file) {
 				frappe.call({
 					method: SR_IMPORT + "upload_stock_count",
@@ -835,7 +835,7 @@ CLIENT_SCRIPT_SR_FORM = SR_FORM_SCRIPT_MARKER + """ — Import Stock Count on th
 					options:
 						'<p class="text-muted" style="margin: -4px 0 4px;">' +
 						__(
-							"Download the count template for a warehouse — it comes pre-filled with every item and its current quantity in the item's inventory UOM. Fill in the Counted Qty column after the physical count, then upload the file here to fill this document's item table."
+							"Download the pre-filled template, fill in Counted Qty, then upload the file here."
 						) +
 						"</p>",
 				},
@@ -854,9 +854,7 @@ CLIENT_SCRIPT_SR_FORM = SR_FORM_SCRIPT_MARKER + """ — Import Stock Count on th
 					label: __("Include zero-stock items"),
 					fieldtype: "Check",
 					default: 0,
-					description: __(
-						"Also list items whose stock in this warehouse is currently zero (items that have ever moved here)."
-					),
+					description: __("Also list items with zero stock in this warehouse."),
 				},
 				{ fieldname: "col_dl", fieldtype: "Column Break" },
 				{
@@ -882,16 +880,13 @@ CLIENT_SCRIPT_SR_FORM = SR_FORM_SCRIPT_MARKER + """ — Import Stock Count on th
 					options:
 						'<ul class="text-muted" style="padding-left: 16px; margin: 0 0 8px;">' +
 						"<li>" +
-						__("Only the Counted Qty (as per UOM) column is required — leave a row blank to skip it.") +
+						__("Only Counted Qty (as per UOM) is required. Blank rows are skipped.") +
 						"</li>" +
 						"<li>" +
-						__("Fill Valuation Rate (as per UOM) only when re-valuing; blank keeps the system rate.") +
+						__("Valuation Rate is optional. Leave it blank to keep the system rate.") +
 						"</li>" +
 						"<li>" +
-						__("Count and upload on the same day — the before quantity is always recalculated from the live ledger.") +
-						"</li>" +
-						"<li>" +
-						__("Fill the file and upload it without changing the Posting Date afterwards — the count is a snapshot of that date.") +
+						__("Count and upload the same day. Don't change the Posting Date afterwards.") +
 						"</li>" +
 						"</ul>",
 				},

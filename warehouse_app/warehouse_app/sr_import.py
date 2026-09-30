@@ -164,7 +164,7 @@ def build_count_rows(warehouse, include_zero_stock=False):
 		# hanya jadi jebakan (di-download, diisi, lalu ditolak saat upload).
 		frappe.throw(
 			_(
-				"The warehouse has more than {0} countable items — the import supports at most {0} rows per file."
+				"The warehouse has more than {0} countable items. The import supports at most {0} rows per file."
 			).format(frappe.bold(MAX_DATA_ROWS))
 		)
 	return rows
@@ -240,7 +240,7 @@ def _xlsx_rows(content):
 	except Exception:
 		# zip rusak / file di-rename dari format lain → pesan ramah, bukan 500
 		frappe.throw(
-			_("The file is not a valid .xlsx — please re-download the template and edit that copy.")
+			_("The file is not a valid .xlsx. Re-download the template and edit that copy.")
 		)
 	try:
 		rows = []
@@ -296,7 +296,7 @@ def _parse_number(value, row_no, label, allow_grouping=False):
 	text = value.strip()
 	if "," in text and "." in text:
 		return None, _(
-			'Row {0}: {1} value "{2}" mixes "," and "." — please use plain numbers (e.g. 1.5).'
+			'Row {0}: {1} value "{2}" mixes "," and ".". Use plain numbers (e.g. 1.5).'
 		).format(row_no, label, escape_html(text))
 	if _COMMA_DECIMAL.match(text):
 		return flt(text.replace(",", ".")), None
@@ -331,7 +331,7 @@ def parse_count_content(content, filename):
 			)
 		)
 	if not rows:
-		frappe.throw(_("The file is empty — please use the downloaded template."))
+		frappe.throw(_("The file is empty. Please use the downloaded template."))
 	if len(rows) > MAX_DATA_ROWS + 1:
 		frappe.throw(_("The file has more than {0} data rows.").format(frappe.bold(MAX_DATA_ROWS)))
 
@@ -362,7 +362,7 @@ def parse_count_content(content, filename):
 	]
 	if missing:
 		frappe.throw(
-			_("Missing required column(s): {0} — please use the template downloaded from this dialog.").format(
+			_("Missing required column(s): {0}. Use the template downloaded from this dialog.").format(
 				", ".join(frappe.bold(m) for m in missing)
 			)
 		)
@@ -418,7 +418,7 @@ def parse_count_content(content, filename):
 			if rate == 0:
 				row_errors.append(
 					_(
-						"Row {0}: Valuation Rate 0 cannot be imported — leave the cell blank to keep the system rate."
+						"Row {0}: Valuation Rate 0 cannot be imported. Leave the cell blank to keep the system rate."
 					).format(row_no)
 				)
 		if row_errors:
@@ -531,7 +531,7 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 		if item.has_batch_no or item.has_serial_no:
 			errors.append(
 				_(
-					"Row {0}: Item {1} is serial/batch tracked — please count it via the Stock Reconciliation form."
+					"Row {0}: Item {1} is serial/batch tracked. Count it via the Stock Reconciliation form."
 				).format(n, frappe.bold(item.name))
 			)
 			continue
@@ -578,7 +578,7 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 			if not factor:
 				errors.append(
 					_(
-						"Row {0}: UOM {1} is not valid for Item {2} — use the Stock UOM or add it to the item's UOM Conversion table."
+						"Row {0}: UOM {1} is not valid for Item {2}. Use the Stock UOM or add it to the item's UOM conversion table."
 					).format(n, frappe.bold(escape_html(r["uom"])), frappe.bold(item.name))
 				)
 				continue
@@ -607,7 +607,7 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 			if flt(r["rate"]) == 0:
 				errors.append(
 					_(
-						"Row {0}: Valuation Rate 0 cannot be imported — leave the cell blank to keep the system rate."
+						"Row {0}: Valuation Rate 0 cannot be imported. Leave the cell blank to keep the system rate."
 					).format(n)
 				)
 				continue
@@ -658,7 +658,7 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 		if not current and flt(r["counted"]) > 0 and r["rate"] is None:
 			warnings.append(
 				_(
-					"Row {0}: Item {1} currently has zero stock — fill Valuation Rate (as per UOM) or the draft cannot be submitted."
+					"Row {0}: Item {1} has zero stock. Fill Valuation Rate (as per UOM) or it cannot be submitted."
 				).format(r["row_no"], frappe.bold(escape_html(r["item_code"])))
 			)
 		r["_snapshot"] = (current, system_rate, before)
@@ -673,7 +673,7 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 		"rows": [],
 	}
 	if not kept:
-		stats["message"] = _("All counts match the current stock — no Stock Reconciliation is needed.")
+		stats["message"] = _("All counts match the current stock. Nothing to import.")
 		return stats
 
 	use_serial_batch_fields = cint(
@@ -741,7 +741,7 @@ def upload_stock_count(filename=None, data=None, company=None, posting_date=None
 	except binascii.Error:
 		frappe.throw(
 			_(
-				"The uploaded file could not be decoded — please re-download the template and edit that copy."
+				"The file could not be decoded. Re-download the template and edit that copy."
 			)
 		)
 	parsed = parse_count_content(content, filename)
