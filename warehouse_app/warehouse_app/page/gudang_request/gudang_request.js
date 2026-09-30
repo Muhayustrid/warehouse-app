@@ -1100,12 +1100,12 @@ function group_dialog(wos, done) {
 		);
 
 	const d = new frappe.ui.Dialog({
-		title: __('Group Box Allocation — {0} · {1} Work Orders', [item_name, wos.length]),
+		title: __('Group Box Allocation ({0} · {1} Work Orders)', [item_name, wos.length]),
 		size: 'large',
 	});
 	d.$body.html(`
 		<p class="text-muted wzrq-dt-hint">
-			<span>${__('Shared boxes across {0} Work Orders of {1} — allocate the total exactly.', [wos.length, wzrq_esc(item_name)])} <span class="wzrq-gtotal"></span></span>
+			<span>${__('Shared boxes across {0} Work Orders of {1}. Allocate the total exactly.', [wos.length, wzrq_esc(item_name)])} <span class="wzrq-gtotal"></span></span>
 			<span class="wzrq-dt-uom">${__('Qty in')} <select class="form-control wzrq-duom">${uom_opts
 				.map((o) => `<option value="${wzrq_esc(o)}"${o === dialog_uom ? ' selected' : ''}>${wzrq_esc(o)}</option>`)
 				.join('')}</select></span>
@@ -1321,7 +1321,7 @@ async function _submit_group_inner(d, wos, dialog_uom, is_disp_uom, f, r0, done)
 
 // batal grup box bersama: satu endpoint utk SEMUA MR anggota
 function cancel_group_request(box_plan, size, done) {
-	frappe.confirm(__('Cancel the ENTIRE group ({0} Work Orders)? Boxes are shared — cancel all.', [size]), () => {
+	frappe.confirm(__('Cancel the ENTIRE group ({0} Work Orders)? Boxes are shared, so cancel all.', [size]), () => {
 		frappe.call({
 			method: 'production_app.api.handover.cancel_group_request',
 			args: { box_plan: box_plan },
