@@ -45,7 +45,7 @@ ITEM_CODE = PREFIX + "-ITEM"
 ITEM_NAME = "ZZTEST W19 Gate Item"  # varian ber-spasi: cakupan guard item_name
 ITEM2_CODE = PREFIX + "-ITEM2"
 ITEM2_NAME = "ZZTEST W19 Gate Item 2"
-ADONAN = "W19"
+ADONAN = 919
 QTY = 100
 # Email UNIK per run — cache roles per email menempel lintas run bila statis.
 USER_EMAIL = "zztest-w19-%s@example.com" % now_datetime().strftime("%Y%m%d%H%M%S%f")

@@ -49,8 +49,12 @@ from warehouse_app.warehouse_app.report.serah_terima_gudang.serah_terima_gudang 
 PREFIX = "ZZTEST-W9"
 ITEM_CODE = PREFIX + "-ITEM"
 ITEM_NAME = "ZZTEST W9 Gate Item"  # varian ber-spasi: cakupan guard item_name
-USER_EMAIL = PREFIX + "@example.com"
-ADONAN = "W9"
+# W30: email unik per run — cache redis per-email bisa membawa role run lama
+# ke user baru dengan email sama (gotcha W16/W19; w19 sudah begini sejak awal).
+USER_EMAIL = (
+    PREFIX.lower() + "-" + frappe.generate_hash(length=8) + "@example.com"
+)
+ADONAN = 909
 QTY = 100
 
 # Dokumen bernama native (tidak ber-prefix) yang tercipta saat run.
