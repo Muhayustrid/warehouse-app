@@ -32,16 +32,24 @@ PREFIX = "ZZTEST-W"
 # role gudang apa pun) membuat guard gagal. Perubahan bisnis yang memang
 # disengaja wajib disertai update baseline ini secara sadar.
 # Snapshot diambil 2026-09-20 (frappe.get_all Custom DocPerm parent=Company).
+# Snapshot diambil 2026-10-01 di site produksi restore `1oktober2026`.
+# Site AKTIF kini 1oktober2026 (produksi restore) — baseline 15 baris
+# pre-existing hasil restore (HRMS: HR Manager/HR User/Employee Self Service;
+# pos_next: POSNext Manager; Sales/Desk User dst.). Baseline site lama
+# `frontend` (12 baris, diarsip di git history sebelum 2026-10-01) tak berlaku.
 COMPANY_CDP_BASELINE = (
-	("ALL ROLE", 1, 0, 0, 0),
 	("Accounts Manager", 1, 1, 1, 0),
 	("Accounts User", 1, 0, 0, 0),
 	("Auditor", 0, 0, 0, 0),
+	("Desk User", 0, 0, 0, 0),
 	("Employee", 1, 0, 0, 0),
 	("Employee Self Service", 1, 0, 0, 0),
-	("HR Manager", 1, 1, 1, 0),
+	("HR Manager", 1, 1, 0, 0),
+	("HR User", 0, 0, 0, 0),
+	("POSNext Manager", 1, 1, 0, 0),
 	("Projects User", 1, 0, 0, 0),
 	("Purchase User", 1, 0, 0, 0),
+	("Sales Manager", 1, 0, 0, 0),
 	("Sales User", 1, 0, 0, 0),
 	("Stock User", 1, 0, 0, 0),
 	("System Manager", 1, 1, 1, 0),
