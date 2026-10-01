@@ -97,13 +97,26 @@ def _run_gate(check):
 		else []
 	)
 	warehouse = warehouse[0] if warehouse else None
+	# Company di site ini menyalakan enable_item_wise_inventory_account — SLE
+	# SE wajib item punya inventory account sendiri (Item Default.expense_account
+	# / item group / brand); beri fixture Item Default eksplisit agar tak
+	# bergantung pada account yang menempel di item group bersama.
+	stock_account = (
+		frappe.get_all(
+			"Account", filters={"company": company, "account_type": "Stock", "is_group": 0},
+			pluck="name", limit=1,
+		)
+		if company
+		else []
+	)
+	stock_account = stock_account[0] if stock_account else None
 	check(
 		"preflight",
-		bool(stock and alt and invalid and item_group and company and warehouse),
+		bool(stock and alt and invalid and item_group and company and warehouse and stock_account),
 		f"stock={stock!r}, alt={alt!r}, company={company!r}, warehouse={warehouse!r}, "
-		f"group={item_group!r}",
+		f"group={item_group!r}, stock_account={stock_account!r}",
 	)
-	if not (stock and alt and item_group and company and warehouse):
+	if not (stock and alt and item_group and company and warehouse and stock_account):
 		raise GateAborted()
 
 	# --- Custom Field SE Detail: input + in_list_view ---
@@ -164,6 +177,7 @@ def _run_gate(check):
 				"has_batch_no": 0,
 				"has_serial_no": 0,
 				"uoms": [{"uom": alt, "conversion_factor": 12}],
+				"item_defaults": [{"company": company, "expense_account": stock_account}],
 			}
 		)
 		item.insert()
