@@ -98,9 +98,10 @@ def _run_gate(check):
 	)
 	warehouse = warehouse[0] if warehouse else None
 	# Company di site ini menyalakan enable_item_wise_inventory_account — SLE
-	# SE wajib item punya inventory account sendiri (Item Default.expense_account
-	# / item group / brand); beri fixture Item Default eksplisit agar tak
-	# bergantung pada account yang menempel di item group bersama.
+	# SE wajib item punya inventory account sendiri (Item Default
+	# .default_inventory_account, fallback item group/brand; bila expense_account
+	# yang diisi, account itu justru jadi difference account dan ditolak native
+	# karena bertipe Stock).
 	stock_account = (
 		frappe.get_all(
 			"Account", filters={"company": company, "account_type": "Stock", "is_group": 0},
@@ -177,7 +178,7 @@ def _run_gate(check):
 				"has_batch_no": 0,
 				"has_serial_no": 0,
 				"uoms": [{"uom": alt, "conversion_factor": 12}],
-				"item_defaults": [{"company": company, "expense_account": stock_account}],
+				"item_defaults": [{"company": company, "default_inventory_account": stock_account}],
 			}
 		)
 		item.insert()
