@@ -134,7 +134,7 @@ def run_guard():
 	if cdp_ok:
 		cdp_evidence = (
 			f"{len(current)} baris identik baseline tercatat "
-			"(12 baris pre-existing, nol dari warehouse_app)"
+			f"({len(baseline)} baris pre-existing, nol dari warehouse_app)"
 		)
 	else:
 		added = sorted(set(current) - set(baseline))
