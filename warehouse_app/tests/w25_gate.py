@@ -66,7 +66,7 @@ from warehouse_app.inventory_uom import (
 	SR_RATE_FIELD,
 	SR_UOM_FIELD,
 )
-from warehouse_app.tests.guard import count_residue
+from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 from warehouse_app.warehouse_app import sr_import
 
 PREFIX = "ZZTEST-W25"
@@ -108,7 +108,7 @@ def run_gate():
 		raise SystemExit(1)
 
 
-def _make_item(stock, alt, item_group, name_suffix):
+def _make_item(stock, alt, item_group, name_suffix, company=None):
 	item = frappe.get_doc(
 		{
 			"doctype": "Item",
@@ -120,6 +120,9 @@ def _make_item(stock, alt, item_group, name_suffix):
 			"has_batch_no": 0,
 			"has_serial_no": 0,
 			"uoms": [{"uom": alt, "conversion_factor": 12}],
+			# site item-wise inventory account (1oktober2026) butuh ini agar
+			# SE/SR fixture bisa posting GL — no-op di site lain
+			"item_defaults": item_inventory_defaults(company),
 			upgrade.ITEM_UOM_FIELD: alt,
 		}
 	)
@@ -234,9 +237,9 @@ def _run_gate(check):
 
 	# --- Fixture: item1 (stok 24), item2 (stok 0), item3 (batch) ---
 	try:
-		item1 = _make_item(stock, alt, item_group, "Gate Item")
-		item2 = _make_item(stock, alt, item_group, "Zero Item")
-		item3 = _make_item(stock, alt, item_group, "Batch Item")
+		item1 = _make_item(stock, alt, item_group, "Gate Item", company)
+		item2 = _make_item(stock, alt, item_group, "Zero Item", company)
+		item3 = _make_item(stock, alt, item_group, "Batch Item", company)
 		frappe.db.set_value("Item", item3.name, "has_batch_no", 1)
 		_make_bin(item2.name, warehouse)
 		_make_bin(item3.name, warehouse)
