@@ -738,10 +738,14 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 	// the grid so counting happens in the per-UOM columns (Qty After /
 	// Valuation Rate as per UOM) — display-only; both fields stay, keep being
 	// driven by the custom handlers + server hook, and remain visible for
-	// non-gate users.
+	// non-gate users. NOTE: set_column_disp dipanggil per-fieldname (string) —
+	// bentuk array di grid.js versi ini hanya mengubah editable-grid, kolom
+	// list view tetap tampil.
 	function hide_native_qty_columns(frm) {
 		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
-		if (grid) grid.set_column_disp(["qty", "valuation_rate"], false);
+		if (!grid) return;
+		grid.set_column_disp("qty", false);
+		grid.set_column_disp("valuation_rate", false);
 	}
 
 	frappe.ui.form.on("Stock Reconciliation", {

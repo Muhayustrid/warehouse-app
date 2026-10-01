@@ -140,15 +140,18 @@ def _run_gate(check):
 		{"dt": "Stock Reconciliation", "script": ("like", "%" + upgrade.SR_SCRIPT_MARKER + "%")},
 		["script", "enabled"], as_dict=1,
 	)
+	sr_text = sr_script.script if sr_script else ""
 	check(
 		"client_script_sr_w32",
 		bool(
 			sr_script
 			and int(sr_script.enabled or 0) == 1
-			and 'set_column_disp(["qty", "valuation_rate"], false)' in sr_script.script
+			and 'set_column_disp("qty", false)' in sr_text
+			and 'set_column_disp("valuation_rate", false)' in sr_text
 		),
 		f"enabled={getattr(sr_script, 'enabled', None)!r}, "
-		f"hide={'set_column_disp([\"qty\", \"valuation_rate\"], false)' in (sr_script.script if sr_script else '')}",
+		f"hide_qty={'set_column_disp(\"qty\", false)' in sr_text}, "
+		f"hide_rate={'set_column_disp(\"valuation_rate\", false)' in sr_text}",
 	)
 
 	# --- SE 3 baris: aturan asimetris compute_rate_per_uom ---
