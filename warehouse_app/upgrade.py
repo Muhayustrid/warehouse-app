@@ -353,9 +353,14 @@ CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + rate per U
 	// W32: hide the native Basic Rate (stock UOM) column from the grid so the
 	// per-UOM column is the single input — display-only, the field itself is
 	// never removed and still receives set_value (native flows included).
+	// Dua API dipakai bersamaan (belt & braces, beda perilaku antar versi
+	// frappe): set_column_disp untuk editable-grid/row editor,
+	// set_column_disp_in_list_view untuk kolom list view grid.
 	function hide_native_rate_column(frm) {
 		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
-		if (grid) grid.set_column_disp("basic_rate", false);
+		if (!grid) return;
+		grid.set_column_disp("basic_rate", false);
+		grid.set_column_disp_in_list_view("basic_rate", false);
 	}
 
 	frappe.ui.form.on("Stock Entry Detail", {
@@ -738,14 +743,14 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 	// the grid so counting happens in the per-UOM columns (Qty After /
 	// Valuation Rate as per UOM) — display-only; both fields stay, keep being
 	// driven by the custom handlers + server hook, and remain visible for
-	// non-gate users. NOTE: set_column_disp dipanggil per-fieldname (string) —
-	// bentuk array di grid.js versi ini hanya mengubah editable-grid, kolom
-	// list view tetap tampil.
+	// non-gate users. Dua API per-fieldname (lihat catatan di script SE).
 	function hide_native_qty_columns(frm) {
 		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
 		if (!grid) return;
-		grid.set_column_disp("qty", false);
-		grid.set_column_disp("valuation_rate", false);
+		for (const field of ["qty", "valuation_rate"]) {
+			grid.set_column_disp(field, false);
+			grid.set_column_disp_in_list_view(field, false);
+		}
 	}
 
 	frappe.ui.form.on("Stock Reconciliation", {
