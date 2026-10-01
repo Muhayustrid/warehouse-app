@@ -57,7 +57,7 @@ from warehouse_app.inventory_uom import (
 	SR_UOM_FIELD,
 	apply_sr_inventory_uom,
 )
-from warehouse_app.tests.guard import count_residue
+from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 
 PREFIX = "ZZTEST-W31"
 MARKER = upgrade.PL_SCRIPT_MARKER
@@ -296,6 +296,9 @@ def _run_pl_cases(check, stock, alt, item_group, company, warehouse):
 				"has_batch_no": 0,
 				"has_serial_no": 0,
 				"uoms": [{"uom": alt, "conversion_factor": 12}],
+				# site item-wise inventory account (1oktober2026) butuh ini agar
+				# SE fixture bisa posting GL — no-op di site lain
+				"item_defaults": item_inventory_defaults(company),
 				upgrade.ITEM_UOM_FIELD: alt,
 			}
 		)
@@ -565,6 +568,7 @@ def _run_pl_cases(check, stock, alt, item_group, company, warehouse):
 				"has_batch_no": 0,
 				"has_serial_no": 0,
 				"uoms": [{"uom": alt, "conversion_factor": 12}],
+				"item_defaults": item_inventory_defaults(company),
 				upgrade.ITEM_UOM_FIELD: alt,
 			}
 		)
