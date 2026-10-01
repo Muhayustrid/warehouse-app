@@ -219,13 +219,11 @@ def _run_gate(check):
 		got = [((round(flt(r.basic_rate), 4)), (round(flt(r.get(SE_RATE_FIELD)), 4))) for r in rows]
 		want = [(100.0, 1200.0)] * 3
 		amount_a = flt(rows[0].basic_amount) if rows else None
-		sle_qty = flt(
-			frappe.db.get_value(
-				"Stock Ledger Entry",
-				{"voucher_type": "Stock Entry", "voucher_no": se.name},
-				"sum(actual_qty)",
-			)
-		)
+		sle_qty = flt(sum(frappe.get_all(
+			"Stock Ledger Entry",
+			filters={"voucher_type": "Stock Entry", "voucher_no": se.name},
+			pluck="actual_qty",
+		)))
 		check(
 			"se_asymmetric_rule",
 			len(rows) == 3 and got == want,
