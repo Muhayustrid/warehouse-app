@@ -55,7 +55,7 @@ from warehouse_app.inventory_uom import (
 	SR_RATE_FIELD,
 	SR_UOM_FIELD,
 )
-from warehouse_app.tests.guard import count_residue
+from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 
 PREFIX = "ZZTEST-W23"
 MARKER = upgrade.SR_SCRIPT_MARKER
@@ -257,6 +257,9 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 				"has_batch_no": 0,
 				"has_serial_no": 0,
 				"uoms": [{"uom": alt, "conversion_factor": 12}],
+				# site item-wise inventory account (mis. 1oktober2026) butuh ini
+				# agar SR submit bisa posting GL — no-op di site lain
+				"item_defaults": item_inventory_defaults(company),
 				upgrade.ITEM_UOM_FIELD: alt,
 			}
 		)

@@ -48,6 +48,25 @@ COMPANY_CDP_BASELINE = (
 )
 
 
+def item_inventory_defaults(company):
+	"""Row Item Default siap-pakai untuk fixture item yang akan di-submit.
+	Site dengan Company.enable_item_wise_inventory_account = 1 (mis. site
+	produksi hasil restore 1oktober2026) mewajibkan tiap item punya inventory
+	account sendiri — di v16 yang dibaca get_item_wise_inventory_account_map
+	adalah Item Default.default_inventory_account (BUKAN expense_account, yang
+	justru dianggap difference account dan ditolak native bila bertipe Stock).
+	Kosong bila company tak memakai flag itu atau tak ada account Stock."""
+	if not company or not cint(frappe.db.get_value("Company", company, "enable_item_wise_inventory_account")):
+		return []
+	account = frappe.get_all(
+		"Account",
+		filters={"company": company, "account_type": "Stock", "is_group": 0},
+		pluck="name",
+		limit=1,
+	)
+	return [{"company": company, "default_inventory_account": account[0]}] if account else []
+
+
 def count_residue(prefix=PREFIX, extra_doctypes=None):
 	"""extra_doctypes: {doctype: [nama persis]} — dokumen bernama non-prefix
 	(mis. Handover Box Plan HBP-#####) dihitung dari daftar nama yang

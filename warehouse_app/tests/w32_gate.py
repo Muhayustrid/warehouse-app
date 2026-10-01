@@ -39,7 +39,7 @@ import traceback
 import frappe
 from frappe.utils import flt
 
-from warehouse_app.tests.guard import count_residue
+from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 from warehouse_app.tests.w21_gate import _pick_item_group, _pick_uoms
 from warehouse_app import upgrade
 from warehouse_app.inventory_uom import SE_RATE_FIELD
@@ -97,27 +97,13 @@ def _run_gate(check):
 		else []
 	)
 	warehouse = warehouse[0] if warehouse else None
-	# Company di site ini menyalakan enable_item_wise_inventory_account — SLE
-	# SE wajib item punya inventory account sendiri (Item Default
-	# .default_inventory_account, fallback item group/brand; bila expense_account
-	# yang diisi, account itu justru jadi difference account dan ditolak native
-	# karena bertipe Stock).
-	stock_account = (
-		frappe.get_all(
-			"Account", filters={"company": company, "account_type": "Stock", "is_group": 0},
-			pluck="name", limit=1,
-		)
-		if company
-		else []
-	)
-	stock_account = stock_account[0] if stock_account else None
 	check(
 		"preflight",
-		bool(stock and alt and invalid and item_group and company and warehouse and stock_account),
+		bool(stock and alt and invalid and item_group and company and warehouse),
 		f"stock={stock!r}, alt={alt!r}, company={company!r}, warehouse={warehouse!r}, "
-		f"group={item_group!r}, stock_account={stock_account!r}",
+		f"group={item_group!r}",
 	)
-	if not (stock and alt and item_group and company and warehouse and stock_account):
+	if not (stock and alt and item_group and company and warehouse):
 		raise GateAborted()
 
 	# --- Custom Field SE Detail: input + in_list_view ---
@@ -178,7 +164,7 @@ def _run_gate(check):
 				"has_batch_no": 0,
 				"has_serial_no": 0,
 				"uoms": [{"uom": alt, "conversion_factor": 12}],
-				"item_defaults": [{"company": company, "default_inventory_account": stock_account}],
+				"item_defaults": item_inventory_defaults(company),
 			}
 		)
 		item.insert()

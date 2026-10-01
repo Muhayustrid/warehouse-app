@@ -39,7 +39,7 @@ import traceback
 import frappe
 from frappe.utils import flt
 
-from warehouse_app.tests.guard import count_residue
+from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 from warehouse_app import upgrade
 from warehouse_app.inventory_uom import ITEM_UOM_FIELD, SE_RATE_FIELD
 
@@ -145,6 +145,11 @@ def _run_gate(check):
 				"has_batch_no": 0,
 				"has_serial_no": 0,
 				"uoms": uoms or [{"uom": alt, "conversion_factor": 12}],
+				# site item-wise inventory account (mis. 1oktober2026) butuh ini
+				# agar SE submit bisa posting GL — no-op di site lain
+				"item_defaults": item_inventory_defaults(
+					(frappe.get_all("Company", pluck="name", limit=1) or [None])[0]
+				),
 				ITEM_UOM_FIELD: uom_value,
 			}
 		)
