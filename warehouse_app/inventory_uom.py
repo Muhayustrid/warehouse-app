@@ -2,12 +2,12 @@
 # License: MIT
 
 # W21 — doc-events "Default Inventory UOM" per Item (field
-# custom_default_inventory_unit_of_measure) + kolom tampilan
+# custom_default_inventory_unit_of_measure) + kolom
 # custom_basic_rate_per_uom di Stock Entry Detail.
 #
 # Batas arsitektur: validasi Item hanya menambah syarat pada field milik app
 # ini — kosong = langsung lewat tanpa menyentuh alur native (impor, alur
-# produksi). Perhitungan rate per UOM murni display-only, tidak pernah throw.
+# produksi). Selaraskan rate per UOM <-> basic_rate native tidak pernah throw.
 
 import frappe
 from frappe import _
@@ -28,18 +28,30 @@ def validate_inventory_uom(doc, method):
 		return
 	frappe.throw(
 		_("Default Inventory UOM {0} pada Item {1} tidak valid: harus sama dengan Stock UOM, "
-			"atau ditambahkan dulu ke tabel UOM Conversion item tersebut (atau dikosongkan).").format(
+		"atau ditambahkan dulu ke tabel UOM Conversion item tersebut (atau dikosongkan).").format(
 			frappe.bold(value), frappe.bold(doc.name)
 		)
 	)
 
 
 def compute_rate_per_uom(doc, method):
-	"""Stock Entry validate: isi kolom display Basic Rate per UOM baris
-	(= Basic Rate x conversion factor). Display-only, tidak pernah throw."""
+	"""Stock Entry validate (W32): selaraskan Basic Rate (as per UOM) dan
+	Basic Rate native (stock UOM) dengan aturan ASIMETRIS anti silent-zero
+	(Currency custom yang tak diisi tersimpan 0.0, bukan NULL):
+	(1) custom > 0 dan basic_rate <= 0 -> basic_rate = custom / faktor
+	    (input per-UOM men-drive native — jalur input gudang);
+	(2) selain itu custom = basic_rate x faktor (backfill display — baris
+	    native/programmatic yang hanya mengisi basic_rate tetap konsisten,
+	    native menang bila keduanya terisi tak konsisten).
+	Tidak pernah throw; hook jalan setelah controller validate."""
 	for row in doc.get("items") or []:
-		value = flt(row.get("basic_rate")) * flt(row.get("conversion_factor") or 1)
-		row.set(SE_RATE_FIELD, flt(value, row.precision(SE_RATE_FIELD)))
+		factor = flt(row.get("conversion_factor") or 1)
+		custom = flt(row.get(SE_RATE_FIELD))
+		basic = flt(row.get("basic_rate"))
+		if custom > 0 and basic <= 0:
+			row.set("basic_rate", flt(custom / factor, row.precision("basic_rate")))
+		else:
+			row.set(SE_RATE_FIELD, flt(basic * factor, row.precision(SE_RATE_FIELD)))
 
 
 # ------------------------------------------------------------------ W23 ----

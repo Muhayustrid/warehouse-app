@@ -12,13 +12,13 @@
 # yang di-raise (bench exit nonzero).
 #
 # Yang diverifikasi:
-#   1. Custom Field Item (Link UOM) + Stock Entry Detail (read_only,
-#      in_list_view) eksis.
+#   1. Custom Field Item (Link UOM) + Stock Entry Detail (input sejak W32
+#      read_only=0, in_list_view) eksis.
 #   2. 3 Client Script ber-marker eksis & enabled.
 #   3. Validasi Item menolak Default Inventory UOM di luar UOM Conversion /
 #      stock UOM, menerima yang valid (W20 lesson: TANPA item_code — naming
 #      series site menimpa; pakai doc.name hasil insert).
-#   4. SE Material Receipt: server mengisi custom_basic_rate_per_uom
+#   4. SE Material Receipt: backfill custom_basic_rate_per_uom
 #      (basic_rate x conversion factor) + transfer_qty — env-aware, skip bila
 #      site belum punya Company/Warehouse.
 #   5. production_app._enrich_units memprioritaskan field baru di atas legacy
@@ -106,15 +106,16 @@ def _run_gate(check):
 		f"fieldtype={getattr(row, 'fieldtype', None)!r}, options={getattr(row, 'options', None)!r}",
 	)
 
-	# --- Custom Field Stock Entry Detail: read_only + in_list_view ---
+	# --- Custom Field Stock Entry Detail: input (W32) + in_list_view ---
 	row = frappe.db.get_value(
 		"Custom Field", {"dt": "Stock Entry Detail", "fieldname": SE_RATE_FIELD},
 		["read_only", "in_list_view"], as_dict=1,
 	)
 	check(
 		"se_custom_field",
-		bool(row and int(row.read_only or 0) == 1 and int(row.in_list_view or 0) == 1),
-		f"read_only={getattr(row, 'read_only', None)!r}, in_list_view={getattr(row, 'in_list_view', None)!r}",
+		bool(row and int(row.read_only or 0) == 0 and int(row.in_list_view or 0) == 1),
+		f"read_only={getattr(row, 'read_only', None)!r} (want 0, input sejak W32), "
+		f"in_list_view={getattr(row, 'in_list_view', None)!r}",
 	)
 
 	# --- 3 Client Script ber-marker, enabled ---

@@ -194,9 +194,10 @@ def on_app_installed(app_name=None):
 
 
 # ---------------------------------------------------------------- W21 ----
-# "Default Inventory UOM" per Item + kolom display rate per UOM di Stock
-# Entry Detail + 3 Client Script (native users tetap tak terpengaruh: field
-# kosong = perilaku native, script ber-role gate).
+# "Default Inventory UOM" per Item + kolom rate per UOM di Stock Entry Detail
+# (W32: INPUT yang men-drive basic_rate native; kolom native basic_rate
+# disembunyikan dari grid utk role gate) + 3 Client Script (native users tetap
+# tak terpengaruh: field kosong = perilaku native, script ber-role gate).
 
 ITEM_UOM_FIELD = "custom_default_inventory_unit_of_measure"
 SE_RATE_FIELD = "custom_basic_rate_per_uom"
@@ -223,11 +224,13 @@ SE_FIELD_SPEC = {
     "fieldname": SE_RATE_FIELD,
     "label": "Basic Rate (as per UOM)",
     "fieldtype": "Currency",
-    "read_only": 1,
+    # W32: input (bukan display-only) — men-drive basic_rate native ÷ faktor.
+    "read_only": 0,
     "in_list_view": 1,
     "insert_after": "basic_rate",
     "allow_on_submit": 1,
-    "description": "Rate per this row's UOM (display only) = Basic Rate × conversion factor",
+    "description": "Rate per this row's UOM. When filled it drives the native Basic Rate "
+    "(divided by the conversion factor).",
 }
 
 # Gate role transaksi gudang — native ERPNext saja (keputusan user 2026-09-29:
@@ -287,9 +290,11 @@ CLIENT_SCRIPT_ITEM = SCRIPT_MARKER + """ — Default Inventory UOM helpers on It
 # native callback. Setting row uom then reuses the native `uom` handler chain
 # (get_uom_details -> conversion_factor + transfer_qty -> set_basic_rate ->
 # basic_amount); conversion_factor is passed explicitly as belt and braces.
-# custom_basic_rate_per_uom is live-updated on uom/conversion_factor/basic_rate
-# changes (display-only, mirrors server-side compute_rate_per_uom).
-CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + display rate on Stock Entry.
+# W32: custom_basic_rate_per_uom is now the INPUT (drives native basic_rate =
+# custom / factor, guarded anti ping-pong) and the native Basic Rate column
+# (stock UOM) is hidden from the grid for gate roles only — the field stays
+# and keeps being set programmatically; non-gate users see it unchanged.
+CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + rate per UOM on Stock Entry.
 // Native stock roles only (Stock Manager / Stock User / System Manager): every
 // handler returns early without one of the gate roles.
 
@@ -303,12 +308,24 @@ CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + display ra
 	function update_rate_per_uom(cdt, cdn) {
 		const row = locals[cdt][cdn];
 		if (!row) return;
-		frappe.model.set_value(
-			cdt,
-			cdn,
-			"custom_basic_rate_per_uom",
-			flt(row.basic_rate) * flt(row.conversion_factor || 1)
-		);
+		const value = flt(row.basic_rate) * flt(row.conversion_factor || 1);
+		if (Math.abs(flt(row.custom_basic_rate_per_uom) - value) > 1e-9) {
+			frappe.model.set_value(cdt, cdn, "custom_basic_rate_per_uom", value);
+		}
+	}
+
+	// W32: the per-UOM rate is the input — drive the native basic_rate.
+	// Empty/0 leaves the native rate alone (never silently zeroes it).
+	function apply_custom_rate(cdt, cdn) {
+		const row = locals[cdt][cdn];
+		if (!row || !row.item_code) return;
+		const factor = flt(row.conversion_factor || 1);
+		const custom = flt(row.custom_basic_rate_per_uom);
+		if (custom <= 0) return;
+		const target = custom / factor;
+		if (Math.abs(flt(row.basic_rate) - target) > 1e-9) {
+			frappe.model.set_value(cdt, cdn, "basic_rate", target);
+		}
 	}
 
 	function apply_inventory_uom(frm, cdt, cdn) {
@@ -333,6 +350,14 @@ CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + display ra
 			});
 	}
 
+	// W32: hide the native Basic Rate (stock UOM) column from the grid so the
+	// per-UOM column is the single input — display-only, the field itself is
+	// never removed and still receives set_value (native flows included).
+	function hide_native_rate_column(frm) {
+		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+		if (grid) grid.set_column_disp("basic_rate", false);
+	}
+
 	frappe.ui.form.on("Stock Entry Detail", {
 		item_code(frm, cdt, cdn) {
 			if (!enabled()) return;
@@ -349,6 +374,21 @@ CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + display ra
 		basic_rate(frm, cdt, cdn) {
 			if (!enabled()) return;
 			update_rate_per_uom(cdt, cdn);
+		},
+		custom_basic_rate_per_uom(frm, cdt, cdn) {
+			if (!enabled()) return;
+			apply_custom_rate(cdt, cdn);
+		},
+	});
+
+	frappe.ui.form.on("Stock Entry", {
+		refresh(frm) {
+			if (!enabled()) return;
+			hide_native_rate_column(frm);
+		},
+		items_on_form_rendered(frm) {
+			if (!enabled()) return;
+			hide_native_rate_column(frm);
 		},
 	});
 })();
@@ -414,7 +454,9 @@ CLIENT_SCRIPT_MATERIAL_REQUEST = SCRIPT_MARKER + """ — default row UOM on Mate
 # baris (default = Default Inventory UOM item, W21). Native qty &
 # valuation_rate tetap sumber kebenaran ledger — dikonversi server-side oleh
 # warehouse_app.inventory_uom.apply_sr_inventory_uom (before_validate). Field
-# kosong = native murni; client script di-gate role (SR_GATE_ROLES).
+# kosong = native murni; client script di-gate role (SR_GATE_ROLES). W32:
+# kolom native Quantity & Valuation Rate disembunyikan dari grid utk role
+# gate — input pemilik user = kolom per-UOM.
 
 SR_SCRIPT_MARKER = "// warehouse_app W23 stock-reconciliation-uom"
 SR_UOM_FIELD = "custom_uom"
@@ -692,14 +734,26 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 		},
 	});
 
+	// W32: hide the native Quantity & Valuation Rate columns (stock UOM) from
+	// the grid so counting happens in the per-UOM columns (Qty After /
+	// Valuation Rate as per UOM) — display-only; both fields stay, keep being
+	// driven by the custom handlers + server hook, and remain visible for
+	// non-gate users.
+	function hide_native_qty_columns(frm) {
+		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
+		if (grid) grid.set_column_disp(["qty", "valuation_rate"], false);
+	}
+
 	frappe.ui.form.on("Stock Reconciliation", {
 		refresh(frm) {
 			if (!enabled()) return;
 			apply_defaults(frm);
+			hide_native_qty_columns(frm);
 		},
 		items_on_form_rendered(frm) {
 			if (!enabled()) return;
 			apply_defaults(frm);
+			hide_native_qty_columns(frm);
 		},
 	});
 })();
