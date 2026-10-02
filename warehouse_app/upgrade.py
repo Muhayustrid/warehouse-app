@@ -19,6 +19,9 @@ SIDEBAR_ICON = "package"
 # (icon-<name> di public/icons/lucide/icons.svg); "package" dipakai bersama
 # Desktop Icon & workspace agar satu identitas. Selaras JSON sync:
 # warehouse_app/warehouse_app/workspace_sidebar/gudang/gudang.json
+# PENTING: link_type "URL" → link_to HARUS kosong (link_to = Dynamic Link;
+# nilai diisi ke field `url`) — link_to terisi membuat validasi Dynamic Link
+# mencari doc doctype "URL" (DocType URL not found, pernah menjatuhkan migrate).
 SIDEBAR_ITEMS = [
     {
         "label": "Gudang",
@@ -29,10 +32,10 @@ SIDEBAR_ITEMS = [
         "idx": 1,
     },
     {
-        # W33: papan pindah ke SPA frappe-ui (/gudang) — link_type URL.
-        # Halaman klasik gudang_request dipertahankan sbg fallback (tanpa link).
+        # W33: papan pindah ke SPA frappe-ui (/gudang). Halaman klasik
+        # gudang_request dipertahankan sbg fallback URL langsung (tanpa link).
         "label": "Handover Requests",
-        "link_to": "/gudang",
+        "link_to": None,
         "link_type": "URL",
         "url": "/gudang",
         "type": "Link",
@@ -43,7 +46,7 @@ SIDEBAR_ITEMS = [
         # W33-P4 cutover: halaman SPA /gudang/serah-terima menggantikan
         # shortcut Report Desk (report klasik tetap hidup utk akses langsung).
         "label": "Serah Terima Gudang",
-        "link_to": "/gudang/serah-terima",
+        "link_to": None,
         "link_type": "URL",
         "url": "/gudang/serah-terima",
         "type": "Link",
@@ -52,7 +55,7 @@ SIDEBAR_ITEMS = [
     },
     {
         "label": "Settings",
-        "link_to": "/gudang/settings",
+        "link_to": None,
         "link_type": "URL",
         "url": "/gudang/settings",
         "type": "Link",

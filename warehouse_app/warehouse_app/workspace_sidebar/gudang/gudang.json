@@ -18,8 +18,8 @@
   {
    "doctype": "Workspace Sidebar Item",
    "label": "Handover Requests",
-   "link_to": "gudang_request",
-   "link_type": "Page",
+   "link_type": "URL",
+   "url": "/gudang",
    "type": "Link",
    "icon": "clipboard-list",
    "idx": 2
@@ -27,8 +27,8 @@
   {
    "doctype": "Workspace Sidebar Item",
    "label": "Serah Terima Gudang",
-   "link_to": "Serah Terima Gudang",
-   "link_type": "Report",
+   "link_type": "URL",
+   "url": "/gudang/serah-terima",
    "type": "Link",
    "icon": "truck",
    "idx": 3
@@ -36,8 +36,8 @@
   {
    "doctype": "Workspace Sidebar Item",
    "label": "Settings",
-   "link_to": "gudang_settings",
-   "link_type": "Page",
+   "link_type": "URL",
+   "url": "/gudang/settings",
    "type": "Link",
    "icon": "settings",
    "idx": 4

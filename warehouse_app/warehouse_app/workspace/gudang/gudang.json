@@ -35,18 +35,21 @@
  "shortcuts": [
   {
    "label": "Handover Requests",
-   "link_to": "/gudang",
-   "type": "URL"
+   "link_to": null,
+   "type": "URL",
+   "url": "/gudang"
   },
   {
    "label": "Serah Terima Gudang",
-   "link_to": "/gudang/serah-terima",
-   "type": "URL"
+   "link_to": null,
+   "type": "URL",
+   "url": "/gudang/serah-terima"
   },
   {
    "label": "Settings",
-   "link_to": "/gudang/settings",
-   "type": "URL"
+   "link_to": null,
+   "type": "URL",
+   "url": "/gudang/settings"
   }
  ],
  "title": "Gudang",
