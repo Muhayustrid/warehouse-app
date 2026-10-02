@@ -42,14 +42,25 @@ add_to_apps_screen = [
 # SPA Gudang (W33) — Vue 3 + frappe-ui, dibangun dari frontend/ menjadi
 # public/gudang + www/gudang.html. Route rule melayani semua deep path
 # (/gudang, /gudang/settings, ...) lewat satu www page; role gate ada di
-# www/gudang.py. Cutover P4: jalur workspace lama /desk/gudang + /app/gudang
-# IKUT dilayani halaman SPA ini (website_redirects tidak mengintervensi path
-# desk/app, jadi dipetakan langsung sebagai route rule).
+# www/gudang.py.
 website_route_rules = [
 	{"from_route": "/gudang/<path:app_path>", "to_route": "gudang"},
-	{"from_route": "/desk/gudang", "to_route": "gudang"},
-	{"from_route": "/app/gudang", "to_route": "gudang"},
 ]
+
+# Cutover W33-P4: workspace Desk "Gudang" menjadi SPA.
+# - /app/gudang → /gudang server-side (pola source dicocokkan TANPA leading
+#   slash oleh frappe; hasil resolusi juga di-cache per-path di redis key
+#   "website_redirects" — bila jalur lama sempat diakses sebelum deploy,
+#   cache negatifnya wajib dibuang: frappe.cache.delete_key("website_redirects")).
+# - /desk/gudang TIDAK bisa dialihkan server-side: path_resolver.py meng-
+#   hardcode semua "desk/*" ke template Desk sebelum redirect/route rule
+#   dievaluasi → ditangani client-side oleh public/js/desk-redirect.js
+#   (app_include_js) yang memindahkan browser ke /gudang.
+website_redirects = [
+	{"source": r"/app/gudang", "target": r"/gudang"},
+]
+
+app_include_js = ["/assets/warehouse_app/js/desk-redirect.js"]
 
 # Includes in <head>
 # ------------------
