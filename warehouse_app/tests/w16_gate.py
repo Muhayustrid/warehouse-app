@@ -1,23 +1,29 @@
 # Copyright (c) 2026, Muhammad Yusuf Tri Daryanto
 # License: MIT
 
-# Gate W16 — verifikasi eksekusi "sidebar sendiri" (isi Workspace Sidebar Gudang).
+# Gate W16 — sejak W34 (2026-10-02) berubah fungsi: verifikasi PENSIUNAN UI
+# Desk klasik (sebelumnya: verifikasi isi Workspace Sidebar "Gudang").
 #
 # Jalankan:
-#   docker exec erpnext-new-backend-1 bench --site frontend execute \
-#       warehouse_app.tests.w16_gate.run_gate
+#   docker exec 1oktober2026-backend-1 bench --site 1oktober2026 execute \
+#       "frappe.get_attr('warehouse_app.tests.w16_gate.run_gate')()"
 #
 # Kontrak output: TEPAT satu baris GATE_JSON:{...} (pola w5_gate).
 #
-# Cek inti DARI DB (bukan file): Workspace Sidebar "Gudang" (app/standard/
-# header_icon) + child items == 4 item desain W16 (Gudang/Handover Requests/
-# Serah Terima Gudang/Settings, dgn link_type & icon & idx). Idempotensi:
-# ensure_workspace_sidebar() kedua kali harus "unchanged". Render nyata via
-# frappe.boot.get_sidebar_items dengan DUA fixture user ber-email UNIK per run
-# (cache redis per-email dari run lama bisa membusukkan render — lihat catatan
-# di _run_gate): tanpa role -> grup Gudang tak tampil; role Gudang Barang Jadi
-# + Stock User (SOP pairing W7) -> grup + 4 item tampil. Desktop Icon penunjuk
-# grup ikut dicek (temuan W6). Teardown residu ZZTEST-W16 = 0.
+# Invarian yang dijaga (W34, keputusan user "hapus semua halaman lama"):
+# 1. Record lama LENYAP dari DB dan tetap lenyap setelah apply() dijalankan
+#    lagi (idempoten): Page gudang_request/gudang_settings, Workspace "Gudang",
+#    Workspace Sidebar "Gudang" (+ 0 child items), Desktop Icon grup.
+# 2. Kontrak SPA TETAP HIDUP: 6 endpoint whitelisted (requestable_work_orders,
+#    filter_fields, warehouse_options, get/set_handover_warehouses,
+#    get/set_group_items) — frappe 16 memakai global set `whitelisted` (bukan
+#    atribut per-fungsi); requestable_work_orders callable dan mengembalikan
+#    list; Report "Serah Terima Gudang" ada (sumber data SPA serah-terima).
+# 3. Redirect konfigurasi lengkap: hooks website_redirects memuat
+#    /app/gudang, /app/gudang_request, /app/gudang_settings.
+# 4. Render Desk nyata via frappe.boot.get_sidebar_items dgn fixture user
+#    SM+SU ber-email UNIK per run: TIDAK ada lagi item grup Gudang/URL SPA
+#    maupun workspace "Gudang" di sidebar Desk. Teardown residu ZZTEST-W16 = 0.
 
 import json
 import time
@@ -28,17 +34,28 @@ from frappe.boot import get_sidebar_items
 from frappe.desk.desktop import get_workspaces as get_sidebar_workspaces
 
 from warehouse_app.tests.guard import count_residue
-from warehouse_app.upgrade import SIDEBAR_ITEMS, ensure_workspace_sidebar
+from warehouse_app.upgrade import APP, SIDEBAR, retire_legacy_desk_ui
 
-SIDEBAR = "Gudang"
-APP = "warehouse_app"
-ROLE = "Stock User"
 PREFIX = "ZZTEST-W16"
+ROLE_PAIR = ["Stock Manager", "Stock User"]
 
-# Pasangan (label, link_type, link_to, icon) yang wajib dirender untuk user gudang.
-EXPECTED_RENDER = sorted(
-    (it["label"], it["link_type"], it["link_to"], it["icon"]) for it in SIDEBAR_ITEMS
-)
+SPA_URLS = {"/gudang", "/gudang/serah-terima", "/gudang/settings"}
+
+REDIRECT_MAP = {
+    "/app/gudang": "/gudang",
+    "/app/gudang_request": "/gudang",
+    "/app/gudang_settings": "/gudang/settings",
+}
+
+SPA_ENDPOINTS = [
+    "warehouse_app.warehouse_app.gudang_request.requestable_work_orders",
+    "warehouse_app.warehouse_app.gudang_request.filter_fields",
+    "warehouse_app.warehouse_app.gudang_settings.warehouse_options",
+    "warehouse_app.warehouse_app.gudang_settings.get_handover_settings",
+    "warehouse_app.warehouse_app.gudang_settings.set_handover_warehouses",
+    "warehouse_app.warehouse_app.gudang_settings.get_group_items",
+    "warehouse_app.warehouse_app.gudang_settings.set_group_items",
+]
 
 
 def run_gate():
@@ -72,128 +89,110 @@ def run_gate():
 def _run_gate(check):
     check("pre_clean", *_sweep())
 
-    # --- Sinkron idempoten: jalankan sebelum assert DB ---
+    # --- Jaring pengaman idempoten: dua kali retire, yang kedua no-op ---
     try:
-        result = ensure_workspace_sidebar()
-        check("ensure_synced", result in ("created", "synced", "unchanged"), f"apply#{1} -> {result}")
-        result2 = ensure_workspace_sidebar()
-        check("ensure_idempotent", result2 == "unchanged", f"apply#{2} -> {result2}")
+        first = retire_legacy_desk_ui()
+        check("retire_first", first.startswith("retired"), first)
+        second = retire_legacy_desk_ui()
+        check("retire_idempotent", second == "retired none", second)
     except Exception as e:
-        check("ensure_synced", False, f"{type(e).__name__}: {str(e)[:200]}")
+        check("retire_first", False, f"{type(e).__name__}: {str(e)[:200]}")
         return
 
-    # --- Baris Workspace Sidebar dari DB ---
-    row = frappe.db.get_value(
-        "Workspace Sidebar", SIDEBAR, ["app", "standard", "header_icon"], as_dict=1
-    )
-    bad = {
-        "exists": not row,
-        "app": bool(row) and row.app != APP,
-        "standard": bool(row) and row.standard != 1,
-        "header_icon": bool(row) and row.header_icon != "package",
+    # --- Record lama lenyap dari DB ---
+    pages_absent = {
+        name: not frappe.db.exists("Page", name)
+        for name in ("gudang_request", "gudang_settings")
     }
-    check(
-        "sidebar_row",
-        not any(bad.values()),
-        f"app={row.app if row else None} standard={row.standard if row else None} "
-        f"header_icon={row.header_icon if row else None} | salah={sorted(k for k, v in bad.items() if v) or 'tidak ada'}",
-    )
+    check("pages_absent", all(pages_absent.values()), f"absent={pages_absent}")
 
-    # --- Child items dari DB: tepat 4 sesuai desain ---
-    db_items = [
-        {
-            "label": r.label,
-            "link_to": r.link_to,
-            "link_type": r.link_type,
-            "type": r.type,
-            "icon": r.icon,
-            "idx": r.idx,
-        }
-        for r in frappe.get_all(
-            "Workspace Sidebar Item",
-            filters={"parenttype": "Workspace Sidebar", "parent": SIDEBAR},
-            fields=["label", "link_to", "link_type", "type", "icon", "idx"],
-            order_by="idx",
-        )
-    ]
-    check("sidebar_items_db", db_items == SIDEBAR_ITEMS, f"items DB={db_items}")
+    check("workspace_absent", not frappe.db.exists("Workspace", SIDEBAR),
+          f"Workspace {SIDEBAR!r} exists={bool(frappe.db.exists('Workspace', SIDEBAR))}")
 
-    # --- Desktop Icon penunjuk grup (temuan W6) ---
-    icon = frappe.db.get_value(
-        "Desktop Icon", {"label": SIDEBAR}, ["link_type", "link_to", "app"], as_dict=1
+    sidebar_rows = frappe.get_all(
+        "Workspace Sidebar Item",
+        filters={"parenttype": "Workspace Sidebar", "parent": SIDEBAR},
+        pluck="label",
     )
     check(
-        "desktop_icon_gudang",
-        bool(icon and icon.link_type == "Workspace Sidebar" and icon.link_to == SIDEBAR and icon.app == APP),
-        f"icon={(icon.link_type, icon.link_to, icon.app) if icon else None}",
+        "sidebar_absent",
+        not frappe.db.exists("Workspace Sidebar", SIDEBAR) and not sidebar_rows,
+        f"sidebar exists={bool(frappe.db.exists('Workspace Sidebar', SIDEBAR))} items={sidebar_rows}",
     )
 
-    # --- Render nyata via boot dengan fixture user ---
-    # Email fixture UNIK per run: cache redis (doc cache global User, hash roles,
-    # allowed-reports TTL 6 jam) ber-key email dan BISA bertahan sisa run lama
-    # (fosil user_type menjatuhkan role Desk User otomatis -> has_permission
-    # "Report" false -> item Report tak dirender). Email segar = bebas fosil.
-    # Masing-masing fixture dirender SEKALI tepat setelah dibuat (role sejak
-    # insert); transisi role setelah render pertama bukan cakupan gate ini.
-    if not frappe.db.exists("Role", ROLE):
-        check("fixture_role", False, f"Role {ROLE!r} tidak ada")
+    icon = frappe.db.get_value("Desktop Icon", {"label": SIDEBAR, "app": APP}, "name")
+    check("desktop_icon_absent", not icon, f"Desktop Icon {SIDEBAR!r} name={icon}")
+
+    # --- Kontrak SPA tetap hidup: endpoint whitelisted (global set frappe 16) ---
+    from frappe import whitelisted
+
+    missing = []
+    for dotted in SPA_ENDPOINTS:
+        try:
+            fn = frappe.get_attr(dotted)
+            if fn not in whitelisted:
+                missing.append(dotted.rsplit(".", 1)[-1] + ":not-whitelisted")
+        except Exception as e:
+            missing.append(dotted.rsplit(".", 1)[-1] + f":{type(e).__name__}")
+    check("spa_endpoints_whitelisted", not missing, f"missing={missing or 'tidak ada'}")
+
+    try:
+        rows = frappe.get_attr(SPA_ENDPOINTS[0])()
+        check("spa_data_alive", isinstance(rows, list), f"requestable_work_orders -> list len={len(rows or [])}")
+    except Exception as e:
+        check("spa_data_alive", False, f"{type(e).__name__}: {str(e)[:180]}")
+
+    check("report_alive", bool(frappe.db.exists("Report", "Serah Terima Gudang")),
+          f"Report exists={bool(frappe.db.exists('Report', 'Serah Terima Gudang'))}")
+
+    # --- Konfigurasi redirect hooks ---
+    hooks = frappe.get_hooks("website_redirects") or []
+    found = {
+        src: [h.get("target") for h in hooks if str(h.get("source", "")).strip("/") == src.strip("/")]
+        for src in REDIRECT_MAP
+    }
+    bad = sorted(k for k, v in found.items() if REDIRECT_MAP[k] not in v)
+    check("redirects_configured", not bad, f"hooks={found} | kurang={bad or 'tidak ada'}")
+
+    # --- Render Desk nyata: fixture SM+SU tidak lagi melihat apa pun dari app ini ---
+    if not frappe.db.exists("Role", "Stock User"):
+        check("fixture_role", False, "Role 'Stock User' tidak ada")
         return
 
-    def _make_user(email, first_name, roles):
+    run_id = int(time.time())
+    user_email = f"ZZTEST-W16-{run_id}@example.com"
+    try:
         doc = frappe.get_doc(
             {
                 "doctype": "User",
-                "email": email,
-                "first_name": first_name,
+                "email": user_email,
+                "first_name": PREFIX,
                 "user_type": "System User",
                 "send_welcome_email": 0,
                 "new_password": frappe.generate_hash(length=16),
-                "roles": [{"role": r} for r in roles],
+                "roles": [{"role": r} for r in ROLE_PAIR],
             }
         )
         doc.flags.ignore_permissions = True
         doc.insert()
-        frappe.clear_cache(user=email)
-
-    def rendered_items():
-        names = sorted(p.name for p in get_sidebar_workspaces()["pages"])
-        sidebars = get_sidebar_items(names)
-        found = set()
-        for grp in sidebars.values():
-            for it in grp.get("items", []):
-                quad = (it.get("label"), it.get("link_type"), it.get("link_to"), it.get("icon"))
-                if quad[2] in {e[2] for e in EXPECTED_RENDER}:
-                    found.add(quad)
-        # dedup: link yang sama bisa muncul di Workspace Sidebar kita DAN di
-        # sidebar modul auto-generate; yang dinilai hanya liputan itemnya.
-        return sorted(found)
-
-    run_id = int(time.time())
-    no_role_email = f"ZZTEST-W16-NR-{run_id}@example.com"
-    user_email = f"ZZTEST-W16-{run_id}@example.com"
-
-    # 1) user tanpa role gudang -> tidak ada item grup Gudang
-    try:
-        _make_user(no_role_email, PREFIX + "-NR", [])
-        frappe.set_user(no_role_email)
-        check("hidden_without_role", rendered_items() == [], f"items={rendered_items()}")
-    except Exception as e:
-        check("hidden_without_role", False, f"{type(e).__name__}: {str(e)[:180]}")
-    finally:
-        frappe.set_user("Administrator")
-
-    # 2) user gudang + pairing Stock User (SOP W7) -> 4 item sesuai desain
-    try:
-        _make_user(user_email, PREFIX, ["Stock Manager", "Stock User"])
+        frappe.clear_cache(user=user_email)
         frappe.set_user(user_email)
-        items = rendered_items()
+        pages = get_sidebar_workspaces()["pages"]
+        names = sorted(p.name for p in pages)
+        sidebars = get_sidebar_items(names)
+        leaked = sorted(
+            f"{it.get('label')}->{it.get('link_to')}"
+            for grp in sidebars.values()
+            for it in grp.get("items", [])
+            if it.get("link_to") in SPA_URLS or it.get("link_to") == SIDEBAR
+        )
         check(
-            "render_with_pairing",
-            items == EXPECTED_RENDER,
-            f"items={items} | harap={EXPECTED_RENDER}",
+            "desk_render_clean",
+            SIDEBAR not in names and not leaked,
+            f"workspace_gudang_in_pages={SIDEBAR in names}; leaked_items={leaked or 'tidak ada'}",
         )
     except Exception as e:
-        check("render_with_pairing", False, f"{type(e).__name__}: {str(e)[:180]}")
+        check("desk_render_clean", False, f"{type(e).__name__}: {str(e)[:180]}")
     finally:
         frappe.set_user("Administrator")
 

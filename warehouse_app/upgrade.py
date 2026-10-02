@@ -4,72 +4,21 @@
 # Pemasangan idempoten non-doctype warehouse_app (after_install & after_migrate).
 # Pola mengikuti production_app.upgrade (satu app satu kepemilikan data; R7).
 #
-# Konteks W6: nav atas /desk dirender dari dokumen Desktop Icon yang menunjuk
-# Workspace Sidebar (link_type "Workspace Sidebar"); grup "Gudang" hanya tampak
-# bila keduanya ada. File JSON workspace_sidebar/gudang/gudang.json tetap sumber
-# sync; fungsi di sini jaring pengaman idempoten.
+# W34 (2026-10-02, keputusan user "hapus semua halaman lama"): UI Desk klasik
+# dipensiunkan — Page gudang_request/gudang_settings + cangkang Workspace
+# "Gudang" (workspace, Workspace Sidebar, Desktop Icon grup) dihapus; SPA
+# /gudang satu-satunya wajah warehouse_app. retire_legacy_desk_ui() adalah
+# jaring pengaman idempotennya setelah file JSON dihapus dari repo (sync file
+# tidak menghapus record DB milik file yang hilang).
 
 import frappe
 
 SIDEBAR = "Gudang"
 APP = "warehouse_app"
-SIDEBAR_ICON = "package"
-
-# Nav grup "Gudang" di sidebar Desk. Icon = nama set lucide frappe v16
-# (icon-<name> di public/icons/lucide/icons.svg); "package" dipakai bersama
-# Desktop Icon & workspace agar satu identitas. Selaras JSON sync:
-# warehouse_app/warehouse_app/workspace_sidebar/gudang/gudang.json
-# PENTING: link_type "URL" → link_to HARUS kosong (link_to = Dynamic Link;
-# nilai diisi ke field `url`) — link_to terisi membuat validasi Dynamic Link
-# mencari doc doctype "URL" (DocType URL not found, pernah menjatuhkan migrate).
-SIDEBAR_ITEMS = [
-    {
-        "label": "Gudang",
-        "link_to": "Gudang",
-        "link_type": "Workspace",
-        "type": "Link",
-        "icon": "package",
-        "idx": 1,
-    },
-    {
-        # W33: papan pindah ke SPA frappe-ui (/gudang). Halaman klasik
-        # gudang_request dipertahankan sbg fallback URL langsung (tanpa link)
-        # sampai trigger W34 (2026-10-09 / 5 hari operasi nyata) — lihat
-        # TASKS.md § W34; jangan pasang redirect sebelum penghapusan.
-        "label": "Handover Requests",
-        "link_to": None,
-        "link_type": "URL",
-        "url": "/gudang",
-        "type": "Link",
-        "icon": "clipboard-list",
-        "idx": 2,
-    },
-    {
-        # W33-P4 cutover: halaman SPA /gudang/serah-terima menggantikan
-        # shortcut Report Desk (report klasik tetap hidup utk akses langsung).
-        "label": "Serah Terima Gudang",
-        "link_to": None,
-        "link_type": "URL",
-        "url": "/gudang/serah-terima",
-        "type": "Link",
-        "icon": "truck",
-        "idx": 3,
-    },
-    {
-        "label": "Settings",
-        "link_to": None,
-        "link_type": "URL",
-        "url": "/gudang/settings",
-        "type": "Link",
-        "icon": "settings",
-        "idx": 4,
-    },
-]
 
 
 def apply():
-    ensure_workspace_sidebar()
-    ensure_desktop_icon()
+    retire_legacy_desk_ui()
     ensure_single_desk_entry()
     ensure_item_fields()
     ensure_sr_fields()
@@ -79,105 +28,39 @@ def apply():
     migrate_legacy_uom_field()
 
 
-def ensure_workspace_sidebar():
-    if not frappe.db.exists("Workspace Sidebar", SIDEBAR):
-        doc = frappe.get_doc(
-            {
-                "doctype": "Workspace Sidebar",
-                "title": SIDEBAR,
-                "header_icon": SIDEBAR_ICON,
-                "app": APP,
-                "standard": 1,
-                "items": [dict(item, doctype="Workspace Sidebar Item") for item in SIDEBAR_ITEMS],
-            }
-        )
-        doc.flags.ignore_permissions = 1
-        doc.insert()
+def retire_legacy_desk_ui():
+    """W34: pensiunkan seluruh UI Desk klasik milik app ini. Idempoten —
+    tanpa record = no-op. Backend gudang_request.py/gudang_settings.py TIDAK
+    disentuh (dipakai SPA + gate w9/w19); Report Serah Terima Gudang tetap
+    hidup (sumber data SPA serah-terima)."""
+    retired = []
+    for doctype, name in (
+        ("Page", "gudang_request"),
+        ("Page", "gudang_settings"),
+        ("Workspace", "Gudang"),
+        ("Workspace Sidebar", "Gudang"),  # child Workspace Sidebar Item ikut terhapus
+    ):
+        if frappe.db.exists(doctype, name):
+            frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
+            retired.append(f"{doctype}:{name}")
+    icon = frappe.db.get_value("Desktop Icon", {"label": SIDEBAR, "app": APP}, "name")
+    if icon:
+        frappe.delete_doc("Desktop Icon", icon, force=True, ignore_permissions=True)
+        retired.append(f"Desktop Icon:{icon}")
+    if retired:
+        for key in ("bootinfo", "desktop_icons"):
+            frappe.cache.delete_key(key)
         frappe.db.commit()
-        return "created"
-
-    row = frappe.db.get_value(
-        "Workspace Sidebar", SIDEBAR, ["app", "standard", "header_icon"], as_dict=1
-    )
-    if row and (row.app != APP or not row.standard):
-        frappe.log_error(
-            title="warehouse_app.upgrade",
-            message=f"Workspace Sidebar {SIDEBAR!r} sudah ada tapi app={row.app!r} "
-            f"standard={row.standard!r} — tidak diubah (satu pemilik data).",
-        )
-        return "unchanged"
-
-    # bench migrate tidak men-sync JSON workspace_sidebar, jadi record DB yang
-    # sudah ada disinkronkan di sini (tambah item/ubah icon hasil W16 dst).
-    doc = frappe.get_doc("Workspace Sidebar", SIDEBAR)
-    changed = []
-    if row.header_icon != SIDEBAR_ICON:
-        doc.header_icon = SIDEBAR_ICON
-        changed.append("header_icon")
-    if not _sidebar_items_match(doc.items):
-        doc.set("items", [dict(item, doctype="Workspace Sidebar Item") for item in SIDEBAR_ITEMS])
-        changed.append("items")
-    if not changed:
-        return "unchanged"
-    doc.flags.ignore_permissions = 1
-    doc.save()
-    frappe.db.commit()
-    return "synced"
-
-
-def _sidebar_items_match(rows):
-    current = [
-        {
-            "label": r.label,
-            "link_to": r.link_to,
-            "link_type": r.link_type,
-            "type": r.type,
-            "icon": r.icon or None,
-            "idx": r.idx,
-        }
-        for r in sorted(rows, key=lambda r: r.idx or 0)
-    ]
-    return current == SIDEBAR_ITEMS
-
-
-def ensure_desktop_icon():
-    name = frappe.db.get_value("Desktop Icon", {"label": SIDEBAR}, "name")
-    if name:
-        row = frappe.db.get_value("Desktop Icon", name, ["link_to", "app"], as_dict=1)
-        if row and (row.link_to != SIDEBAR or row.app != APP):
-            frappe.log_error(
-                title="warehouse_app.upgrade",
-                message=f"Desktop Icon {SIDEBAR!r} sudah ada tapi link_to={row.link_to!r} "
-                f"app={row.app!r} — tidak diubah (satu pemilik data).",
-            )
-        return "unchanged"
-    doc = frappe.get_doc(
-        {
-            "doctype": "Desktop Icon",
-            "label": SIDEBAR,
-            "icon_type": "Link",
-            "link_type": "Workspace Sidebar",
-            "link_to": SIDEBAR,
-            "icon": "package",
-            "standard": 0,
-            "app": APP,
-        }
-    )
-    doc.flags.ignore_permissions = 1
-    doc.insert()
-    frappe.db.commit()
-    return "created"
+    return "retired " + (", ".join(retired) if retired else "none")
 
 
 # ---------------------------------------------------------------- W22 ----
-# Satu pintu desk. Native membuat ikon App dari add_to_apps_screen berlabel
-# JUDUL app ("Warehouse App" -> /app/gudang) DAN ikon Workspace berlabel NAMA
-# workspace ("Gudang" -> group sidebar); dedup native hanya jalan saat keduanya
-# bernama sama (create_desktop_icons_from_workspace: label == app_title ->
-# hidden) — workspace kita "Gudang" ≠ "Warehouse App", jadi keduanya tampil
-# dan menuju halaman yang sama. Ikon grup "Gudang" (mekanisme nav W6) yang
-# dipertahankan; ikon App disembunyikan dari desk. Entri apps screen Frappe
-# Cloud (hook add_to_apps_screen) tidak terpengaruh — itu bukan Desktop Icon.
+# Satu pintu desk (diperbarui W34): native membuat ikon App dari
+# add_to_apps_screen berlabel JUDUL app ("Warehouse App" -> /app/gudang).
+# Ikon App tetap disembunyikan dari desk — sejak W34 tak ada lagi grup
+# workspace "Gudang" di Desk (dipensiunkan retire_legacy_desk_ui), dan Desk
+# sengaja dibiarkan murni ERPNext; pintu ke SPA = entri apps screen (hook
+# add_to_apps_screen, bukan Desktop Icon) + URL /gudang.
 APP_TITLE_ICON = "Warehouse App"
 
 

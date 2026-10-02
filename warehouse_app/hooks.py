@@ -47,17 +47,19 @@ website_route_rules = [
 	{"from_route": "/gudang/<path:app_path>", "to_route": "gudang"},
 ]
 
-# Cutover W33-P4: workspace Desk "Gudang" menjadi SPA.
-# - /app/gudang → /gudang server-side (pola source dicocokkan TANPA leading
-#   slash oleh frappe; hasil resolusi juga di-cache per-path di redis key
-#   "website_redirects" — bila jalur lama sempat diakses sebelum deploy,
-#   cache negatifnya wajib dibuang: frappe.cache.delete_key("website_redirects")).
-# - /desk/gudang TIDAK bisa dialihkan server-side: path_resolver.py meng-
-#   hardcode semua "desk/*" ke template Desk sebelum redirect/route rule
-#   dievaluasi → ditangani client-side oleh public/js/desk-redirect.js
-#   (app_include_js) yang memindahkan browser ke /gudang.
+# Cutover W33-P4 + pensiunan W34: semua jalur lama mendarat di SPA /gudang.
+# - Pola source dicocokkan TANPA leading slash oleh frappe; hasil resolusi
+#   di-cache per-path di redis key "website_redirects" — bila jalur lama
+#   sempat diakses sebelum deploy, cache negatifnya wajib dibuang:
+#   frappe.cache.delete_key("website_redirects").
+# - Path desk/* TIDAK bisa dialihkan server-side (path_resolver.py meng-
+#   hardcode "desk/*" ke template Desk sebelum redirect dievaluasi) →
+#   ditangani client-side oleh public/js/desk-redirect.js (app_include_js).
 website_redirects = [
 	{"source": r"/app/gudang", "target": r"/gudang"},
+	# W34: URL halaman klasik yang dipensiunkan → diarahkan ke SPA-nya.
+	{"source": r"/app/gudang_request", "target": r"/gudang"},
+	{"source": r"/app/gudang_settings", "target": r"/gudang/settings"},
 ]
 
 app_include_js = ["/assets/warehouse_app/js/desk-redirect.js"]
