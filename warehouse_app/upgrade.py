@@ -54,13 +54,13 @@ def retire_legacy_desk_ui():
     return "retired " + (", ".join(retired) if retired else "none")
 
 
-# ---------------------------------------------------------------- W22 ----
-# Satu pintu desk (diperbarui W34): native membuat ikon App dari
-# add_to_apps_screen berlabel JUDUL app ("Warehouse App" -> /app/gudang).
-# Ikon App tetap disembunyikan dari desk — sejak W34 tak ada lagi grup
-# workspace "Gudang" di Desk (dipensiunkan retire_legacy_desk_ui), dan Desk
-# sengaja dibiarkan murni ERPNext; pintu ke SPA = entri apps screen (hook
-# add_to_apps_screen, bukan Desktop Icon) + URL /gudang.
+# ------------------------------------------------------- W22 (diperbarui W34) ----
+# Satu pintu desk. W22 dulu MENYEMBUNYIKAN ikon App "Warehouse App" (dibuat
+# native dari add_to_apps_screen) karena pintunya grup workspace "Gudang" —
+# dua ikon menuju tempat sama. Sejak W34 grup workspace dipensiunkan
+# (retire_legacy_desk_ui), jadi ikon App itu kini SATU-SATUNYA pintu dari
+# Desk home ke SPA /gudang dan wajib TAMPIL. Entri apps screen Frappe Cloud
+# (hook add_to_apps_screen) tidak terpengaruh — itu bukan Desktop Icon.
 APP_TITLE_ICON = "Warehouse App"
 
 
@@ -70,14 +70,14 @@ def ensure_single_desk_entry():
     )
     if not name:
         return "absent"
-    if frappe.db.get_value("Desktop Icon", name, "hidden"):
+    if not frappe.db.get_value("Desktop Icon", name, "hidden"):
         return "unchanged"
-    frappe.db.set_value("Desktop Icon", name, "hidden", 1)
+    frappe.db.set_value("Desktop Icon", name, "hidden", 0)
     # db.set_value tidak lewat on_update — ikuti pola cache-clear ikon standard
     frappe.cache.delete_key("desktop_icons")
     frappe.cache.delete_key("bootinfo")
     frappe.db.commit()
-    return "hidden"
+    return "shown"
 
 
 def on_app_installed(app_name=None):
