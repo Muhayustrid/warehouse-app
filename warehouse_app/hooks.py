@@ -42,18 +42,13 @@ add_to_apps_screen = [
 # SPA Gudang (W33) — Vue 3 + frappe-ui, dibangun dari frontend/ menjadi
 # public/gudang + www/gudang.html. Route rule melayani semua deep path
 # (/gudang, /gudang/settings, ...) lewat satu www page; role gate ada di
-# www/gudang.py.
+# www/gudang.py. Cutover P4: jalur workspace lama /desk/gudang + /app/gudang
+# IKUT dilayani halaman SPA ini (website_redirects tidak mengintervensi path
+# desk/app, jadi dipetakan langsung sebagai route rule).
 website_route_rules = [
 	{"from_route": "/gudang/<path:app_path>", "to_route": "gudang"},
-]
-
-# Cutover W33-P4: workspace Desk "Gudang" (/app/gudang dan alias lama
-# /desk/gudang) kini MENJADI SPA — semua jalur masuk lama dialihkan ke
-# /gudang. Halaman klasik gudang_request/gudang_settings masih ada sbg
-# fallback URL langsung, tapi tidak lagi tertaut dari mana pun.
-website_redirects = [
-	{"source": r"/app/gudang", "target": r"/gudang"},
-	{"source": r"/desk/gudang", "target": r"/gudang"},
+	{"from_route": "/desk/gudang", "to_route": "gudang"},
+	{"from_route": "/app/gudang", "to_route": "gudang"},
 ]
 
 # Includes in <head>
