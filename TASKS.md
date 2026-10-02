@@ -348,7 +348,7 @@ Atas permintaan user ("uji end to end, fokus picklist dan batch"). Tiga lapis bu
 
 **Lingkup yang dihapus**:
 1. Page klasik: folder `page/gudang_request/` + `page/gudang_settings/` (json/js/css) + tombstone DB.
-2. Cangkang Workspace Desk: `workspace/gudang/gudang.json` (record Workspace "Gudang"), `workspace_sidebar/gudang/gudang.json` (Workspace Sidebar "Gudang" + 4 child items), Desktop Icon grup "Gudang". Desk kini murni ERPNext — pintu ke SPA = entri apps screen (hook `add_to_apps_screen`) + URL /gudang; ikon App "Warehouse App" tetap disembunyikan (policy W22 berlanjut).
+2. Cangkang Workspace Desk: `workspace/gudang/gudang.json` (record Workspace "Gudang"), `workspace_sidebar/gudang/gudang.json` (Workspace Sidebar "Gudang" + 4 child items), Desktop Icon grup "Gudang". Pintu SPA dari Desk home = ikon App "Warehouse App" (policy W22 DIBALIK jadi hidden=0 — fix `8c53292` setelah user melapor tile hilang dari grid /: ikon grup Gudang terhapus sementara ikon App masih hidden = nol pintu).
 3. **TIDAK disentuh** (dipakai SPA/gate): modul backend `gudang_request.py`/`gudang_settings.py` (7 endpoint whitelisted), Report "Serah Terima Gudang", 8 Client Script, production_app, native.
 
 **Mekanisme**:
