@@ -66,7 +66,6 @@ watch(
 				</button>
 				<a
 					href="/app"
-					target="_blank"
 					class="hidden h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-ink-gray-6 hover:bg-surface-gray-3 hover:text-ink-gray-9 sm:flex"
 					title="Open ERPNext Desk"
 				>
