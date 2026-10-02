@@ -33,7 +33,9 @@ SIDEBAR_ITEMS = [
     },
     {
         # W33: papan pindah ke SPA frappe-ui (/gudang). Halaman klasik
-        # gudang_request dipertahankan sbg fallback URL langsung (tanpa link).
+        # gudang_request dipertahankan sbg fallback URL langsung (tanpa link)
+        # sampai trigger W34 (2026-10-09 / 5 hari operasi nyata) — lihat
+        # TASKS.md § W34; jangan pasang redirect sebelum penghapusan.
         "label": "Handover Requests",
         "link_to": None,
         "link_type": "URL",
