@@ -1,7 +1,7 @@
 {
  "app": "warehouse_app",
  "charts": [],
- "content": "[{\"id\":\"GdnHdrMain1\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Gudang — Papan Serah Terima</b></span>\",\"col\":12}},{\"id\":\"GdnScReq1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Handover Requests\",\"col\":3}},{\"id\":\"GdnScSerah1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Serah Terima Gudang\",\"col\":3}},{\"id\":\"GdnScSet1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Settings\",\"col\":3}},{\"id\":\"GdnScMRList1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Material Request\",\"col\":3}},{\"id\":\"GdnScSEList1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Entry\",\"col\":3}},{\"id\":\"GdnScStkBal1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Balance\",\"col\":3}}]",
+ "content": "[{\"id\":\"GdnHdrMain1\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\"><b>Gudang — Papan Serah Terima</b></span>\",\"col\":12}},{\"id\":\"GdnScReq1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Handover Requests\",\"col\":3}},{\"id\":\"GdnScSerah1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Serah Terima Gudang\",\"col\":3}},{\"id\":\"GdnScSet1\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Settings\",\"col\":3}}]",
  "creation": "2026-09-20 08:00:00.000000",
  "custom_blocks": [],
  "docstatus": 0,
@@ -13,7 +13,7 @@
  "is_hidden": 0,
  "label": "Gudang",
  "links": [],
- "modified": "2026-09-20 17:30:00.000000",
+ "modified": "2026-10-02 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Gudang",
@@ -35,33 +35,18 @@
  "shortcuts": [
   {
    "label": "Handover Requests",
-   "link_to": "gudang_request",
-   "type": "Page"
+   "link_to": "/gudang",
+   "type": "URL"
   },
   {
    "label": "Serah Terima Gudang",
-   "link_to": "Serah Terima Gudang",
-   "type": "Report"
+   "link_to": "/gudang/serah-terima",
+   "type": "URL"
   },
   {
    "label": "Settings",
-   "link_to": "gudang_settings",
-   "type": "Page"
-  },
-  {
-   "label": "Material Request",
-   "link_to": "Material Request",
-   "type": "DocType"
-  },
-  {
-   "label": "Stock Entry",
-   "link_to": "Stock Entry",
-   "type": "DocType"
-  },
-  {
-   "label": "Stock Balance",
-   "link_to": "Stock Balance",
-   "type": "Report"
+   "link_to": "/gudang/settings",
+   "type": "URL"
   }
  ],
  "title": "Gudang",

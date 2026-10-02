@@ -29,25 +29,32 @@ SIDEBAR_ITEMS = [
         "idx": 1,
     },
     {
+        # W33: papan pindah ke SPA frappe-ui (/gudang) — link_type URL.
+        # Halaman klasik gudang_request dipertahankan sbg fallback (tanpa link).
         "label": "Handover Requests",
-        "link_to": "gudang_request",
-        "link_type": "Page",
+        "link_to": "/gudang",
+        "link_type": "URL",
+        "url": "/gudang",
         "type": "Link",
         "icon": "clipboard-list",
         "idx": 2,
     },
     {
+        # W33-P4 cutover: halaman SPA /gudang/serah-terima menggantikan
+        # shortcut Report Desk (report klasik tetap hidup utk akses langsung).
         "label": "Serah Terima Gudang",
-        "link_to": "Serah Terima Gudang",
-        "link_type": "Report",
+        "link_to": "/gudang/serah-terima",
+        "link_type": "URL",
+        "url": "/gudang/serah-terima",
         "type": "Link",
         "icon": "truck",
         "idx": 3,
     },
     {
         "label": "Settings",
-        "link_to": "gudang_settings",
-        "link_type": "Page",
+        "link_to": "/gudang/settings",
+        "link_type": "URL",
+        "url": "/gudang/settings",
         "type": "Link",
         "icon": "settings",
         "idx": 4,

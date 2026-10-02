@@ -1,0 +1,17 @@
+@import 'frappe-ui/style.css';
+
+html,
+body {
+	height: 100%;
+}
+
+body {
+	@apply bg-surface-gray-2 text-ink-gray-8 antialiased;
+}
+
+/* SSR-free SPA: pastikan app mengisi tinggi layar utk layout flex shell */
+#app {
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+}
