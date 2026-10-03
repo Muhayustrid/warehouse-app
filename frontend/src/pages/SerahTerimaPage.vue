@@ -207,6 +207,7 @@ onMounted(() => {
 				currentPageReportTemplate="Showing {first} to {last} of {totalRecords} rows"
 				class="pv-table"
 				sortMode="single"
+				removableSort
 			>
 				<template #empty>
 					<div class="flex flex-col items-center gap-2 px-6 py-14 text-center">
