@@ -146,10 +146,6 @@ async function makeSE(row) {
 	}
 }
 
-function boxVal(v) {
-	return v == null || v === '' ? '—' : fmtNum(v)
-}
-
 onMounted(() => {
 	load()
 })
@@ -284,21 +280,6 @@ onMounted(() => {
 				<Column field="gudang_tujuan" header="Destination Warehouse" sortable>
 					<template #body="{ data }">
 						<span class="whitespace-nowrap text-ink-gray-6">{{ data.gudang_tujuan }}</span>
-					</template>
-				</Column>
-				<Column field="box_1" header="Box 1 (kg)" sortable>
-					<template #body="{ data }">
-						<span class="whitespace-nowrap tabular-nums text-ink-gray-6">{{ boxVal(data.box_1) }}</span>
-					</template>
-				</Column>
-				<Column field="box_2" header="Box 2 (kg)" sortable>
-					<template #body="{ data }">
-						<span class="whitespace-nowrap tabular-nums text-ink-gray-6">{{ boxVal(data.box_2) }}</span>
-					</template>
-				</Column>
-				<Column field="box_3" header="Box 3 (kg)" sortable>
-					<template #body="{ data }">
-						<span class="whitespace-nowrap tabular-nums text-ink-gray-6">{{ boxVal(data.box_3) }}</span>
 					</template>
 				</Column>
 				<Column field="status_papan" header="Status" sortable>

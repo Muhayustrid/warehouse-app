@@ -40,21 +40,24 @@ watch(
 <template>
 	<!-- topbar: identitas + utilitas (navigasi pindah ke sidebar ala Desk) -->
 	<header class="sticky top-0 z-30 border-b border-outline-gray-1 bg-surface-modal">
-		<div class="flex h-14 items-center gap-3 px-4 sm:px-6">
-			<button
-				class="flex h-8 w-8 items-center justify-center rounded-md text-ink-gray-6 hover:bg-surface-gray-3 hover:text-ink-gray-9"
-				aria-label="Menu"
-				@click="toggleNav"
-			>
-				<FeatherIcon name="menu" class="h-4 w-4" />
-			</button>
-			<div class="flex items-center gap-2.5">
-				<div
-					class="flex h-8 w-8 items-center justify-center rounded-md bg-ink-gray-9 text-ink-white"
+		<div class="flex h-14 items-center px-4 sm:px-6">
+			<div class="flex items-center gap-1.5">
+				<button
+					class="flex h-8 w-8 items-center justify-center rounded-md text-ink-gray-6 hover:bg-surface-gray-3 hover:text-ink-gray-9"
+					aria-label="Menu"
+					@click="toggleNav"
 				>
-					<FeatherIcon name="package" class="h-4 w-4" />
+					<FeatherIcon name="menu" class="h-4 w-4" />
+				</button>
+				<div class="mx-1 h-5 w-px bg-[var(--outline-gray-2)]" aria-hidden="true" />
+				<div class="flex items-center gap-2">
+					<div
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#171717] text-white dark:bg-[#F8F8F8] dark:text-[#171717]"
+					>
+						<FeatherIcon name="package" class="h-4 w-4" :stroke-width="2" />
+					</div>
+					<span class="text-base font-semibold tracking-tight text-ink-gray-9">Gudang</span>
 				</div>
-				<span class="text-base font-semibold tracking-tight text-ink-gray-9">Gudang</span>
 			</div>
 			<div class="ml-auto flex items-center gap-1.5">
 				<button
