@@ -1,0 +1,22 @@
+{
+ "actions": [],
+ "autoname": "field:product_qr_serial",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": ["purchase_receipt", "purchase_receipt_item", "product_qr_serial"],
+ "fields": [
+  {"fieldname": "purchase_receipt", "fieldtype": "Link", "in_list_view": 1, "label": "Purchase Receipt", "options": "Purchase Receipt", "reqd": 1},
+  {"fieldname": "purchase_receipt_item", "fieldtype": "Data", "in_list_view": 1, "label": "Purchase Receipt Item", "reqd": 1},
+  {"fieldname": "product_qr_serial", "fieldtype": "Link", "in_list_view": 1, "label": "Product QR Serial", "options": "Product QR Serial", "reqd": 1, "unique": 1}
+ ],
+ "index_web_pages_for_search": 0,
+ "module": "Warehouse App",
+ "name": "Purchase Receipt QR Label",
+ "permissions": [
+  {"read": 1, "role": "System Manager"},
+  {"read": 1, "role": "Stock Manager"},
+  {"read": 1, "role": "Stock User"}
+ ],
+ "sort_field": "creation",
+ "sort_order": "ASC"
+}
