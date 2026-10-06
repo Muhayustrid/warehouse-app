@@ -10,10 +10,11 @@
 # Grain: Material Request Item (MR + item docstatus 1, Material Transfer).
 # Murni derivasi saat baca dari dokumen native: bucket status dari
 # `per_ordered` native header MR; tanpa doc_events, tanpa tulis apa pun (R3/R10).
-# Field custom production_app (`custom_work_order`, `custom_box_1/2/3`) dibaca
-# display-only dan TIDAK PERNAH jadi filter/status (R4). Qty-only, tanpa valuasi.
-# W18: kg Box diambil dari Work Order (MR berhenti menulis custom_box_1/2
-# sejak refactor T35 production_app) — join WO yang sama dengan adonan.
+# Field custom production_app (`custom_work_order`) dibaca display-only dan
+# TIDAK PERNAH jadi filter/status (R4). Qty-only, tanpa valuasi.
+# W18/FU96/FU97: kg Box ditinggal permanen — kolom Box 1/2/3 dihapus dari
+# report ini dan kolom DB-nya ikut dibuang oleh production_app upgrade
+# (FU97). Join WO tetap ada untuk kolom adonan (custom_adonan_ke).
 # W9: kolom "Adonan" (WO.custom_adonan_ke via left join, display-only) —
 # bahasa utama gudang adalah adonan + item, bukan nomor WO; kolom WO tetap
 # ada untuk traceabilitat tapi digeser ke belakang kolom item.
@@ -53,9 +54,6 @@ def execute(filters=None):
 			(mri.stock_qty - mri.ordered_qty) as qty_sisa,
 			mri.stock_uom as stock_uom,
 			mri.warehouse as gudang_tujuan,
-			wo.custom_box_1 as box_1,
-			wo.custom_box_2 as box_2,
-			wo.custom_box_3 as box_3,
 			mr.per_ordered as per_ordered,
 			mr.status as status_mr
 		from `tabMaterial Request Item` mri
@@ -88,9 +86,6 @@ def get_columns():
 		{"label": "Sisa", "fieldname": "qty_sisa", "fieldtype": "Float", "width": 90},
 		{"label": "UOM", "fieldname": "stock_uom", "fieldtype": "Link", "options": "UOM", "width": 70},
 		{"label": "Gudang Tujuan", "fieldname": "gudang_tujuan", "fieldtype": "Link", "options": "Warehouse", "width": 170},
-		{"label": "Box 1", "fieldname": "box_1", "fieldtype": "Float", "width": 90},
-		{"label": "Box 2", "fieldname": "box_2", "fieldtype": "Float", "width": 90},
-		{"label": "Box 3", "fieldname": "box_3", "fieldtype": "Float", "width": 90},
 		{"label": "Status Papan", "fieldname": "status_papan", "fieldtype": "Data", "width": 120},
 		{"label": "Status MR", "fieldname": "status_mr", "fieldtype": "Data", "width": 110},
 		# W4: kolom Aksi display-only (tanpa nilai di data); tombol dirender

@@ -18,7 +18,8 @@
 #      request_active mengikuti state MR.
 #   2. create_request production_app (pemanggilan = kontrak yang dijaga):
 #      MR submitted Material Transfer + row custom_work_order + ringkasan WO
-#      terisi; papan Serah Terima menampilkan MR tsb dengan kolom Adonan.
+#      (Link saja — FU96/FU97 box pensiun) terisi; papan Serah Terima
+#      menampilkan MR tsb dengan kolom Adonan dan TANPA kolom Box.
 #   3. Guard duplikat production_app menolak request kedua.
 #   4. cancel_request membatalkan MR + membersihkan ringkasan WO.
 #   5. Negative: user tanpa role ditolak di picker (perm WO) dan di
@@ -39,7 +40,7 @@ import traceback
 import frappe
 from frappe.utils import flt
 
-from warehouse_app.tests.guard import count_residue
+from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 from warehouse_app.warehouse_app.gudang_request import requestable_work_orders
 from warehouse_app.warehouse_app.report.serah_terima_gudang.serah_terima_gudang import (
 	execute as run_report,
@@ -147,6 +148,9 @@ def _run_gate(check):
 				"is_stock_item": 1,
 				"has_batch_no": 0,
 				"has_serial_no": 0,
+				# site item-wise inventory account (mis. 1oktober2026) butuh ini
+				# agar SE submit bisa posting GL — no-op di site lain
+				"item_defaults": item_inventory_defaults(company),
 			}
 		)
 		item.insert()
@@ -260,7 +264,7 @@ def _run_gate(check):
 
 		frappe.set_user(USER_EMAIL)
 		try:
-			create_request(work_order=TRACKED["wo"][0], box_1=50, box_1_qty=QTY, box_2=0, box_2_qty=0)
+			create_request(work_order=TRACKED["wo"][0])
 			check("create_denied_without_role", False, "create_request TIDAK ditolak untuk user tanpa role")
 		finally:
 			frappe.set_user("Administrator")
@@ -335,40 +339,10 @@ def _run_gate(check):
 		frappe.set_user("Administrator")
 		raise GateAborted()
 
-	# --- Negative W18: Box 3 setengah isi (kg tanpa qty) ditolak, nol tulisan.
-	# Harus SEBELUM create_request utama — guard "sudah aktif" akan menutupi
-	# validasi invariant box bila WO sudah punya permintaan. ---
+	# --- create_request sebagai user gudang (FU96/FU97: qty-only murni —
+	# hasil penuh WO; box dihapus total dari kontrak, field, dan kolom) ---
 	try:
-		create_request(
-			work_order=TRACKED["wo"][0],
-			box_1=50,
-			box_1_qty=QTY,
-			box_2=0,
-			box_2_qty=0,
-			box_3=2,
-			box_3_qty=0,
-		)
-		check("box3_half_rejected", False, "create_request box 3 setengah isi TIDAK ditolak!")
-	except Exception as e:
-		wo_link = frappe.db.get_value("Work Order", TRACKED["wo"][0], "custom_handover_material_request")
-		mri_count = frappe.db.count("Material Request Item", {"custom_work_order": TRACKED["wo"][0]})
-		check(
-			"box3_half_rejected",
-			wo_link in (None, "") and mri_count == 0,
-			f"{type(e).__name__}: {str(e)[:180]}, wo_link={wo_link!r}, mri={mri_count}",
-		)
-
-	# --- create_request sebagai user gudang (W18: split 3 box, total = QTY) ---
-	try:
-		res = create_request(
-			work_order=TRACKED["wo"][0],
-			box_1=10,
-			box_1_qty=40,
-			box_2=5,
-			box_2_qty=35,
-			box_3=3,
-			box_3_qty=25,
-		)
+		res = create_request(work_order=TRACKED["wo"][0])
 		mr_name = res["material_request"]
 		TRACKED["mr"].append(mr_name)
 		mr = frappe.db.get_value(
@@ -394,32 +368,23 @@ def _run_gate(check):
 		frappe.set_user("Administrator")
 		raise GateAborted()
 
-	# --- Ringkasan WO terisi (termasuk Box 2/3) + picker request_active=True ---
+	# --- Ringkasan WO = Link saja (FU96/FU97: kolom box sudah DI-DROP) +
+	# picker request_active=True ---
 	try:
 		summary = frappe.db.get_value(
 			"Work Order",
 			TRACKED["wo"][0],
-			[
-				"custom_handover_material_request",
-				"custom_box_1",
-				"custom_box_1_qty",
-				"custom_box_2",
-				"custom_box_2_qty",
-				"custom_box_3",
-				"custom_box_3_qty",
-			],
+			["custom_handover_material_request"],
 			as_dict=1,
+		)
+		box_columns_gone = not (
+			frappe.db.has_column("Work Order", "custom_box_1")
+			or frappe.db.has_column("Material Request", "custom_box_1")
 		)
 		check(
 			"wo_summary_filled",
-			summary.custom_handover_material_request == TRACKED["mr"][0]
-			and flt(summary.custom_box_1) == 10
-			and flt(summary.custom_box_1_qty) == 40
-			and flt(summary.custom_box_2) == 5
-			and flt(summary.custom_box_2_qty) == 35
-			and flt(summary.custom_box_3) == 3
-			and flt(summary.custom_box_3_qty) == 25,
-			str(summary),
+			summary.custom_handover_material_request == TRACKED["mr"][0] and box_columns_gone,
+			f"{summary}, box_columns_gone={box_columns_gone}",
 		)
 		rows = requestable_work_orders(search=ITEM_NAME)
 		row = next((r for r in rows if r.name == TRACKED["wo"][0]), None)
@@ -429,13 +394,14 @@ def _run_gate(check):
 
 	# --- Guard duplikat production_app ---
 	try:
-		create_request(work_order=TRACKED["wo"][0], box_1=50, box_1_qty=QTY, box_2=0, box_2_qty=0)
+		create_request(work_order=TRACKED["wo"][0])
 		check("duplicate_rejected", False, "create_request kedua TIDAK ditolak!")
 	except Exception as e:
 		msg = str(e)
 		check("duplicate_rejected", "sudah punya permintaan aktif" in msg, f"{type(e).__name__}: {msg[:180]}")
 
-	# --- Papan: MR fixture muncul dengan kolom Adonan, bucket Belum Dikirim ---
+	# --- Papan: MR fixture muncul dengan kolom Adonan, bucket Belum Dikirim,
+	# TANPA kolom Box (FU97) ---
 	try:
 		columns, rows = run_report({"gudang_tujuan": target})
 		fieldnames = [c.get("fieldname") for c in columns]
@@ -446,12 +412,9 @@ def _run_gate(check):
 			and brow.get("status_papan") == "Belum Dikirim"
 			and "adonan" in fieldnames
 			and fieldnames.index("adonan") < fieldnames.index("work_order")
-			# W18: kg Box kini dari WO (bukan MR) — split 10/5/3 di atas
-			and flt(brow.get("box_1")) == 10
-			and flt(brow.get("box_2")) == 5
-			and flt(brow.get("box_3")) == 3
+			and not any(f in fieldnames for f in ("box_1", "box_2", "box_3"))
 		)
-		check("board_shows_request", ok, f"row={brow and dict(brow)}, adonan@kolom-{fieldnames.index('adonan') if 'adonan' in fieldnames else '?'}")
+		check("board_shows_request", ok, f"row={brow and dict(brow)}, adonan@kolom-{fieldnames.index('adonan') if 'adonan' in fieldnames else '?'}, fields={fieldnames}")
 	except Exception as e:
 		check("board_shows_request", False, f"{type(e).__name__}: {e}")
 

@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Muhammad Yusuf Tri Daryanto
 # License: MIT
 
-# Gate W19 — group handover request (N WO satu item, box bersama K box).
+# Gate W19 — group handover request (N WO satu item, satu permintaan bersama).
 #
 # Jalankan:
 #   docker exec erpnext-new-backend-1 bench --site frontend execute \
@@ -14,12 +14,12 @@
 # Yang diverifikasi:
 #   1. Settings CRUD (warehouse_app): set_group_items/get_group_items
 #      role-gated — gudang boleh, user tanpa role PermissionError.
-#   2. Picker (requestable_work_orders): flag group_item + field box netral
+#   2. Picker (requestable_work_orders): flag group_item + field grup netral
 #      sebelum ada grup.
-#   3. create_group_request production_app: happy path (2-3 WO satu item,
-#      Σ qty box == Σ expected unit) -> plan HBP + MR anggota ber-link
-#      custom_handover_box_plan, WO custom_box_1/2/3 tetap 0, picker aktif.
-#   4. Negative: single WO (<2), Σ salah, item campuran — ditolak nol-tulis.
+#   3. create_group_request production_app (FU96/FU97: qty-only murni, tanpa
+#      payload box) -> plan HBP 1 baris kg=0 penanda + MR anggota ber-link
+#      custom_handover_box_plan, ringkasan WO = Link saja, picker aktif.
+#   4. Negative: single WO (<2), item campuran — ditolak nol-tulis.
 #   5. Duplicate: grup kedua yang menyentuh anggota aktif -> ditolak.
 #   6. cancel_request member tunggal -> ditolak dengan pesan grup;
 #      cancel_group_request -> semua MR batal, link WO bersih, picker normal.
@@ -37,7 +37,7 @@ import traceback
 import frappe
 from frappe.utils import flt, now_datetime
 
-from warehouse_app.tests.guard import count_residue
+from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 from warehouse_app.warehouse_app.gudang_request import requestable_work_orders
 
 PREFIX = "ZZTEST-W19"
@@ -136,6 +136,9 @@ def _run_gate(check):
 					"is_stock_item": 1,
 					"has_batch_no": 0,
 					"has_serial_no": 0,
+					# site item-wise inventory account (mis. 1oktober2026) butuh
+					# ini agar SE submit bisa posting GL — no-op di site lain
+					"item_defaults": item_inventory_defaults(company),
 				}
 			)
 			item.insert()
@@ -318,7 +321,7 @@ def _run_gate(check):
 		frappe.set_user("Administrator")
 		raise GateAborted()
 
-	# --- Picker: 3 WO utama ber-flag group_item, field box netral ---
+	# --- Picker: 3 WO utama ber-flag group_item, field grup netral ---
 	try:
 		rows = requestable_work_orders(search=ITEM_NAME)
 		main_rows = [r for r in rows if r.name in TRACKED["wo"][:3]]
@@ -331,7 +334,7 @@ def _run_gate(check):
 			ok,
 			f"rows={[(r.name, r.group_item, r.box_plan, r.group_boxes, r.group_size) for r in main_rows]}",
 		)
-		# expected unit per WO dalam display UOM (fallback stock) — dasar Σ box
+		# expected unit per WO dalam display UOM (fallback stock) — dasar qty grup
 		expected = {r.name: int(r.expected_units or 0) for r in main_rows}
 		display_uom = main_rows[0].display_uom if main_rows else ""
 	except Exception as e:
@@ -362,37 +365,24 @@ def _run_gate(check):
 	# --- Negative: negasi dieksekusi SEBELUM happy create agar guard
 	# "anggota aktif" tidak menutupi validasi masing-masing ---
 	try:
-		create_group_request(work_orders=json.dumps([w1]), boxes=json.dumps([{"kg": 5, "qty": e1}]))
+		create_group_request(work_orders=json.dumps([w1]))
 		check("group_single_rejected", False, "1 WO (<2) TIDAK ditolak!")
 	except Exception as e:
 		check("group_single_rejected", _member_mr_count() == 0, f"{type(e).__name__}: {str(e)[:180]}")
 
 	try:
-		create_group_request(
-			work_orders=json.dumps([w1, w2]),
-			boxes=json.dumps([{"kg": 5, "qty": e1}, {"kg": 3, "qty": e2 - 1}]),
-		)
-		check("group_sigma_rejected", False, "Σ qty box != Σ expected TIDAK ditolak!")
-	except Exception as e:
-		check("group_sigma_rejected", _member_mr_count() == 0, f"{type(e).__name__}: {str(e)[:180]}")
-
-	try:
-		create_group_request(
-			work_orders=json.dumps([w1, w4]),
-			boxes=json.dumps([{"kg": 5, "qty": e1 + QTY}]),
-		)
+		create_group_request(work_orders=json.dumps([w1, w4]))
 		check("group_mixed_rejected", False, "item campuran TIDAK ditolak!")
 	except Exception as e:
 		check("group_mixed_rejected", _member_mr_count() == 0, f"{type(e).__name__}: {str(e)[:180]}")
 
-	# --- Happy path: 3 WO satu item, 2 box bersama (Σ qty = Σ expected) ---
+	# --- Happy path: 3 WO satu item (FU96/FU97: qty-only murni) ---
 	try:
-		res = create_group_request(
-			work_orders=json.dumps([w1, w2, w3]),
-			boxes=json.dumps([{"kg": 5, "qty": e1}, {"kg": 3, "qty": e2 + e3}]),
-		)
+		res = create_group_request(work_orders=json.dumps([w1, w2, w3]))
 		plan = res.get("box_plan")
 		TRACKED["hbp"].append(plan)
+		plan_doc = frappe.get_doc("Handover Box Plan", plan) if plan else None
+		plan_rows = [(flt(b.kg), b.qty) for b in plan_doc.boxes] if plan_doc else []
 		mr_names = set(res.get("material_requests") or [])
 		TRACKED["mr"].extend(sorted(mr_names))
 		mr_rows = frappe.get_all(
@@ -406,52 +396,46 @@ def _run_gate(check):
 			fields=[
 				"name",
 				"custom_handover_material_request",
-				"custom_box_1",
-				"custom_box_2",
-				"custom_box_3",
 			],
 		)
 		ok = bool(
 			res.get("ok")
 			and plan
+			and plan_rows == [(0, total)]  # FU96: satu baris kg=0 penanda grup
 			and int(res.get("expected_unit_count") or 0) == total
 			and len(mr_rows) == 3
 			and {d.name for d in mr_rows} == mr_names
 			and all(d.docstatus == 1 and d.material_request_type == "Material Transfer" for d in mr_rows)
 			and len(wo_state) == 3
-			and all(
-				d.custom_handover_material_request in mr_names
-				and flt(d.custom_box_1) == 0
-				and flt(d.custom_box_2) == 0
-				and flt(d.custom_box_3) == 0
-				for d in wo_state
-			)
+			and all(d.custom_handover_material_request in mr_names for d in wo_state)
 		)
 		check(
 			"create_group_request",
 			ok,
-			f"plan={plan!r}, expected={res.get('expected_unit_count')}/{total}, mrs={sorted(mr_names)}, wo={wo_state}",
+			f"plan={plan!r}, plan_rows={plan_rows}, expected={res.get('expected_unit_count')}/{total}, mrs={sorted(mr_names)}, wo={wo_state}",
 		)
 	except Exception as e:
 		check("create_group_request", False, f"{type(e).__name__}: {e}")
 		frappe.set_user("Administrator")
 		raise GateAborted()
 
-	# --- Picker: anggota aktif + info grup terisi ---
+	# --- Picker: anggota aktif + info grup terisi (FU96: marker 1 baris kg=0) ---
 	try:
 		rows = requestable_work_orders(search=ITEM_NAME)
 		main_rows = [r for r in rows if r.name in TRACKED["wo"][:3]]
 		ok = len(main_rows) == 3 and all(
 			r.request_active
 			and r.box_plan == plan
-			and len(r.group_boxes) == 2
+			and len(r.group_boxes) == 1
+			and flt(r.group_boxes[0].get("kg")) == 0
+			and flt(r.group_boxes[0].get("qty")) == total
 			and r.group_size == 3
 			for r in main_rows
 		)
 		check(
 			"picker_group_active",
 			ok,
-			f"rows={[(r.name, r.request_active, r.box_plan, r.group_size, len(r.group_boxes)) for r in main_rows]}",
+			f"rows={[(r.name, r.request_active, r.box_plan, r.group_size, r.group_boxes) for r in main_rows]}",
 		)
 	except Exception as e:
 		check("picker_group_active", False, f"{type(e).__name__}: {e}")
@@ -459,10 +443,7 @@ def _run_gate(check):
 	# --- Duplicate: grup kedua menyentuh anggota aktif -> ditolak nol-tulis ---
 	try:
 		before = _member_mr_count()
-		create_group_request(
-			work_orders=json.dumps([w1, w2]),
-			boxes=json.dumps([{"kg": 5, "qty": e1 + e2}]),
-		)
+		create_group_request(work_orders=json.dumps([w1, w2]))
 		check("group_duplicate_rejected", False, "grup kedua TIDAK ditolak!")
 	except Exception as e:
 		after = _member_mr_count()
@@ -479,7 +460,7 @@ def _run_gate(check):
 		check("cancel_member_rejected", False, "cancel_request member grup TIDAK ditolak!")
 	except Exception as e:
 		msg = str(e)
-		check("cancel_member_rejected", "grup box" in msg, f"{type(e).__name__}: {msg[:200]}")
+		check("cancel_member_rejected", "grup serah terima" in msg, f"{type(e).__name__}: {msg[:200]}")
 
 	# --- cancel_group_request: semua MR batal, WO bersih, picker normal lagi ---
 	try:
