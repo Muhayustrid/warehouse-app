@@ -321,7 +321,7 @@ const cancelOptions = computed(() => {
 	return t.plan
 		? {
 				title: 'Cancel Group Request',
-				message: `Cancel the ENTIRE group (${t.size} Work Orders)? Boxes are shared, so cancel all.`,
+				message: `Cancel the ENTIRE group (${t.size} Work Orders)? All unshipped members are cancelled together.`,
 				confirmLabel: 'Cancel Group',
 				theme: 'danger',
 			}

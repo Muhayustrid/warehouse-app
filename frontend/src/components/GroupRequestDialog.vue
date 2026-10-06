@@ -1,5 +1,5 @@
 <script setup>
-// Dialog Group Request (N WO satu item grup, satu paket box bersama) —
+// Dialog Group Request (N WO satu item grup, satu permintaan bersama) —
 // tanpa input: total = hasil penuh semua anggota; server membentuk Handover
 // Box Plan-nya sendiri. Server menolak → dialog tetap terbuka dgn error.
 import { ref, computed, watch } from 'vue'

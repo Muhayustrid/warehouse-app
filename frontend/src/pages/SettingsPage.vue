@@ -148,8 +148,8 @@ async function save() {
 			<div class="space-y-2">
 				<label class="text-sm font-medium text-ink-gray-7">Group Request Items</label>
 				<p class="text-xs text-ink-gray-4">
-					Items eligible for group requests — several Work Orders of one item with shared
-					boxes.
+					Items eligible for group requests — several Work Orders of one item can be
+					requested together.
 				</p>
 				<div v-if="groupItems.length" class="flex flex-wrap gap-2">
 					<div
