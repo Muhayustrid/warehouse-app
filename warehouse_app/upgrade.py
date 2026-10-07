@@ -254,6 +254,10 @@ CLIENT_SCRIPT_STOCK_ENTRY = SCRIPT_MARKER + """ — default row UOM + rate per U
 	function hide_native_rate_column(frm) {
 		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
 		if (!grid) return;
+		// sudah tersembunyi = jangan ulang: set_column_disp_in_list_view
+		// membongkar semua .grid-row — dipanggil dari items_on_form_rendered
+		// ia ikut menghapus baris yang sedang dibuka (layar gelap tanpa form)
+		if (grid.column_disp_overrides && grid.column_disp_overrides.basic_rate) return;
 		grid.set_column_disp("basic_rate", false);
 		grid.set_column_disp_in_list_view("basic_rate", false);
 	}
@@ -642,6 +646,9 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 	function hide_native_qty_columns(frm) {
 		const grid = frm.fields_dict.items && frm.fields_dict.items.grid;
 		if (!grid) return;
+		// idempoten — lihat hide_native_rate_column di script SE (form baris
+		// yang terbuka ikut terhapus bila list view dibongkar ulang)
+		if (grid.column_disp_overrides && grid.column_disp_overrides.qty) return;
 		for (const field of ["qty", "valuation_rate"]) {
 			grid.set_column_disp(field, false);
 			grid.set_column_disp_in_list_view(field, false);
