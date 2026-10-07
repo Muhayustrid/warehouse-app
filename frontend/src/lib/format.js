@@ -26,3 +26,21 @@ export function initials(user) {
 	}
 	return local.slice(0, 2).toUpperCase()
 }
+
+// W40 Inventory — angka gaya Indonesia (titik ribuan, koma desimal) supaya
+// qty sejalan dengan Rupiah.
+export function fmtQty(value, digits = 2) {
+	return Number(value || 0).toLocaleString('id-ID', { maximumFractionDigits: digits })
+}
+
+// "Rp1.858.909" / "-Rp71.249" — dibulatkan ke rupiah penuh.
+export function fmtRp(value) {
+	const v = Math.round(Number(value || 0))
+	return (v < 0 ? '-' : '') + 'Rp' + Math.abs(v).toLocaleString('id-ID')
+}
+
+// "07 Oct 2026, 21:37" — diparse dari string (waktu site, tanpa geser zona).
+export function fmtDateTime(value) {
+	const m = String(value || '').match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/)
+	return m ? `${fmtDate(m[1])}, ${m[2]}` : fmtDate(value)
+}

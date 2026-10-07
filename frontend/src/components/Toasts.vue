@@ -1,18 +1,23 @@
 <script setup>
 import Toast from '@frappe-ui/components/Toast/Toast.vue'
+// Toast frappe-ui = ToastRoot reka-ui: wajib di dalam ToastProvider, tanpa
+// itu setiap toast melempar 'Injection ToastProviderContext not found'.
+import { ToastProvider } from 'reka-ui'
 import { toasts, dismiss } from '@/lib/toast'
 </script>
 
 <template>
-	<div class="pointer-events-none fixed bottom-4 right-4 z-[100] flex list-none flex-col items-end gap-2">
-		<Toast
-			v-for="t in toasts"
-			:key="t.id"
-			:open="true"
-			:message="t.message"
-			:type="t.type"
-			:duration="t.duration"
-			@update:open="dismiss(t.id)"
-		/>
-	</div>
+	<ToastProvider>
+		<div class="pointer-events-none fixed bottom-4 right-4 z-[100] flex list-none flex-col items-end gap-2">
+			<Toast
+				v-for="t in toasts"
+				:key="t.id"
+				:open="true"
+				:message="t.message"
+				:type="t.type"
+				:duration="t.duration"
+				@update:open="dismiss(t.id)"
+			/>
+		</div>
+	</ToastProvider>
 </template>

@@ -14,6 +14,7 @@ const sections = [
 			{ to: '/', label: 'Handover Requests', icon: 'clipboard-list' },
 			// halaman SPA pengganti shortcut report Desk (W33-r8)
 			{ to: '/serah-terima', label: 'Serah Terima Gudang', icon: 'truck' },
+			{ to: '/inventory', label: 'Inventory', icon: 'layers' },
 			{ to: '/settings', label: 'Settings', icon: 'settings' },
 		],
 	},

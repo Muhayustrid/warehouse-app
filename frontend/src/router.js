@@ -14,6 +14,11 @@ export default createRouter({
 			component: () => import('@/pages/SerahTerimaPage.vue'),
 		},
 		{
+			path: '/inventory',
+			name: 'inventory',
+			component: () => import('@/pages/InventoryPage.vue'),
+		},
+		{
 			path: '/settings',
 			name: 'settings',
 			component: () => import('@/pages/SettingsPage.vue'),
