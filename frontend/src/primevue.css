@@ -119,6 +119,14 @@
 .pv-table-fit .p-datatable-table {
 	min-width: 1100px;
 }
+.pv-table-fit.pv-table-click .p-datatable-table {
+	min-width: 900px;
+}
+/* layar sempit: tabel di-scroll di dalam card, halaman tidak ikut melebar */
+.pv-table-fit .p-datatable-table-container,
+.pv-table-modal .p-datatable-table-container {
+	overflow-x: auto;
+}
 
 .pv-table .p-datatable-tfoot > tr > td {
 	background: #f3f3f3;
