@@ -12,6 +12,10 @@ export function fetchMovements(params) {
 	return callGet(API + 'movements', params)
 }
 
+export function fetchInventoryInfo(item_code, warehouse) {
+	return callGet(API + 'inventory_info', { item_code, warehouse })
+}
+
 export function fetchFilterOptions() {
 	return callGet(API + 'filter_options')
 }

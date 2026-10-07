@@ -129,7 +129,33 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* baris bisa diklik (Movements -> modal detail) */
+.pv-table-click .p-datatable-tbody > tr {
+	cursor: pointer;
+}
+
+/* tabel di dalam modal: tanpa min-width halaman */
+.pv-table-modal .p-datatable-table {
+	min-width: 760px;
+}
+
+/* modal detail Inventory: tinggi mengikuti isi, scroll di body */
+.inv-dialog.p-dialog {
+	max-height: 92vh;
+	overflow: hidden;
+	background: var(--inv-dialog-bg, #ffffff);
+}
+
+.inv-dialog-max.p-dialog {
+	max-height: 100vh;
+	border-radius: 0;
+}
+
 /* ---- Dark theme ---- */
+[data-theme='dark'] .inv-dialog.p-dialog {
+	--inv-dialog-bg: #171717;
+}
+
 [data-theme='dark'] .pv-table .p-datatable-tfoot > tr > td {
 	background: #232323;
 	border-color: #343434;

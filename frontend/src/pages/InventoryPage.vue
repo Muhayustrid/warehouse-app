@@ -16,6 +16,7 @@ import { TabButtons } from '@frappe-ui/components/TabButtons'
 import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
 import { dayjs } from '@frappe-ui/utils/dayjs'
 import DateRangeField from '@/components/DateRangeField.vue'
+import InventoryDetailDialog from '@/components/InventoryDetailDialog.vue'
 import { fetchStockCards, fetchMovements, fetchFilterOptions } from '@/data/inventory'
 import { fmtQty, fmtRp, fmtDateTime } from '@/lib/format'
 import { toast } from '@/lib/toast'
@@ -184,6 +185,12 @@ const MOVE_COLS = [
 ]
 const isEmpty = (r, k) => !r[k + '_qty'] && !r[k + '_value']
 const isNegative = (r) => r.end_qty < 0 || r.end_value < 0
+
+// klik baris Movements -> modal detail (periode dibekukan saat dibuka)
+const detail = ref({ show: false, row: null, period: {} })
+function openDetail({ data }) {
+	detail.value = { show: true, row: data, period: { ...period.value } }
+}
 
 const PAGINATOR =
 	'CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown'
@@ -405,8 +412,9 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					:rowsPerPageOptions="[20, 50, 100]"
 					:paginatorTemplate="PAGINATOR"
 					:currentPageReportTemplate="PAGE_REPORT"
-					class="pv-table pv-table-fit"
+					class="pv-table pv-table-fit pv-table-click"
 					@page="moves.onPage"
+					@row-click="openDetail"
 				>
 					<template #empty>
 						<div class="flex flex-col items-center gap-2 px-6 py-14 text-center">
@@ -430,7 +438,14 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 							<div class="text-xs text-ink-gray-5">at {{ data.warehouse }}</div>
 						</template>
 					</Column>
-					<Column v-for="c in MOVE_COLS" :key="c.key" :header="c.label" headerClass="num" bodyClass="num">
+					<Column
+						v-for="c in MOVE_COLS"
+						:key="c.key"
+						:header="c.label"
+						headerClass="num"
+						bodyClass="num"
+						:style="{ width: '15%' }"
+					>
 						<template #body="{ data }">
 							<div
 								class="whitespace-nowrap tabular-nums"
@@ -455,15 +470,29 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 
 					<ColumnGroup v-if="moves.total" type="footer">
 						<Row>
-							<Column footer="Total" :colspan="2" footerClass="font-semibold" />
-							<Column :footer="fmtRp(moves.totals?.begin_value)" footerClass="num" />
-							<Column footer="" />
-							<Column footer="" />
-							<Column :footer="fmtRp(moves.totals?.end_value)" footerClass="num" />
+							<Column :colspan="2">
+								<template #footer>
+									<div class="text-ink-gray-9">Total</div>
+									<div class="text-xs font-normal text-ink-gray-5">all {{ moves.total }} results</div>
+								</template>
+							</Column>
+							<Column v-for="c in MOVE_COLS" :key="c.key" footerClass="num">
+								<template #footer>
+									<div
+										class="whitespace-nowrap"
+										:class="moves.totals?.[c.key + '_value'] < 0 ? 'text-red-600' : 'text-ink-gray-9'"
+									>
+										{{ fmtRp(moves.totals?.[c.key + '_value']) }}
+									</div>
+									<div class="text-xs font-normal text-ink-gray-5">value</div>
+								</template>
+							</Column>
 						</Row>
 					</ColumnGroup>
 				</DataTable>
 			</div>
 		</div>
+
+		<InventoryDetailDialog v-model="detail.show" :row="detail.row" :period="detail.period" />
 	</div>
 </template>

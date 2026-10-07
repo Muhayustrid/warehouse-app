@@ -13,6 +13,7 @@ declare module 'vue' {
     DisplayMenu: typeof import('./src/components/DisplayMenu.vue')['default']
     FilterBuilder: typeof import('./src/components/FilterBuilder.vue')['default']
     GroupRequestDialog: typeof import('./src/components/GroupRequestDialog.vue')['default']
+    InventoryDetailDialog: typeof import('./src/components/InventoryDetailDialog.vue')['default']
     RequestDialog: typeof import('./src/components/RequestDialog.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

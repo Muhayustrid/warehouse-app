@@ -57,10 +57,16 @@ def _page(page, page_len):
 		page_len = PAGE_SIZES[0]
 	return max(cint(page), 1), page_len
 
-def _sle_filters(from_date=None, to_date=None, warehouse=None, item=None, item_group=None):
-	"""WHERE atas alias s (SLE) + i (Item). Kembali (sql, values, butuh_join_item)."""
+def _sle_filters(
+	from_date=None, to_date=None, warehouse=None, item=None, item_group=None, item_code=None
+):
+	"""WHERE atas alias s (SLE) + i (Item). Kembali (sql, values, butuh_join_item).
+	item = cari (like kode/nama); item_code = satu item persis (modal detail)."""
 	conds = ["s.is_cancelled = 0"]
 	values = {}
+	if item_code:
+		conds.append("s.item_code = %(item_code)s")
+		values["item_code"] = item_code
 	if from_date:
 		conds.append("s.posting_datetime >= %(from_dt)s")
 		values["from_dt"] = str(getdate(from_date))
@@ -97,12 +103,19 @@ def _apply_user_permissions(conds, values, columns):
 
 @frappe.whitelist()
 def stock_cards(
-	from_date=None, to_date=None, warehouse=None, item=None, item_group=None, page=1, page_len=20
+	from_date=None,
+	to_date=None,
+	warehouse=None,
+	item=None,
+	item_group=None,
+	item_code=None,
+	page=1,
+	page_len=20,
 ):
-	"""Tab Stock Cards: satu baris = satu SLE, terbaru dulu."""
+	"""Tab Stock Cards + tabel modal detail: satu baris = satu SLE, terbaru dulu."""
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	page, page_len = _page(page, page_len)
-	where, values, need_item = _sle_filters(from_date, to_date, warehouse, item, item_group)
+	where, values, need_item = _sle_filters(from_date, to_date, warehouse, item, item_group, item_code)
 	item_join = "join `tabItem` i on i.name = s.item_code" if need_item else ""
 
 	total = frappe.db.sql(f"select count(*) from {SLE} s {item_join} where {where}", values)[0][0]
@@ -130,6 +143,7 @@ def stock_cards(
 		values,
 		as_dict=True,
 	)
+	remarks = _voucher_remarks(rows)
 	out = []
 	for r in rows:
 		f = r.factor
@@ -148,10 +162,27 @@ def stock_cards(
 				"qty_out": -r.qty_change / f if r.qty_change < 0 else None,
 				"qty_after": r.qty_after_transaction / f,
 				"value_before": r.stock_value - r.stock_value_difference,
+				"value_change": r.stock_value_difference,
 				"value_after": r.stock_value,
+				"remarks": remarks.get((r.voucher_type, r.voucher_no)),
 			}
 		)
 	return {"rows": out, "total": total}
+
+def _voucher_remarks(rows):
+	"""Remarks dokumen sumber, satu query per voucher_type di halaman ini."""
+	by_type = {}
+	for r in rows:
+		by_type.setdefault(r.voucher_type, set()).add(r.voucher_no)
+	out = {}
+	for vt, names in by_type.items():
+		if not frappe.get_meta(vt).has_field("remarks"):
+			continue
+		for d in frappe.get_all(vt, filters={"name": ("in", list(names))}, fields=["name", "remarks"]):
+			# ERPNext mengisi "No Remarks" sebagai default di beberapa doctype
+			if d.remarks and d.remarks.strip() != "No Remarks":
+				out[(vt, d.name)] = d.remarks.strip()
+	return out
 
 SEARCH_BY = {"name": "i.item_name", "sku": "s.item_code", "item_group": "i.item_group"}
 
@@ -162,6 +193,7 @@ def movements(
 	warehouse=None,
 	item=None,
 	item_group=None,
+	item_code=None,
 	search=None,
 	search_by="name",
 	page=1,
@@ -178,7 +210,7 @@ def movements(
 	page, page_len = _page(page, page_len)
 	from_dt = str(getdate(from_date)) if from_date else "1900-01-01"
 	# history sebelum periode tetap discan (Beginning), jadi from_date tak masuk WHERE
-	where, values, _ = _sle_filters(None, to_date, warehouse, item, item_group)
+	where, values, _ = _sle_filters(None, to_date, warehouse, item, item_group, item_code)
 	if search and str(search).strip():
 		where += f" and {SEARCH_BY.get(search_by, SEARCH_BY['name'])} like %(search)s"
 		values["search"] = f"%{str(search).strip()}%"
@@ -215,6 +247,8 @@ def movements(
 	)
 	totals = {
 		"begin_value": sum(r.bv for r in agg),
+		"in_value": sum(r.iv for r in agg),
+		"out_value": sum(r.ov for r in agg),
 		"end_value": sum(r.ev for r in agg),
 	}
 	chunk = agg[(page - 1) * page_len : page * page_len]
@@ -256,6 +290,47 @@ def movements(
 			}
 		)
 	return {"rows": rows, "total": len(agg), "totals": totals}
+
+@frappe.whitelist()
+def inventory_info(item_code, warehouse):
+	"""Accordion "Inventory Information" di modal detail: master item + Bin saat ini."""
+	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
+	conds, values = ["b.item_code = %(item)s", "b.warehouse = %(wh)s"], {"item": item_code, "wh": warehouse}
+	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse"})
+	info = frappe.db.sql(
+		f"""
+		select i.item_name, i.item_group, i.stock_uom, i.description, {UOM_COLS},
+			b.actual_qty, b.reserved_qty, b.projected_qty, b.valuation_rate, b.stock_value,
+			w.company
+		from `tabBin` b
+		join `tabItem` i on i.name = b.item_code
+		join `tabWarehouse` w on w.name = b.warehouse
+		left join `tabUOM Conversion Detail` u
+			on u.parent = i.name and u.uom = i.custom_default_inventory_unit_of_measure
+			and i.custom_default_inventory_unit_of_measure != i.stock_uom
+		where {" and ".join(conds)}
+		""",
+		values,
+		as_dict=True,
+	)
+	if not info:
+		return None
+	r = info[0]
+	f = r.factor
+	return {
+		"item_name": r.item_name,
+		"item_group": r.item_group,
+		"description": r.description,
+		"company": r.company,
+		"stock_uom": r.stock_uom,
+		"uom": r.uom,
+		"factor": f,
+		"actual_qty": r.actual_qty / f,
+		"reserved_qty": r.reserved_qty / f,
+		"projected_qty": r.projected_qty / f,
+		"valuation_rate": r.valuation_rate * f,
+		"stock_value": r.stock_value,
+	}
 
 @frappe.whitelist()
 def filter_options():
