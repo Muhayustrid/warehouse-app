@@ -109,7 +109,10 @@ watch(
 			</aside>
 		</template>
 
-		<main class="mx-auto w-full max-w-6xl flex-1 px-4 pb-16 pt-6 sm:px-6">
+		<main
+			class="mx-auto w-full min-w-0 flex-1 px-4 pb-16 pt-6 sm:px-6"
+			:class="route.meta.wide ? 'max-w-none' : 'max-w-6xl'"
+		>
 			<RouterView />
 		</main>
 	</div>

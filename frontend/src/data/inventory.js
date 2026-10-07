@@ -8,6 +8,10 @@ export function fetchStockCards(params) {
 	return callGet(API + 'stock_cards', params)
 }
 
+export function fetchMovements(params) {
+	return callGet(API + 'movements', params)
+}
+
 export function fetchFilterOptions() {
 	return callGet(API + 'filter_options')
 }

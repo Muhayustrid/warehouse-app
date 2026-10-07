@@ -17,6 +17,8 @@ export default createRouter({
 			path: '/inventory',
 			name: 'inventory',
 			component: () => import('@/pages/InventoryPage.vue'),
+			// tabel ledger lebar: main tanpa max-w-6xl (App.vue)
+			meta: { wide: true },
 		},
 		{
 			path: '/settings',

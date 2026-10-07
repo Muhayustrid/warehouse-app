@@ -153,6 +153,110 @@ def stock_cards(
 		)
 	return {"rows": out, "total": total}
 
+SEARCH_BY = {"name": "i.item_name", "sku": "s.item_code", "item_group": "i.item_group"}
+
+@frappe.whitelist()
+def movements(
+	from_date=None,
+	to_date=None,
+	warehouse=None,
+	item=None,
+	item_group=None,
+	search=None,
+	search_by="name",
+	page=1,
+	page_len=20,
+):
+	"""Tab Inventory Movements: satu baris = item+gudang dalam periode.
+
+	Perubahan per SLE (dq/dv) = selisih qty_after_transaction/stock_value dari
+	SLE sebelumnya pada item+gudang yang sama (window LAG) — otomatis benar
+	utk Stock Reconciliation. Beginning = jumlah dq/dv sebelum from_date
+	(= saldo SLE terakhir sebelum periode), IN/OUT = dq/dv positif/negatif
+	dalam periode, Ending = jumlah semua (= saldo SLE terakhir periode)."""
+	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
+	page, page_len = _page(page, page_len)
+	from_dt = str(getdate(from_date)) if from_date else "1900-01-01"
+	# history sebelum periode tetap discan (Beginning), jadi from_date tak masuk WHERE
+	where, values, _ = _sle_filters(None, to_date, warehouse, item, item_group)
+	if search and str(search).strip():
+		where += f" and {SEARCH_BY.get(search_by, SEARCH_BY['name'])} like %(search)s"
+		values["search"] = f"%{str(search).strip()}%"
+	values["from"] = from_dt
+
+	is_in = "(dq > 0 or (dq = 0 and dv > 0))"
+	is_out = "(dq < 0 or (dq = 0 and dv < 0))"
+	# ponytail: hasil agregat (<= jumlah Bin, ~3rb) diurut+dipaging di Python agar
+	# window ~1 dtk @100rb SLE cukup jalan sekali utk rows+count+total; pindah ke
+	# tabel ringkasan per periode bila Bin menembus ratusan ribu.
+	agg = frappe.db.sql(
+		f"""
+		select item_code, warehouse,
+			sum(if(pdt < %(from)s, dq, 0)) bq, sum(if(pdt < %(from)s, dv, 0)) bv,
+			sum(if(pdt >= %(from)s and {is_in}, dq, 0)) iq,
+			sum(if(pdt >= %(from)s and {is_in}, dv, 0)) iv,
+			sum(if(pdt >= %(from)s and {is_out}, -dq, 0)) oq,
+			sum(if(pdt >= %(from)s and {is_out}, -dv, 0)) ov,
+			sum(dq) eq, sum(dv) ev
+		from (
+			select s.item_code, s.warehouse, s.posting_datetime pdt,
+				s.qty_after_transaction - ifnull(lag(s.qty_after_transaction) over w, 0) dq,
+				s.stock_value - ifnull(lag(s.stock_value) over w, 0) dv
+			from {SLE} s join `tabItem` i on i.name = s.item_code
+			where {where}
+			window w as (partition by s.item_code, s.warehouse order by s.posting_datetime, s.creation)
+		) x
+		group by item_code, warehouse
+		having bq or bv or iq or iv or oq or ov
+		order by item_code, warehouse
+		""",
+		values,
+		as_dict=True,
+	)
+	totals = {
+		"begin_value": sum(r.bv for r in agg),
+		"end_value": sum(r.ev for r in agg),
+	}
+	chunk = agg[(page - 1) * page_len : page * page_len]
+	info = {}
+	if chunk:
+		info = {
+			r.item_code: r
+			for r in frappe.db.sql(
+				f"""
+				select i.name as item_code, i.item_name, {UOM_COLS}
+				from `tabItem` i
+				left join `tabUOM Conversion Detail` u
+					on u.parent = i.name and u.uom = i.custom_default_inventory_unit_of_measure
+					and i.custom_default_inventory_unit_of_measure != i.stock_uom
+				where i.name in %(codes)s
+				""",
+				{"codes": tuple({r.item_code for r in chunk})},
+				as_dict=True,
+			)
+		}
+	rows = []
+	for r in chunk:
+		meta = info.get(r.item_code) or frappe._dict(item_name=r.item_code, uom="", factor=1)
+		f = meta.factor
+		rows.append(
+			{
+				"item_code": r.item_code,
+				"item_name": meta.item_name,
+				"warehouse": r.warehouse,
+				"uom": meta.uom,
+				"begin_qty": r.bq / f,
+				"begin_value": r.bv,
+				"in_qty": r.iq / f,
+				"in_value": r.iv,
+				"out_qty": r.oq / f,
+				"out_value": r.ov,
+				"end_qty": r.eq / f,
+				"end_value": r.ev,
+			}
+		)
+	return {"rows": rows, "total": len(agg), "totals": totals}
+
 @frappe.whitelist()
 def filter_options():
 	"""Opsi dropdown Warehouse + Item Group. Sengaja tidak lewat get_list
