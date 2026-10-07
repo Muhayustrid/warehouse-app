@@ -21,9 +21,11 @@
 #   4. Periode tanpa transaksi setelahnya -> IN/OUT 0, Beginning = Ending.
 #   5. Totals footer = jumlah Beginning/Ending seluruh baris.
 #   6. stock_cards: 4 baris hari ini, terbaru dulu, qty dalam UOM inventaris.
+#   7. export csv/xlsx mengikuti filter; recalculate -> RIV Completed, saldo tetap.
 
 import json
 import traceback
+from unittest.mock import patch
 
 import frappe
 from frappe.utils import add_days, flt, nowdate
@@ -201,6 +203,39 @@ def _run_gate(check):
 		and abs(first.get("qty_after", 0) + 1) < 1e-6
 		and abs(cards["rows"][-1]["qty_in"] - 1) < 1e-6,
 		f"total={cards['total']}, first={first}",
+	)
+
+	# W40-6: export mengikuti filter (xlsx + csv) & recalculate -> RIV Completed
+	frappe.response.clear()
+	inventory.export(kind="movements", file_format="csv", from_date=today, to_date=today, item=item.name)
+	csv_text = frappe.response.get("filecontent", b"").decode("utf-8-sig")
+	frappe.response.clear()
+	inventory.export(kind="cards", file_format="xlsx", from_date=today, to_date=today, item=item.name)
+	xlsx = frappe.response.get("filecontent", b"")
+	check(
+		"export",
+		item.name in csv_text
+		and csv_text.count("\n") == 3  # header + 1 baris + Total
+		and xlsx[:2] == b"PK"
+		and frappe.response.get("filename", "").endswith(".xlsx"),
+		f"csv_lines={csv_text.count(chr(10))}, xlsx_bytes={len(xlsx)}",
+	)
+	frappe.response.clear()
+
+	queued = []
+	with patch.object(frappe, "enqueue", lambda fn, **kw: queued.append((fn, kw))):
+		names = inventory.recalculate(from_date=today, to_date=today, item_code=item.name, warehouse=warehouse)
+	frappe.db.commit()
+	queued[0][0](**{k: v for k, v in queued[0][1].items() if k == "names"})
+	status = inventory.recalculate_status(names)
+	after_recalc = mv(today, today)["rows"][0]
+	check(
+		"recalculate",
+		len(names) == 1
+		and status.get(names[0]) == "Completed"
+		and abs(after_recalc["end_qty"] - r["end_qty"]) < 1e-6
+		and abs(after_recalc["end_value"] - r["end_value"]) < 0.01,
+		f"names={names}, status={status}, end=({after_recalc['end_qty']}, {after_recalc['end_value']})",
 	)
 
 def _teardown(check):

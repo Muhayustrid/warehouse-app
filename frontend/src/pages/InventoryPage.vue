@@ -14,10 +14,18 @@ import { Button } from '@frappe-ui/components/Button'
 import { TextInput } from '@frappe-ui/components/TextInput'
 import { TabButtons } from '@frappe-ui/components/TabButtons'
 import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
+import { Dropdown } from '@frappe-ui/components/Dropdown'
 import { dayjs } from '@frappe-ui/utils/dayjs'
 import DateRangeField from '@/components/DateRangeField.vue'
 import InventoryDetailDialog from '@/components/InventoryDetailDialog.vue'
-import { fetchStockCards, fetchMovements, fetchFilterOptions } from '@/data/inventory'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import {
+	fetchStockCards,
+	fetchMovements,
+	fetchFilterOptions,
+	downloadExport,
+	runRecalculate,
+} from '@/data/inventory'
 import { fmtQty, fmtRp, fmtDateTime } from '@/lib/format'
 import { toast } from '@/lib/toast'
 
@@ -31,6 +39,7 @@ const tab = ref('cards')
 const warehouse = ref(null)
 const warehouseOptions = ref([])
 const itemGroupOptions = ref([])
+const can = ref({ export: false, recalculate: false })
 const item = ref('')
 const itemGroup = ref(null)
 const showFilters = ref(false)
@@ -169,6 +178,7 @@ onMounted(async () => {
 		const opts = await fetchFilterOptions()
 		warehouseOptions.value = opts?.warehouses || []
 		itemGroupOptions.value = opts?.item_groups || []
+		can.value = { export: !!opts?.can_export, recalculate: !!opts?.can_recalculate }
 	} catch (e) {
 		toast.error(e.message)
 	}
@@ -190,6 +200,35 @@ const isNegative = (r) => r.end_qty < 0 || r.end_value < 0
 const detail = ref({ show: false, row: null, period: {} })
 function openDetail({ data }) {
 	detail.value = { show: true, row: data, period: { ...period.value } }
+}
+
+// ---- Export + Recalculate (W40-6) ----
+const exporting = ref(false)
+async function exportAs(file_format) {
+	exporting.value = true
+	try {
+		const extra = tab.value === 'movements' ? { search: search.value.trim(), search_by: searchBy.value } : {}
+		await downloadExport({ kind: tab.value, file_format, ...filters.value, ...extra })
+	} catch (e) {
+		toast.error(e.message)
+	} finally {
+		exporting.value = false
+	}
+}
+const exportOptions = [
+	{ label: 'Excel (.xlsx)', icon: 'file', onClick: () => exportAs('xlsx') },
+	{ label: 'CSV (.csv)', icon: 'file-text', onClick: () => exportAs('csv') },
+]
+
+const confirmRecalc = ref(false)
+const recalculating = ref(false)
+async function doRecalculate() {
+	recalculating.value = true
+	await runRecalculate(
+		{ ...filters.value, search: search.value.trim(), search_by: searchBy.value },
+		() => moves.load(),
+	)
+	recalculating.value = false
 }
 
 const PAGINATOR =
@@ -258,6 +297,19 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						icon-left="filter"
 						@click="showFilters = !showFilters"
 					/>
+					<Button
+						v-if="tab === 'movements' && can.recalculate"
+						variant="solid"
+						theme="red"
+						label="Recalculate Inventory"
+						icon-left="refresh-cw"
+						:loading="recalculating"
+						:disabled="!moves.total"
+						@click="confirmRecalc = true"
+					/>
+					<Dropdown v-if="can.export" :options="exportOptions" align="end">
+						<Button variant="subtle" label="Export" icon-left="share" :loading="exporting" />
+					</Dropdown>
 					<Button variant="subtle" icon="refresh-cw" aria-label="Refresh" :loading="active.loading" @click="active.load()" />
 				</div>
 			</div>
@@ -493,6 +545,22 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 			</div>
 		</div>
 
-		<InventoryDetailDialog v-model="detail.show" :row="detail.row" :period="detail.period" />
+		<InventoryDetailDialog
+			v-model="detail.show"
+			:row="detail.row"
+			:period="detail.period"
+			:can="can"
+			@recalculated="moves.load()"
+		/>
+		<ConfirmDialog
+			v-model="confirmRecalc"
+			:options="{
+				title: 'Recalculate Inventory',
+				message: `Repost stock valuation from ${periodLabel} for the ${moves.total} item/warehouse rows matching the current filters (only those with transactions in the period). This is a heavy background job and may take several minutes. Continue?`,
+				confirmLabel: 'Recalculate',
+				theme: 'danger',
+			}"
+			:onConfirm="doRecalculate"
+		/>
 	</div>
 </template>

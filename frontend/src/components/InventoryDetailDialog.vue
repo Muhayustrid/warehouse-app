@@ -10,8 +10,10 @@ import Column from 'primevue/column'
 import Tooltip from 'primevue/tooltip'
 import { Button } from '@frappe-ui/components/Button'
 import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
+import { Dropdown } from '@frappe-ui/components/Dropdown'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { dayjs } from '@frappe-ui/utils/dayjs'
-import { fetchStockCards, fetchInventoryInfo } from '@/data/inventory'
+import { fetchStockCards, fetchInventoryInfo, downloadExport, runRecalculate } from '@/data/inventory'
 import { fmtQty, fmtRp, fmtDate } from '@/lib/format'
 import { toast } from '@/lib/toast'
 
@@ -20,8 +22,10 @@ const vTooltip = Tooltip
 const props = defineProps({
 	row: { type: Object, default: null }, // baris Movements
 	period: { type: Object, required: true }, // { from_date, to_date }
+	can: { type: Object, default: () => ({}) }, // { export, recalculate }
 })
 const show = defineModel({ type: Boolean, default: false })
+const emit = defineEmits(['recalculated'])
 
 const maximized = ref(false)
 const open = ref({ info: false, summary: true, cards: true })
@@ -98,6 +102,37 @@ watch(show, (v) => {
 	cards.value = { rows: [], total: 0, first: 0, pageLen: 20, loading: false }
 	loadCards()
 })
+
+const pair = () => ({ ...props.period, item_code: props.row.item_code, warehouse: props.row.warehouse })
+
+const exporting = ref(false)
+async function exportAs(file_format) {
+	exporting.value = true
+	try {
+		await downloadExport({ kind: 'cards', file_format, ...pair() })
+	} catch (e) {
+		toast.error(e.message)
+	} finally {
+		exporting.value = false
+	}
+}
+const exportOptions = [
+	{ label: 'Excel (.xlsx)', icon: 'file', onClick: () => exportAs('xlsx') },
+	{ label: 'CSV (.csv)', icon: 'file-text', onClick: () => exportAs('csv') },
+]
+
+const confirmRecalc = ref(false)
+const recalculating = ref(false)
+async function doRecalculate() {
+	recalculating.value = true
+	const key = props.row.item_code + '|' + props.row.warehouse
+	await runRecalculate(pair(), () => {
+		// modal masih menampilkan pasangan yang sama -> muat ulang kartunya
+		if (show.value && props.row && props.row.item_code + '|' + props.row.warehouse === key) loadCards()
+		emit('recalculated')
+	})
+	recalculating.value = false
+}
 
 const time = (dt) => String(dt || '').slice(11, 16)
 const shortDate = (dt) => fmtDate(dt).slice(0, 6)
@@ -226,13 +261,18 @@ const desk = (doctype, name) =>
 						</button>
 						<div v-if="open.cards" class="mt-3 space-y-3">
 							<div class="flex justify-end gap-2">
-								<!-- aksi diaktifkan di langkah Export + Recalculate (W40-6) -->
-								<span v-tooltip.top="'Available in the next step'">
-									<Button variant="solid" theme="red" label="Recalculate Stock Cards" icon-left="refresh-cw" disabled />
-								</span>
-								<span v-tooltip.top="'Available in the next step'">
-									<Button variant="subtle" label="Export Stock Cards" icon-left="share" disabled />
-								</span>
+								<Button
+									v-if="can.recalculate"
+									variant="solid"
+									theme="red"
+									label="Recalculate Stock Cards"
+									icon-left="refresh-cw"
+									:loading="recalculating"
+									@click="confirmRecalc = true"
+								/>
+								<Dropdown v-if="can.export" :options="exportOptions" align="end">
+									<Button variant="subtle" label="Export Stock Cards" icon-left="share" :loading="exporting" />
+								</Dropdown>
 							</div>
 							<div
 								class="overflow-hidden rounded-lg border border-outline-gray-1 transition-opacity"
@@ -343,4 +383,15 @@ const desk = (doctype, name) =>
 			</div>
 		</template>
 	</Dialog>
+	<ConfirmDialog
+		v-if="row"
+		v-model="confirmRecalc"
+		:options="{
+			title: 'Recalculate Stock Cards',
+			message: `Repost stock valuation of ${row.item_name} at ${row.warehouse} from ${period.from_date}. This runs in the background and may take a while. Continue?`,
+			confirmLabel: 'Recalculate',
+			theme: 'danger',
+		}"
+		:onConfirm="doRecalculate"
+	/>
 </template>

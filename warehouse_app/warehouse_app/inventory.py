@@ -115,14 +115,20 @@ def stock_cards(
 	"""Tab Stock Cards + tabel modal detail: satu baris = satu SLE, terbaru dulu."""
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	page, page_len = _page(page, page_len)
-	where, values, need_item = _sle_filters(from_date, to_date, warehouse, item, item_group, item_code)
+	rows, total = _stock_cards(
+		(from_date, to_date, warehouse, item, item_group, item_code), page_len, (page - 1) * page_len
+	)
+	return {"rows": rows, "total": total}
+
+def _stock_cards(filter_args, limit, offset):
+	where, values, need_item = _sle_filters(*filter_args)
 	item_join = "join `tabItem` i on i.name = s.item_code" if need_item else ""
 
 	total = frappe.db.sql(f"select count(*) from {SLE} s {item_join} where {where}", values)[0][0]
 	if not total:
-		return {"rows": [], "total": 0}
+		return [], 0
 
-	values.update(limit=page_len, offset=(page - 1) * page_len)
+	values.update(limit=limit, offset=offset)
 	# ponytail: OFFSET dalam = scan sebanyak offset (~0.3 dtk @100rb SLE tanpa
 	# filter); keyset pagination bila ledger tumbuh jauh melebihi itu.
 	rows = frappe.db.sql(
@@ -167,7 +173,7 @@ def stock_cards(
 				"remarks": remarks.get((r.voucher_type, r.voucher_no)),
 			}
 		)
-	return {"rows": out, "total": total}
+	return out, total
 
 def _voucher_remarks(rows):
 	"""Remarks dokumen sumber, satu query per voucher_type di halaman ini."""
@@ -208,6 +214,18 @@ def movements(
 	dalam periode, Ending = jumlah semua (= saldo SLE terakhir periode)."""
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	page, page_len = _page(page, page_len)
+	agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by)
+	totals = {
+		"begin_value": sum(r.bv for r in agg),
+		"in_value": sum(r.iv for r in agg),
+		"out_value": sum(r.ov for r in agg),
+		"end_value": sum(r.ev for r in agg),
+	}
+	rows = _movement_rows(agg[(page - 1) * page_len : page * page_len])
+	return {"rows": rows, "total": len(agg), "totals": totals}
+
+def _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by):
+	"""Agregat mentah per item+gudang (qty stock UOM), urut item_code, warehouse."""
 	from_dt = str(getdate(from_date)) if from_date else "1900-01-01"
 	# history sebelum periode tetap discan (Beginning), jadi from_date tak masuk WHERE
 	where, values, _ = _sle_filters(None, to_date, warehouse, item, item_group, item_code)
@@ -221,7 +239,7 @@ def movements(
 	# ponytail: hasil agregat (<= jumlah Bin, ~3rb) diurut+dipaging di Python agar
 	# window ~1 dtk @100rb SLE cukup jalan sekali utk rows+count+total; pindah ke
 	# tabel ringkasan per periode bila Bin menembus ratusan ribu.
-	agg = frappe.db.sql(
+	return frappe.db.sql(
 		f"""
 		select item_code, warehouse,
 			sum(if(pdt < %(from)s, dq, 0)) bq, sum(if(pdt < %(from)s, dv, 0)) bv,
@@ -245,13 +263,9 @@ def movements(
 		values,
 		as_dict=True,
 	)
-	totals = {
-		"begin_value": sum(r.bv for r in agg),
-		"in_value": sum(r.iv for r in agg),
-		"out_value": sum(r.ov for r in agg),
-		"end_value": sum(r.ev for r in agg),
-	}
-	chunk = agg[(page - 1) * page_len : page * page_len]
+
+def _movement_rows(chunk):
+	"""Agregat -> baris tampilan (nama item + qty dalam UOM inventaris)."""
 	info = {}
 	if chunk:
 		info = {
@@ -289,7 +303,7 @@ def movements(
 				"end_value": r.ev,
 			}
 		)
-	return {"rows": rows, "total": len(agg), "totals": totals}
+	return rows
 
 @frappe.whitelist()
 def inventory_info(item_code, warehouse):
@@ -346,4 +360,159 @@ def filter_options():
 		values,
 	)
 	groups = frappe.db.sql_list("select name from `tabItem Group` order by name")
-	return {"warehouses": warehouses, "item_groups": groups}
+	return {
+		"warehouses": warehouses,
+		"item_groups": groups,
+		"can_export": bool(frappe.has_permission("Stock Ledger Entry", "export")),
+		"can_recalculate": bool(frappe.has_permission("Repost Item Valuation", "create")),
+	}
+
+# ---------------------------------------------------------------- W40-6 ----
+# Export (Excel/CSV) mengikuti filter aktif + Recalculate via Repost Item
+# Valuation (doctype native) yang langsung dijalankan di worker long.
+
+EXPORT_MAX = 100_000
+STOCK_CARD_HEADER = [
+	"Date", "SKU", "Item Name", "Warehouse", "Voucher Type", "Voucher No", "UOM",
+	"Stock Before", "In", "Out", "Stock After",
+	"Balance Before", "Value Change", "Balance After", "Remarks",
+]
+MOVEMENT_HEADER = [
+	"SKU", "Item Name", "Warehouse", "UOM",
+	"Beginning Qty", "Beginning Value", "In Qty", "In Value",
+	"Out Qty", "Out Value", "Ending Qty", "Ending Value",
+]
+
+@frappe.whitelist()
+def export(
+	kind="cards",
+	file_format="xlsx",
+	from_date=None,
+	to_date=None,
+	warehouse=None,
+	item=None,
+	item_group=None,
+	item_code=None,
+	search=None,
+	search_by="name",
+):
+	"""Unduh tab Stock Cards / Inventory Movements (atau Stock Cards modal bila
+	item_code+warehouse) sesuai filter — kolom sama dgn layar, qty UOM inventaris."""
+	frappe.has_permission("Stock Ledger Entry", "export", throw=True)
+	if kind == "movements":
+		agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by)
+		data = [MOVEMENT_HEADER] + [
+			[
+				r["item_code"], r["item_name"], r["warehouse"], r["uom"],
+				r["begin_qty"], r["begin_value"], r["in_qty"], r["in_value"],
+				r["out_qty"], r["out_value"], r["end_qty"], r["end_value"],
+			]
+			for r in _movement_rows(agg)
+		]
+		data.append(
+			["Total", "", "", "", "", sum(r.bv for r in agg), "", sum(r.iv for r in agg),
+			 "", sum(r.ov for r in agg), "", sum(r.ev for r in agg)]
+		)
+		name = "Inventory Movements"
+	else:
+		# ponytail: satu file dibangun di memori; batas EXPORT_MAX baris —
+		# perlu export bertahap (background + File) bila periode melebihi itu.
+		rows, total = _stock_cards(
+			(from_date, to_date, warehouse, item, item_group, item_code), EXPORT_MAX, 0
+		)
+		if total > EXPORT_MAX:
+			frappe.throw(
+				f"{total:,} rows match — export is limited to {EXPORT_MAX:,}. Narrow the time range or filters."
+			)
+		data = [STOCK_CARD_HEADER] + [
+			[
+				r["posting_datetime"][:19], r["item_code"], r["item_name"], r["warehouse"],
+				r["voucher_type"], r["voucher_no"], r["uom"],
+				r["qty_before"], r["qty_in"] or 0, r["qty_out"] or 0, r["qty_after"],
+				r["value_before"], r["value_change"], r["value_after"], r["remarks"] or "",
+			]
+			for r in rows
+		]
+		name = "Stock Cards" + (f" {item_code}" if item_code else "")
+	filename = f"{name} {from_date or ''}_{to_date or ''}".strip()
+	if file_format == "csv":
+		from frappe.utils.csvutils import to_csv
+
+		frappe.response.update(
+			type="binary", filename=filename + ".csv", filecontent=to_csv(data).encode("utf-8-sig")
+		)
+	else:
+		from frappe.utils.xlsxutils import make_xlsx
+
+		# nama sheet Excel maks 31 karakter -> pakai nama tab, bukan nama file
+		frappe.response.update(
+			type="binary", filename=filename + ".xlsx", filecontent=make_xlsx(data, name[:31]).getvalue()
+		)
+
+RECALC_MAX = 500
+
+@frappe.whitelist(methods=["POST"])
+def recalculate(
+	from_date,
+	to_date=None,
+	warehouse=None,
+	item=None,
+	item_group=None,
+	item_code=None,
+	search=None,
+	search_by="name",
+):
+	"""Buat Repost Item Valuation (Item and Warehouse, mulai from_date) untuk
+	setiap item+gudang yang bertransaksi di periode+filter, lalu jalankan di
+	worker long. Modal detail = item_code + warehouse persis (satu RIV).
+	Kembali nama RIV — klien memantau lewat recalculate_status."""
+	frappe.has_permission("Repost Item Valuation", "create", throw=True)
+	agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by)
+	# tampilan penuh: hanya pasangan yang bertransaksi di periode (yang bisa
+	# berubah nilainya); modal detail: pasangan itu sendiri walau periode sepi
+	pairs = [(r.item_code, r.warehouse) for r in agg if item_code or r.iq or r.iv or r.oq or r.ov]
+	if not pairs:
+		frappe.throw("No stock transactions to recalculate in this period.")
+	if len(pairs) > RECALC_MAX:
+		frappe.throw(
+			f"{len(pairs):,} item/warehouse pairs match — recalculate is limited to {RECALC_MAX}. Narrow the filters."
+		)
+	names = []
+	for code, wh in pairs:
+		riv = frappe.get_doc(
+			{
+				"doctype": "Repost Item Valuation",
+				"based_on": "Item and Warehouse",
+				"item_code": code,
+				"warehouse": wh,
+				"posting_date": getdate(from_date),
+				"posting_time": "00:00:00",
+			}
+		)
+		riv.insert()
+		riv.submit()
+		names.append(riv.name)
+	frappe.enqueue(
+		_run_reposts, queue="long", timeout=3600, names=names, enqueue_after_commit=True
+	)
+	return names
+
+def _run_reposts(names):
+	# ponytail: scheduler native (repost_entries / run_parallel_reposting) bisa
+	# mengambil RIV yang sama bersamaan — repost idempoten, paling buruk kerja dobel.
+	from erpnext.stock.doctype.repost_item_valuation.repost_item_valuation import (
+		execute_reposting_entry,
+	)
+
+	for name in names:
+		execute_reposting_entry(name)
+		frappe.db.commit()
+
+@frappe.whitelist()
+def recalculate_status(names):
+	"""Status RIV hasil recalculate (dipoll klien sampai tak ada yang Queued/In Progress)."""
+	names = frappe.parse_json(names) if isinstance(names, str) else names
+	rows = frappe.get_list(
+		"Repost Item Valuation", filters={"name": ("in", names)}, fields=["name", "status"]
+	)
+	return {r.name: r.status for r in rows}

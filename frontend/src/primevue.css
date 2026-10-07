@@ -159,6 +159,13 @@
 	border-radius: 0;
 }
 
+/* overlay frappe-ui (reka: Dropdown/Select/Dialog konfirmasi) yang dibuka dari
+   dalam Dialog PrimeVue — mask PrimeVue z-index 1100+ menutupinya */
+[data-reka-popper-content-wrapper],
+.dialog-overlay {
+	z-index: 1200 !important;
+}
+
 /* ---- Dark theme ---- */
 [data-theme='dark'] .inv-dialog.p-dialog {
 	--inv-dialog-bg: #171717;
