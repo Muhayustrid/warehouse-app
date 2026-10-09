@@ -49,10 +49,10 @@ const range = ref('This Month')
 const customFrom = ref('')
 const customTo = ref('')
 
-// khusus Movements: cari per Name/SKU/Item Group
+// khusus Movements: cari per Name/Item Code/Item Group
 const SEARCH_BY = [
 	{ label: 'Name', value: 'name' },
-	{ label: 'SKU', value: 'sku' },
+	{ label: 'Item Code', value: 'sku' },
 	{ label: 'Item Group', value: 'item_group' },
 ]
 const searchBy = ref('name')
@@ -373,7 +373,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						</div>
 					</template>
 
-					<Column header="SKU">
+					<Column header="Item Code">
 						<template #body="{ data }">
 							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
 						</template>
@@ -403,6 +403,10 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 									class="font-mono text-xs text-ink-gray-5 underline decoration-transparent underline-offset-2 hover:decoration-current"
 									>{{ data.voucher_no }}</a
 								>
+								<div v-if="data.counterparty" class="text-xs text-ink-gray-6">
+									<span class="font-medium">{{ data.counterparty.dir === 'to' ? 'To' : 'From' }}:</span>
+									{{ [data.counterparty.warehouse, data.counterparty.party, data.counterparty.company].filter(Boolean).join(' · ') }}
+								</div>
 							</div>
 						</template>
 					</Column>
@@ -477,7 +481,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						</div>
 					</template>
 
-					<Column header="SKU">
+					<Column header="Item Code">
 						<template #body="{ data }">
 							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
 						</template>

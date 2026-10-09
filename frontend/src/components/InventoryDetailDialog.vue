@@ -323,6 +323,10 @@ const desk = (doctype, name) =>
 														class="font-mono text-xs text-ink-gray-5 underline decoration-transparent underline-offset-2 hover:decoration-current"
 														>{{ data.voucher_no }}</a
 													>
+													<div v-if="data.counterparty" class="mt-1 text-xs text-ink-gray-6">
+														<span class="font-medium">{{ data.counterparty.dir === 'to' ? 'To' : 'From' }}:</span>
+														{{ [data.counterparty.warehouse, data.counterparty.party, data.counterparty.company].filter(Boolean).join(' · ') }}
+													</div>
 													<div
 														v-if="data.remarks"
 														class="mt-1.5 max-w-xs rounded bg-yellow-50 px-2.5 py-1.5 text-xs italic text-ink-gray-7 dark:bg-yellow-900/30"

@@ -134,7 +134,7 @@ def _stock_cards(filter_args, limit, offset):
 	rows = frappe.db.sql(
 		f"""
 		select s.name, s.item_code, i.item_name, s.warehouse, s.posting_datetime,
-			s.voucher_type, s.voucher_no, s.qty_after_transaction, s.stock_value,
+			s.voucher_type, s.voucher_no, s.voucher_detail_no, s.qty_after_transaction, s.stock_value,
 			s.stock_value_difference, {QTY_CHANGE} as qty_change, {UOM_COLS}
 		from (
 			select s.name from {SLE} s {item_join}
@@ -150,6 +150,7 @@ def _stock_cards(filter_args, limit, offset):
 		as_dict=True,
 	)
 	remarks = _voucher_remarks(rows)
+	parties = _counterparties(rows)
 	out = []
 	for r in rows:
 		f = r.factor
@@ -171,9 +172,77 @@ def _stock_cards(filter_args, limit, offset):
 				"value_change": r.stock_value_difference,
 				"value_after": r.stock_value,
 				"remarks": remarks.get((r.voucher_type, r.voucher_no)),
+				"counterparty": parties.get(r.name),
 			}
 		)
 	return out, total
+
+# voucher_type -> (child doctype, kolom gudang lawan, kolom nama pihak)
+PARTY_SRC = {
+	"Delivery Note": ("Delivery Note Item", "target_warehouse", "customer_name"),
+	"Sales Invoice": ("Sales Invoice Item", "target_warehouse", "customer_name"),
+	"POS Invoice": ("POS Invoice Item", "target_warehouse", "customer_name"),
+	"Purchase Receipt": ("Purchase Receipt Item", "from_warehouse", "supplier_name"),
+	"Purchase Invoice": ("Purchase Invoice Item", "from_warehouse", "supplier_name"),
+}
+
+def _counterparties(rows):
+	"""Lawan transaksi per SLE: gudang tujuan/asal, customer/supplier, dan
+	company lain (transfer antar-company). Satu query per voucher_type."""
+	by_type = {}
+	for r in rows:
+		if r.voucher_detail_no:
+			by_type.setdefault(r.voucher_type, []).append(r)
+	out = {}
+	for vt, sles in by_type.items():
+		detail_nos = tuple({r.voucher_detail_no for r in sles})
+		if vt == "Stock Entry":
+			src = frappe.db.sql(
+				"select name, s_warehouse, t_warehouse from `tabStock Entry Detail` where name in %(n)s",
+				{"n": detail_nos},
+				as_dict=True,
+			)
+			src = {d.name: d for d in src}
+			for r in sles:
+				d = src.get(r.voucher_detail_no)
+				wh = d and (d.t_warehouse if r.qty_change < 0 else d.s_warehouse)
+				if wh and wh != r.warehouse:
+					out[r.name] = {"dir": "to" if r.qty_change < 0 else "from", "warehouse": wh}
+			continue
+		if vt not in PARTY_SRC:
+			continue
+		child, wh_col, party_col = PARTY_SRC[vt]
+		cmeta, pmeta = frappe.get_meta(child), frappe.get_meta(vt)
+		col = lambda meta, alias, f: f"{alias}.{f}" if meta.has_field(f) else "null"
+		src = frappe.db.sql(
+			f"""select d.name, d.warehouse, {col(cmeta, 'd', wh_col)} as other_wh,
+				{col(pmeta, 'p', party_col)} as party, {col(pmeta, 'p', 'represents_company')} as company
+			from `tab{child}` d join `tab{vt}` p on p.name = d.parent
+			where d.name in %(n)s""",
+			{"n": detail_nos},
+			as_dict=True,
+		)
+		src = {d.name: d for d in src}
+		for r in sles:
+			d = src.get(r.voucher_detail_no)
+			if not d:
+				continue
+			# transfer internal membuat SLE di dua gudang; sisi gudang lawan menunjuk balik ke gudang item
+			wh = d.warehouse if d.other_wh == r.warehouse else d.other_wh
+			out[r.name] = {
+				"dir": "to" if r.qty_change < 0 else "from",
+				"warehouse": wh,
+				"party": d.party,
+				# customer internal biasanya bernama sama dgn company yang diwakilinya
+				"company": d.company if d.company != d.party else None,
+			}
+	return out
+
+def _counterparty_text(cp):
+	if not cp:
+		return ""
+	parts = [cp.get("warehouse"), cp.get("party"), cp.get("company")]
+	return ("To: " if cp["dir"] == "to" else "From: ") + " · ".join(p for p in parts if p)
 
 def _voucher_remarks(rows):
 	"""Remarks dokumen sumber, satu query per voucher_type di halaman ini."""
@@ -373,12 +442,12 @@ def filter_options():
 
 EXPORT_MAX = 100_000
 STOCK_CARD_HEADER = [
-	"Date", "SKU", "Item Name", "Warehouse", "Voucher Type", "Voucher No", "UOM",
+	"Date", "Item Code", "Item Name", "Warehouse", "Voucher Type", "Voucher No", "UOM",
 	"Stock Before", "In", "Out", "Stock After",
-	"Balance Before", "Value Change", "Balance After", "Remarks",
+	"Balance Before", "Value Change", "Balance After", "Counterparty", "Remarks",
 ]
 MOVEMENT_HEADER = [
-	"SKU", "Item Name", "Warehouse", "UOM",
+	"Item Code", "Item Name", "Warehouse", "UOM",
 	"Beginning Qty", "Beginning Value", "In Qty", "In Value",
 	"Out Qty", "Out Value", "Ending Qty", "Ending Value",
 ]
@@ -429,7 +498,8 @@ def export(
 				r["posting_datetime"][:19], r["item_code"], r["item_name"], r["warehouse"],
 				r["voucher_type"], r["voucher_no"], r["uom"],
 				r["qty_before"], r["qty_in"] or 0, r["qty_out"] or 0, r["qty_after"],
-				r["value_before"], r["value_change"], r["value_after"], r["remarks"] or "",
+				r["value_before"], r["value_change"], r["value_after"],
+				_counterparty_text(r["counterparty"]), r["remarks"] or "",
 			]
 			for r in rows
 		]
