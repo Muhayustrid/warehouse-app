@@ -3,15 +3,15 @@
 // klasik gudang_request: search, filter builder, UOM switcher, pemilih
 // kolom, kepadatan, checklist + deteksi grup, dialog bulk/group (qty-only,
 // semantik W30), cancel tunggal/grup, pill status, Load more.
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { Button } from '@frappe-ui/components/Button'
 import { TextInput } from '@frappe-ui/components/TextInput'
 import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
 import { toast } from '@/lib/toast'
 import { fetchWorkOrders, fetchFilterFields, cancelRequest, cancelGroupRequest } from '@/data/board'
-import { loadPref, savePref, hasPref } from '@/lib/prefs'
-import { fmtNum, fmtDate } from '@/lib/format'
-import StatusPill from '@/components/StatusPill.vue'
+import { loadPref, savePref } from '@/lib/prefs'
+import { fmtNum } from '@/lib/format'
+import { dayjs } from '@frappe-ui/utils/dayjs'
 import FilterBuilder from '@/components/FilterBuilder.vue'
 import DisplayMenu from '@/components/DisplayMenu.vue'
 import RequestDialog from '@/components/RequestDialog.vue'
@@ -20,14 +20,13 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
 const PAGE_SIZE = 50
 
+// Item & Qty selalu tampil; sisanya bisa disembunyikan lewat Display
+// (item_code/warehouse = baris kedua di sel Item/Work Order).
 const ALL_COLUMNS = [
 	{ key: 'batch', label: 'Batch' },
-	{ key: 'item', label: 'Item' },
 	{ key: 'item_code', label: 'Item Code' },
-	{ key: 'qty', label: 'Qty' },
 	{ key: 'wo', label: 'Work Order' },
 	{ key: 'warehouse', label: 'Warehouse' },
-	{ key: 'created', label: 'Created' },
 	{ key: 'status', label: 'Status' },
 ]
 
@@ -40,8 +39,7 @@ const filters = ref([])
 const fieldMeta = ref(null)
 const selectedNames = ref([])
 const qtyUom = ref(loadPref('qty_uom', ''))
-const visibleCols = ref(loadPref('columns', ALL_COLUMNS.map((c) => c.key)))
-const hasColPref = hasPref('columns')
+const visibleCols = ref(loadPref('columns', ALL_COLUMNS.map((c) => c.key)).filter((k) => ALL_COLUMNS.some((c) => c.key === k)))
 const density = ref(loadPref('density', 'comfort'))
 
 const bulkDialog = ref(false)
@@ -52,56 +50,8 @@ const cancelTarget = ref(null) // { mr, plan, size } | null
 // gaya yang sama dgn bar Create Request (saling eksklusif dgn seleksi)
 const cancelPick = ref(null)
 
-// layar sempit — matchMedia (bukan innerWidth langsung: nilai saat setup
-// bisa terbaca sebelum layout pane siap dan tidak ada event resize susulan)
-const narrowMq =
-	typeof window !== 'undefined' ? window.matchMedia('(max-width: 640px)') : null
-const narrow = ref(!!(narrowMq && narrowMq.matches))
-const onNarrowChange = (e) => {
-	narrow.value = e.matches
-}
-if (narrowMq) {
-	narrowMq.addEventListener('change', onNarrowChange)
-}
-onMounted(() => {
-	if (narrowMq) {
-		narrow.value = narrowMq.matches
-	}
-})
-onUnmounted(() => {
-	if (narrowMq) {
-		narrowMq.removeEventListener('change', onNarrowChange)
-	}
-})
-
-// ---- kolom tampil
-const cols = computed(() => {
-  let keys = visibleCols.value
-  // layar sempit & user belum pernah mengatur kolom: kolom sekunder
-  // disembunyikan (aturan klasik ≤640)
-  if (!hasColPref && narrow.value) {
-    keys = keys.filter((k) => k !== 'item_code' && k !== 'created')
-  }
-  // urutan SELALU kanonik (pref hanya menentukan anggota) — header dan
-  // isi baris digenerate dari `cols` yang sama sehingga tak bisa silang
-  return ALL_COLUMNS.filter((c) => keys.includes(c.key))
-})
-
-// kelas sel per kolom (dipakai body v-for agar urutan = header)
-function cellCls(key) {
-  const pad = density.value === 'compact' ? 'py-1.5' : 'py-3'
-  const byKey = {
-    batch: 'whitespace-nowrap font-medium text-ink-gray-7',
-    item: 'text-ink-gray-8',
-    item_code: 'whitespace-nowrap text-ink-gray-6',
-    qty: 'whitespace-nowrap tabular-nums text-ink-gray-8',
-    wo: 'whitespace-nowrap font-mono text-xs text-ink-gray-6',
-    warehouse: 'whitespace-nowrap text-ink-gray-6',
-    created: 'whitespace-nowrap text-ink-gray-5',
-    status: '',
-  }
-  return `px-3 ${pad} ${byKey[key] || ''}`
-}
+const show = (key) => visibleCols.value.includes(key)
+const pad = computed(() => (density.value === 'compact' ? 'py-1.5' : 'py-3'))
 
 function setCols(keys) {
   // render ulang tanpa fetch; seleksi dikosongkan (pola klasik);
@@ -138,9 +88,55 @@ function isDisplayUom(r, uom) {
 
 function qtyValue(r) {
 	if (isDisplayUom(r, qtyUom.value)) {
-		return `${fmtNum(r.expected_units != null ? r.expected_units : 0)} ${r.display_uom}`
+		return { n: fmtNum(r.expected_units != null ? r.expected_units : 0), uom: r.display_uom }
 	}
-	return `${fmtNum(r.produced_qty || 0)} ${r.stock_uom}`
+	return { n: fmtNum(r.produced_qty || 0), uom: r.stock_uom }
+}
+
+// ---- status & kelompok hari
+const stateOf = (r) => (r.request_active ? 'requested' : r.request_shipped ? 'shipped' : 'ready')
+const VIEWS = [
+	{ key: 'all', label: 'All' },
+	{ key: 'ready', label: 'Ready', dot: 'bg-blue-500' },
+	{ key: 'requested', label: 'Requested', dot: 'bg-orange-500' },
+	{ key: 'shipped', label: 'Shipped', dot: 'bg-green-500' },
+]
+const view = ref('all')
+const counts = computed(() => {
+	const c = { all: rows.value.length, ready: 0, requested: 0, shipped: 0 }
+	rows.value.forEach((r) => c[stateOf(r)]++)
+	return c
+})
+const shownRows = computed(() =>
+	view.value === 'all' ? rows.value : rows.value.filter((r) => stateOf(r) === view.value),
+)
+const days = computed(() => {
+	const out = []
+	for (const r of shownRows.value) {
+		const d = String(r.creation || '').slice(0, 10)
+		if (out.at(-1)?.date !== d) out.push({ date: d, rows: [] })
+		out.at(-1).rows.push(r)
+	}
+	return out
+})
+const dayLabel = (d) => {
+	const x = dayjs(d)
+	if (x.isSame(dayjs(), 'day')) return 'Today'
+	if (x.isSame(dayjs().subtract(1, 'day'), 'day')) return 'Yesterday'
+	return x.format(x.isSame(dayjs(), 'year') ? 'dddd, D MMMM' : 'dddd, D MMMM YYYY')
+}
+const isSelectable = (r) => !r.request_active && !r.request_shipped
+function dayState(day) {
+	const sel = day.rows.filter(isSelectable)
+	const n = sel.filter((r) => selectedNames.value.includes(r.name)).length
+	return { any: sel.length > 0, all: sel.length > 0 && n === sel.length, some: n > 0 && n < sel.length }
+}
+function toggleDay(day, checked) {
+	cancelPick.value = null
+	const names = day.rows.filter(isSelectable).map((r) => r.name)
+	selectedNames.value = checked
+		? [...new Set([...selectedNames.value, ...names])]
+		: selectedNames.value.filter((n) => !names.includes(n))
 }
 
 function setUom(uom) {
@@ -151,7 +147,7 @@ function setUom(uom) {
 }
 
 // ---- seleksi
-const selectableRows = computed(() => rows.value.filter((r) => !r.request_active && !r.request_shipped))
+const selectableRows = computed(() => shownRows.value.filter(isSelectable))
 const selectedRows = computed(() => rows.value.filter((r) => selectedNames.value.includes(r.name)))
 const nSelected = computed(() => selectedRows.value.length)
 const cancelPickRow = computed(() => rows.value.find((r) => r.name === cancelPick.value) || null)
@@ -354,128 +350,199 @@ async function doCancel() {
 </script>
 
 <template>
-	<div class="space-y-4">
+	<div class="space-y-5">
 		<!-- header -->
-		<div class="flex flex-wrap items-end justify-between gap-3">
+		<div class="flex flex-wrap items-start justify-between gap-3">
 			<div>
 				<h1 class="text-2xl font-semibold tracking-tight text-ink-gray-9">Handover Requests</h1>
-				<p class="mt-0.5 text-sm text-ink-gray-5">
-					Work Orders ready to be requested by the warehouse team.
+				<p class="mt-1 text-sm text-ink-gray-5">
+					Finished batches from production. Select the ones the warehouse should receive and create a request.
 				</p>
 			</div>
-			<Button variant="subtle" label="Refresh" icon-left="refresh-cw" @click="refresh()" />
+			<Button variant="subtle" label="Refresh" icon-left="refresh-cw" :loading="loading" @click="refresh()" />
 		</div>
 
-		<!-- toolbar -->
-		<div class="flex flex-wrap items-center gap-2">
-			<TextInput
-				v-model="search"
-				class="w-full sm:w-72"
-				type="text"
-				placeholder="Search batch, item, or work order..."
-				@keydown.enter="refresh"
-			/>
-			<FilterBuilder v-model="filters" :meta="fieldMeta" @change="onFilterChange" />
-			<DisplayMenu
-				v-model:visible="visibleCols"
-				v-model:density="density"
-				:columns="ALL_COLUMNS"
-				@update:visible="setCols"
-			/>
-			<select
-				v-if="uomOptions.length > 1"
-				class="h-8 min-w-[5.5rem] rounded-md border border-outline-gray-2 bg-surface-modal py-0 pl-2 pr-6 text-sm leading-none text-ink-gray-7"
-				:value="qtyUom"
-				title="Qty unit"
-				@change="setUom($event.target.value)"
-			>
-				<option v-for="o in uomOptions" :key="o" :value="o">{{ o }}</option>
-			</select>
+		<!-- status + toolbar -->
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<div class="flex flex-wrap gap-1 rounded-lg bg-surface-gray-2 p-1" role="tablist" aria-label="Status">
+				<button
+					v-for="v in VIEWS"
+					:key="v.key"
+					role="tab"
+					:aria-selected="view === v.key"
+					class="flex h-7 items-center gap-2 rounded-md px-3 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-outline-gray-4"
+					:class="view === v.key ? 'bg-surface-white font-medium text-ink-gray-9 shadow-sm dark:bg-surface-gray-4' : 'text-ink-gray-6 hover:text-ink-gray-8'"
+					@click="view = v.key; selectedNames = []; cancelPick = null"
+				>
+					<span v-if="v.dot" class="h-2 w-2 rounded-full" :class="v.dot" />
+					{{ v.label }}
+					<span class="tabular-nums text-ink-gray-5">{{ counts[v.key] }}</span>
+				</button>
+			</div>
+			<div class="flex flex-wrap items-center gap-2">
+				<TextInput
+					v-model="search"
+					class="w-full sm:w-64"
+					type="text"
+					placeholder="Search batch, item, or work order"
+					@keydown.enter="refresh"
+				>
+					<template #prefix><FeatherIcon name="search" class="h-4 w-4 text-ink-gray-5" /></template>
+				</TextInput>
+				<FilterBuilder v-model="filters" :meta="fieldMeta" @change="onFilterChange" />
+				<DisplayMenu
+					v-model:visible="visibleCols"
+					v-model:density="density"
+					:columns="ALL_COLUMNS"
+					@update:visible="setCols"
+				/>
+				<select
+					v-if="uomOptions.length > 1"
+					class="h-8 rounded border border-outline-gray-2 bg-surface-modal py-0 pl-2.5 pr-8 text-sm text-ink-gray-7"
+					:value="qtyUom"
+					aria-label="Qty unit"
+					@change="setUom($event.target.value)"
+				>
+					<option v-for="o in uomOptions" :key="o" :value="o">{{ o }}</option>
+				</select>
+			</div>
 		</div>
 
-		<!-- tabel -->
+		<!-- daftar per hari produksi -->
 		<div
-			class="overflow-hidden rounded-lg border border-outline-gray-1 bg-surface-modal transition-opacity"
+			class="overflow-hidden rounded-lg border border-outline-gray-2 bg-surface-modal transition-opacity"
 			:class="{ 'opacity-50': loading }"
 		>
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">
 					<thead>
-						<tr class="border-b border-outline-gray-1 bg-surface-gray-1 text-left text-xs font-medium text-ink-gray-5">
-							<th class="w-10 px-3 py-2">
+						<tr class="border-b border-outline-gray-2 text-left text-xs text-ink-gray-5">
+							<th class="w-10 py-2.5 pl-4 pr-2">
 								<input
 									type="checkbox"
 									class="h-3.5 w-3.5 accent-ink-gray-9"
 									:checked="allChecked"
 									:indeterminate.prop="someChecked"
-									aria-label="Select all"
+									:disabled="!selectableRows.length"
+									aria-label="Select all ready batches"
 									@change="toggleAll($event.target.checked)"
 								/>
 							</th>
-							<th
-								v-for="c in cols"
-								:key="c.key"
-								class="whitespace-nowrap px-3 py-2 font-medium"
-							>
-								{{ c.key === 'qty' && qtyUom ? `Qty (${qtyUom})` : c.label }}
+							<th v-if="show('batch')" class="w-20 px-2 py-2.5 font-medium">Batch</th>
+							<th class="px-3 py-2.5 font-medium">Item</th>
+							<th class="px-3 py-2.5 text-right font-medium">Qty</th>
+							<th v-if="show('wo') || show('warehouse')" class="hidden px-3 py-2.5 font-medium md:table-cell">
+								{{ show('wo') ? 'Work Order' : 'Warehouse' }}
 							</th>
-							<th class="w-24 px-3 py-2"></th>
+							<th v-if="show('status')" class="px-3 py-2.5 pr-4 font-medium">Status</th>
 						</tr>
 					</thead>
-					<tbody>
+					<tbody v-for="day in days" :key="day.date">
+						<tr class="border-b border-outline-gray-1 bg-surface-gray-1">
+							<td class="py-2 pl-4 pr-2">
+								<input
+									v-if="dayState(day).any"
+									type="checkbox"
+									class="h-3.5 w-3.5 accent-ink-gray-9"
+									:checked="dayState(day).all"
+									:indeterminate.prop="dayState(day).some"
+									:aria-label="`Select ready batches from ${dayLabel(day.date)}`"
+									@change="toggleDay(day, $event.target.checked)"
+								/>
+							</td>
+							<td colspan="5" class="py-2 pr-4 text-xs">
+								<span class="font-semibold text-ink-gray-8">{{ dayLabel(day.date) }}</span>
+								<span class="ml-2 text-ink-gray-5">{{ day.rows.length }} {{ day.rows.length === 1 ? 'batch' : 'batches' }}</span>
+							</td>
+						</tr>
 						<tr
-							v-for="r in rows"
+							v-for="r in day.rows"
 							:key="r.name"
-							class="cursor-pointer border-b border-outline-gray-1 last:border-b-0 hover:bg-surface-gray-1"
-							:class="{
-								'bg-surface-selected hover:bg-surface-selected': selectedNames.includes(r.name),
-								'bg-surface-gray-1': cancelPick === r.name,
-								'cursor-default': r.request_shipped,
-							}"
+							class="group border-b border-outline-gray-1 last:border-b-0"
+							:class="[
+								r.request_shipped ? 'cursor-default' : 'cursor-pointer hover:bg-surface-gray-1',
+								selectedNames.includes(r.name) && 'bg-surface-selected hover:bg-surface-selected',
+								cancelPick === r.name && 'bg-orange-50 hover:bg-orange-50 dark:bg-orange-500/10',
+							]"
 							@click="toggleRow(r)"
 						>
-							<td class="px-3" :class="density === 'compact' ? 'py-1.5' : 'py-3'">
+							<td class="relative pl-4 pr-2" :class="pad">
+								<span
+									class="absolute inset-y-0 left-0 w-[3px]"
+									:class="{ 'bg-blue-500': stateOf(r) === 'ready', 'bg-orange-500': stateOf(r) === 'requested', 'bg-green-500': stateOf(r) === 'shipped' }"
+								/>
 								<input
 									type="checkbox"
 									class="h-3.5 w-3.5 accent-ink-gray-9"
-									:disabled="r.request_active || r.request_shipped"
+									:disabled="!isSelectable(r)"
 									:checked="selectedNames.includes(r.name)"
-									:aria-label="r.name"
+									:aria-label="`Select ${r.item_name} batch ${r.custom_adonan_ke || r.name}`"
 									@click.stop
 									@change="toggleRow(r)"
 								/>
 							</td>
-							<!-- sel digenerate dari `cols` yang sama dgn header — urutan tak mungkin silang -->
-							<td v-for="c in cols" :key="c.key" :class="cellCls(c.key)">
-								<StatusPill v-if="c.key === 'status'" :row="r" />
-								<template v-else-if="c.key === 'batch'">{{ r.custom_adonan_ke || '—' }}</template>
-								<template v-else-if="c.key === 'item'">{{ r.item_name }}</template>
-								<template v-else-if="c.key === 'item_code'">{{ r.production_item }}</template>
-								<template v-else-if="c.key === 'qty'">{{ qtyValue(r) }}</template>
-								<template v-else-if="c.key === 'wo'">{{ r.name }}</template>
-								<template v-else-if="c.key === 'warehouse'">{{ r.fg_warehouse }}</template>
-								<template v-else-if="c.key === 'created'">{{ fmtDate(r.creation) }}</template>
+							<td v-if="show('batch')" class="px-2" :class="pad">
+								<span
+									v-if="r.custom_adonan_ke"
+									class="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-outline-gray-2 px-2 text-base font-semibold tabular-nums text-ink-gray-9"
+									>{{ r.custom_adonan_ke }}</span
+								>
+								<span v-else class="pl-3 text-ink-gray-4">–</span>
 							</td>
-							<td class="px-3 text-right" :class="density === 'compact' ? 'py-1.5' : 'py-3'"></td>
+							<td class="px-3" :class="pad">
+								<div class="font-medium text-ink-gray-9">{{ r.item_name }}</div>
+								<div v-if="show('item_code')" class="text-xs text-ink-gray-5">{{ r.production_item }}</div>
+							</td>
+							<td class="whitespace-nowrap px-3 text-right tabular-nums" :class="pad">
+								<span class="text-base font-semibold text-ink-gray-9">{{ qtyValue(r).n }}</span>
+								<span class="ml-1 text-xs text-ink-gray-5">{{ qtyValue(r).uom }}</span>
+							</td>
+							<td v-if="show('wo') || show('warehouse')" class="hidden px-3 md:table-cell" :class="pad">
+								<a
+									v-if="show('wo')"
+									:href="`/app/work-order/${encodeURIComponent(r.name)}`"
+									target="_blank"
+									class="whitespace-nowrap text-ink-gray-7 underline decoration-transparent underline-offset-2 hover:decoration-current"
+									@click.stop
+									>{{ r.name }}</a
+								>
+								<div v-if="show('warehouse')" class="whitespace-nowrap text-xs text-ink-gray-5">{{ r.fg_warehouse }}</div>
+							</td>
+							<td v-if="show('status')" class="px-3 pr-4" :class="pad">
+								<div class="whitespace-nowrap text-ink-gray-8">
+									{{ stateOf(r) === 'ready' ? 'Ready' : stateOf(r) === 'requested' ? 'Requested' : 'Shipped' }}
+								</div>
+								<div v-if="r.custom_handover_material_request" class="whitespace-nowrap text-xs text-ink-gray-5">
+									<template>
+										<a
+											:href="`/app/material-request/${encodeURIComponent(r.custom_handover_material_request)}`"
+											target="_blank"
+											class="underline decoration-transparent underline-offset-2 hover:decoration-current"
+											@click.stop
+											>{{ r.custom_handover_material_request }}</a
+										>
+										<span v-if="r.box_plan">, group of {{ r.group_size || 0 }}</span>
+									</template>
+								</div>
+							</td>
 						</tr>
 					</tbody>
 				</table>
 			</div>
-			<div
-				v-if="!rows.length && !loading"
-				class="flex flex-col items-center gap-2 px-6 py-14 text-center"
-			>
-				<FeatherIcon name="package" class="h-8 w-8 text-ink-gray-3" />
-				<p class="text-sm text-ink-gray-4">
-					No matching Work Orders. Try a different search or clear the filters.
+			<div v-if="!shownRows.length && !loading" class="flex flex-col items-center gap-2 px-6 py-16 text-center">
+				<FeatherIcon name="inbox" class="h-8 w-8 text-ink-gray-3" />
+				<p class="text-sm text-ink-gray-6">
+					{{
+						rows.length
+							? `No ${VIEWS.find((v) => v.key === view).label.toLowerCase()} batches in this list.`
+							: 'No finished batches match. Try a different search or clear the filters.'
+					}}
 				</p>
+				<Button v-if="rows.length" variant="ghost" size="sm" label="Show all" @click="view = 'all'" />
 			</div>
-			<div
-				v-if="rows.length"
-				class="flex items-center justify-between border-t border-outline-gray-1 px-3 py-2"
-			>
+			<div v-if="rows.length" class="flex items-center justify-between border-t border-outline-gray-2 px-4 py-2">
 				<span class="text-xs text-ink-gray-5">
-					{{ rows.length === 1 ? '1 Work Order' : `${fmtNum(rows.length)} Work Orders` }}
+					Showing {{ fmtNum(shownRows.length) }} of {{ fmtNum(rows.length) }} loaded
 				</span>
 				<Button v-if="canLoadMore" variant="ghost" size="sm" :loading="loading" label="Load more" @click="load(true)" />
 			</div>
@@ -486,7 +553,7 @@ async function doCancel() {
 			v-if="nSelected"
 			class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-outline-gray-2 bg-surface-modal py-2 pl-5 pr-2 shadow-lg"
 		>
-			<span class="text-sm font-medium text-ink-gray-7">
+			<span class="whitespace-nowrap text-sm font-medium text-ink-gray-7">
 				{{ nSelected }} selected
 			</span>
 			<button
