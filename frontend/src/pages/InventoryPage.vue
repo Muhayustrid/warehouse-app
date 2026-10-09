@@ -51,7 +51,7 @@ const customTo = ref('')
 
 // kotak cari toolbar (semua tab): per Name/Item Code/Item Group
 const SEARCH_BY = [
-	{ label: 'Name', value: 'name' },
+	{ label: 'Item Name', value: 'name' },
 	{ label: 'Item Code', value: 'sku' },
 	{ label: 'Item Group', value: 'item_group' },
 ]
@@ -223,14 +223,6 @@ const exportOptions = [
 	{ label: 'CSV (.csv)', icon: 'file-text', onClick: () => exportAs('csv') },
 ]
 
-// Stock Balance: UOM tampilan per baris, default = Default Inventory UOM item
-const balanceUom = reactive({})
-const balKey = (r) => r.item_code + '|' + r.warehouse
-const balFactor = (r) => {
-	const u = balanceUom[balKey(r)] || r.default_uom
-	return r.uoms.find((x) => x.uom === u)?.factor || 1
-}
-
 const PAGINATOR =
 	'CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown'
 const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
@@ -367,7 +359,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
 						</template>
 					</Column>
-					<Column header="Name">
+					<Column header="Item Name">
 						<template #body="{ data }">
 							<span class="text-ink-gray-8">{{ data.item_name }}</span>
 						</template>
@@ -448,7 +440,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 			<div v-else-if="tab === 'balance'" class="transition-opacity" :class="{ 'opacity-50': balance.loading }">
 				<DataTable
 					:value="balance.rows"
-					:dataKey="balKey"
+					:dataKey="(r) => r.item_code + '|' + r.warehouse"
 					lazy
 					paginator
 					:first="balance.first"
@@ -472,7 +464,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
 						</template>
 					</Column>
-					<Column header="Name">
+					<Column header="Item Name">
 						<template #body="{ data }">
 							<div class="text-ink-gray-8">{{ data.item_name }}</div>
 							<div class="text-xs text-ink-gray-5">{{ data.item_group }}</div>
@@ -485,16 +477,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					</Column>
 					<Column header="UOM">
 						<template #body="{ data }">
-							<span v-if="data.uoms.length < 2" class="text-ink-gray-7">{{ data.default_uom }}</span>
-							<select
-								v-else
-								:value="balanceUom[balKey(data)] || data.default_uom"
-								class="h-7 rounded border border-outline-gray-2 bg-surface-modal py-0 pl-2 pr-7 text-sm text-ink-gray-8"
-								aria-label="UOM"
-								@change="balanceUom[balKey(data)] = $event.target.value"
-							>
-								<option v-for="u in data.uoms" :key="u.uom" :value="u.uom">{{ u.uom }}</option>
-							</select>
+							<span class="text-ink-gray-7">{{ data.uom }}</span>
 						</template>
 					</Column>
 					<Column v-for="c in BALANCE_QTY" :key="c.key" :header="c.label" headerClass="num" bodyClass="num">
@@ -503,13 +486,13 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 								class="whitespace-nowrap tabular-nums"
 								:class="[data[c.key] < 0 ? 'text-red-600' : 'text-ink-gray-8', c.key === 'actual_qty' ? 'font-medium' : '']"
 							>
-								{{ fmtQty(data[c.key] / balFactor(data)) }}
+								{{ fmtQty(data[c.key]) }}
 							</span>
 						</template>
 					</Column>
 					<Column header="Valuation Rate" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap tabular-nums text-ink-gray-7">{{ fmtRp(data.valuation_rate * balFactor(data)) }}</span>
+							<span class="whitespace-nowrap tabular-nums text-ink-gray-7">{{ fmtRp(data.valuation_rate) }}</span>
 						</template>
 					</Column>
 					<Column header="Stock Value" headerClass="num" bodyClass="num">
@@ -571,7 +554,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
 						</template>
 					</Column>
-					<Column header="Inventory Name">
+					<Column header="Item Name">
 						<template #body="{ data }">
 							<div class="text-ink-gray-8">
 								{{ data.item_name }} <span class="text-ink-gray-4">/ {{ data.uom }}</span>

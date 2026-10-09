@@ -17,7 +17,7 @@
 #   Warehouse/Company user ditegakkan manual karena query memakai SQL mentah.
 
 import frappe
-from frappe.utils import add_days, cint, getdate
+from frappe.utils import add_days, cint, flt, getdate
 
 PAGE_SIZES = (20, 50, 100)
 
@@ -383,13 +383,14 @@ def _movement_rows(chunk):
 		)
 	return rows
 
+BALANCE_QTY = ("actual_qty", "reserved_qty", "projected_qty")
+
 @frappe.whitelist()
 def stock_balance(
 	warehouse=None, item=None, item_group=None, search=None, search_by="name", page=1, page_len=20
 ):
-	"""Tab Stock Balance: saldo saat ini per item+gudang (Bin, actual_qty != 0).
-	Qty dikirim dalam stock UOM + daftar UOM item (faktor konversi) agar UOM
-	tampilan bisa diganti di klien tanpa fetch ulang; default = Default Inventory UOM."""
+	"""Tab Stock Balance: saldo saat ini per item+gudang (Bin, actual_qty != 0),
+	qty & valuation rate dalam Default Inventory UOM (fallback stock UOM)."""
 	frappe.has_permission("Bin", "read", throw=True)
 	page, page_len = _page(page, page_len)
 	conds, values = ["b.actual_qty != 0"], {}
@@ -411,33 +412,21 @@ def stock_balance(
 		values["search"] = f"%{str(search).strip()}%"
 	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse"})
 	where = " and ".join(conds)
-	base = f"from `tabBin` b join `tabItem` i on i.name = b.item_code where {where}"
+	base = f"""from `tabBin` b {UOM_JOIN.replace("s.item_code", "b.item_code")} where {where}"""
 
 	total, total_value = frappe.db.sql(f"select count(*), ifnull(sum(b.stock_value), 0) {base}", values)[0]
 	values.update(limit=page_len, offset=(page - 1) * page_len)
 	rows = frappe.db.sql(
-		f"""select b.item_code, i.item_name, i.item_group, b.warehouse, i.stock_uom,
-			i.custom_default_inventory_unit_of_measure as default_uom,
+		f"""select b.item_code, i.item_name, i.item_group, b.warehouse, {UOM_COLS},
 			b.actual_qty, b.reserved_qty, b.projected_qty, b.valuation_rate, b.stock_value
 		{base} order by b.item_code, b.warehouse limit %(limit)s offset %(offset)s""",
 		values,
 		as_dict=True,
 	)
-	uoms = {}
-	if rows:
-		for d in frappe.db.sql(
-			"""select parent, uom, conversion_factor from `tabUOM Conversion Detail`
-			where parent in %(codes)s and conversion_factor > 0 order by parent, idx""",
-			{"codes": tuple({r.item_code for r in rows})},
-			as_dict=True,
-		):
-			uoms.setdefault(d.parent, []).append({"uom": d.uom, "factor": d.conversion_factor})
 	for r in rows:
-		r.uoms = uoms.get(r.item_code) or []
-		if not any(u["uom"] == r.stock_uom for u in r.uoms):
-			r.uoms.insert(0, {"uom": r.stock_uom, "factor": 1})
-		if not any(u["uom"] == r.default_uom for u in r.uoms):
-			r.default_uom = r.stock_uom
+		for k in BALANCE_QTY:
+			r[k] = flt(r[k]) / flt(r.factor)
+		r.valuation_rate = flt(r.valuation_rate) * flt(r.factor)
 	return {"rows": rows, "total": total, "totals": {"stock_value": total_value}}
 
 @frappe.whitelist()
@@ -506,7 +495,7 @@ def filter_options():
 
 EXPORT_MAX = 100_000
 STOCK_CARD_HEADER = [
-	"Date", "Item Code", "Item Name", "Warehouse", "Voucher Type", "Voucher No", "UOM",
+	"Item Code", "Item Name", "Warehouse", "Date", "Voucher Type", "Voucher No", "UOM",
 	"Stock Before", "In", "Out", "Stock After",
 	"Balance Before", "Value Change", "Balance After", "Counterparty", "Remarks",
 ]
@@ -559,7 +548,7 @@ def export(
 			)
 		data = [STOCK_CARD_HEADER] + [
 			[
-				r["posting_datetime"][:19], r["item_code"], r["item_name"], r["warehouse"],
+				r["item_code"], r["item_name"], r["warehouse"], r["posting_datetime"][:19],
 				r["voucher_type"], r["voucher_no"], r["uom"],
 				r["qty_before"], r["qty_in"] or 0, r["qty_out"] or 0, r["qty_after"],
 				r["value_before"], r["value_change"], r["value_after"],

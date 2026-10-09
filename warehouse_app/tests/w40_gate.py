@@ -22,6 +22,7 @@
 #   5. Totals footer = jumlah Beginning/Ending seluruh baris.
 #   6. stock_cards: 4 baris hari ini, terbaru dulu, qty dalam UOM inventaris.
 #   7. export csv/xlsx mengikuti filter.
+#   8. stock_balance: qty dalam UOM inventaris.
 
 import json
 import traceback
@@ -202,6 +203,15 @@ def _run_gate(check):
 		and abs(first.get("qty_after", 0) + 1) < 1e-6
 		and abs(cards["rows"][-1]["qty_in"] - 1) < 1e-6,
 		f"total={cards['total']}, first={first}",
+	)
+
+	# stock_balance: qty & rate dalam UOM inventaris (faktor 12) -> -12 stock UOM = -1
+	bal = inventory.stock_balance(item=item.name)
+	b = bal["rows"][0] if bal["rows"] else {}
+	check(
+		"stock_balance_uom",
+		bal["total"] == 1 and abs(b.get("actual_qty", 0) + 1) < 1e-6 and b.get("factor") == 12,
+		f"total={bal['total']}, row={b}",
 	)
 
 	# W40-6: export mengikuti filter (xlsx + csv)
