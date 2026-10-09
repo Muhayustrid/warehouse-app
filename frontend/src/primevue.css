@@ -91,6 +91,8 @@
 }
 
 .pv-select .p-select-label {
+	display: flex;
+	align-items: center;
 	padding: 0 1.75rem 0 0.625rem;
 	color: #525252;
 	white-space: nowrap;
