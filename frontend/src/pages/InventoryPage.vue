@@ -39,7 +39,7 @@ const tab = ref('balance')
 const warehouse = ref(null)
 const warehouseOptions = ref([])
 const itemGroupOptions = ref([])
-const can = ref({ export: false, recalculate: false })
+const can = ref({ export: false })
 const item = ref('')
 const itemGroup = ref(null)
 const showFilters = ref(false)
@@ -177,7 +177,7 @@ onMounted(async () => {
 		const opts = await fetchFilterOptions()
 		warehouseOptions.value = opts?.warehouses || []
 		itemGroupOptions.value = opts?.item_groups || []
-		can.value = { export: !!opts?.can_export, recalculate: !!opts?.can_recalculate }
+		can.value = { export: !!opts?.can_export }
 	} catch (e) {
 		toast.error(e.message)
 	}
@@ -639,7 +639,6 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 			:row="detail.row"
 			:period="detail.period"
 			:can="can"
-			@recalculated="moves.load()"
 		/>
 	</div>
 </template>

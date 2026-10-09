@@ -1,5 +1,4 @@
-import { call, callGet } from '@/lib/api'
-import { toast } from '@/lib/toast'
+import { callGet } from '@/lib/api'
 
 // Lapisan data halaman Inventory (W40) — endpoint read-only
 // warehouse_app.warehouse_app.inventory (SLE + Bin, paginasi server-side).
@@ -46,36 +45,4 @@ export async function downloadExport(params) {
 	a.download = decodeURIComponent(name || 'export.' + params.file_format)
 	a.click()
 	URL.revokeObjectURL(a.href)
-}
-
-export function recalculate(params) {
-	return call(API + 'recalculate', params)
-}
-
-// Pantau Repost Item Valuation sampai tak ada yang Queued/In Progress,
-// lalu kembalikan peta status akhir.
-export async function waitRecalculate(names, every = 4000) {
-	for (;;) {
-		await new Promise((r) => setTimeout(r, every))
-		const st = (await callGet(API + 'recalculate_status', { names: JSON.stringify(names) })) || {}
-		if (!Object.values(st).some((s) => s === 'Queued' || s === 'In Progress')) return st
-	}
-}
-
-// Alur Recalculate bersama (tab Movements + modal): buat RIV, toast info,
-// tunggu selesai, toast hasil, lalu onDone (muat ulang tabel).
-export async function runRecalculate(params, onDone) {
-	let names
-	try {
-		names = await recalculate(params)
-	} catch (e) {
-		toast.error(e.message)
-		return
-	}
-	toast.info(`Recalculating ${names.length} item/warehouse… you'll be notified when it's done.`)
-	const st = await waitRecalculate(names).catch(() => ({}))
-	const failed = Object.values(st).filter((s) => s === 'Failed').length
-	if (failed) toast.error(`Recalculate finished with ${failed} failed repost(s) — see Repost Item Valuation.`)
-	else toast.success(`Recalculate completed (${names.length} item/warehouse).`)
-	onDone?.()
 }

@@ -499,12 +499,10 @@ def filter_options():
 		"warehouses": warehouses,
 		"item_groups": groups,
 		"can_export": bool(frappe.has_permission("Stock Ledger Entry", "export")),
-		"can_recalculate": bool(frappe.has_permission("Repost Item Valuation", "create")),
 	}
 
 # ---------------------------------------------------------------- W40-6 ----
-# Export (Excel/CSV) mengikuti filter aktif + Recalculate via Repost Item
-# Valuation (doctype native) yang langsung dijalankan di worker long.
+# Export (Excel/CSV) mengikuti filter aktif.
 
 EXPORT_MAX = 100_000
 STOCK_CARD_HEADER = [
@@ -584,71 +582,3 @@ def export(
 		frappe.response.update(
 			type="binary", filename=filename + ".xlsx", filecontent=make_xlsx(data, name[:31]).getvalue()
 		)
-
-RECALC_MAX = 500
-
-@frappe.whitelist(methods=["POST"])
-def recalculate(
-	from_date,
-	to_date=None,
-	warehouse=None,
-	item=None,
-	item_group=None,
-	item_code=None,
-	search=None,
-	search_by="name",
-):
-	"""Buat Repost Item Valuation (Item and Warehouse, mulai from_date) untuk
-	setiap item+gudang yang bertransaksi di periode+filter, lalu jalankan di
-	worker long. Modal detail = item_code + warehouse persis (satu RIV).
-	Kembali nama RIV — klien memantau lewat recalculate_status."""
-	frappe.has_permission("Repost Item Valuation", "create", throw=True)
-	agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by)
-	# tampilan penuh: hanya pasangan yang bertransaksi di periode (yang bisa
-	# berubah nilainya); modal detail: pasangan itu sendiri walau periode sepi
-	pairs = [(r.item_code, r.warehouse) for r in agg if item_code or r.iq or r.iv or r.oq or r.ov]
-	if not pairs:
-		frappe.throw("No stock transactions to recalculate in this period.")
-	if len(pairs) > RECALC_MAX:
-		frappe.throw(
-			f"{len(pairs):,} item/warehouse pairs match — recalculate is limited to {RECALC_MAX}. Narrow the filters."
-		)
-	names = []
-	for code, wh in pairs:
-		riv = frappe.get_doc(
-			{
-				"doctype": "Repost Item Valuation",
-				"based_on": "Item and Warehouse",
-				"item_code": code,
-				"warehouse": wh,
-				"posting_date": getdate(from_date),
-				"posting_time": "00:00:00",
-			}
-		)
-		riv.insert()
-		riv.submit()
-		names.append(riv.name)
-	frappe.enqueue(
-		_run_reposts, queue="long", timeout=3600, names=names, enqueue_after_commit=True
-	)
-	return names
-
-def _run_reposts(names):
-	# ponytail: scheduler native (repost_entries / run_parallel_reposting) bisa
-	# mengambil RIV yang sama bersamaan — repost idempoten, paling buruk kerja dobel.
-	from erpnext.stock.doctype.repost_item_valuation.repost_item_valuation import (
-		execute_reposting_entry,
-	)
-
-	for name in names:
-		execute_reposting_entry(name)
-		frappe.db.commit()
-
-@frappe.whitelist()
-def recalculate_status(names):
-	"""Status RIV hasil recalculate (dipoll klien sampai tak ada yang Queued/In Progress)."""
-	names = frappe.parse_json(names) if isinstance(names, str) else names
-	rows = frappe.get_list(
-		"Repost Item Valuation", filters={"name": ("in", names)}, fields=["name", "status"]
-	)
-	return {r.name: r.status for r in rows}
