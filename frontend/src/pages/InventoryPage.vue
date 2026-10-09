@@ -18,24 +18,22 @@ import { Dropdown } from '@frappe-ui/components/Dropdown'
 import { dayjs } from '@frappe-ui/utils/dayjs'
 import DateRangeField from '@/components/DateRangeField.vue'
 import InventoryDetailDialog from '@/components/InventoryDetailDialog.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import {
 	fetchStockCards,
 	fetchMovements,
 	fetchStockBalance,
 	fetchFilterOptions,
 	downloadExport,
-	runRecalculate,
 } from '@/data/inventory'
 import { fmtQty, fmtRp, fmtDateTime } from '@/lib/format'
 import { toast } from '@/lib/toast'
 
 const tabs = [
-	{ label: 'Stock Cards', value: 'cards' },
-	{ label: 'Inventory Movements', value: 'movements' },
-	{ label: 'Stock Balance', value: 'balance' },
+	{ label: 'Stock Balance', value: 'balance', icon: 'package' },
+	{ label: 'Stock Cards', value: 'cards', icon: 'list' },
+	{ label: 'Inventory Movements', value: 'movements', icon: 'trending-up' },
 ]
-const tab = ref('cards')
+const tab = ref('balance')
 
 // ---- filter bersama ----
 const warehouse = ref(null)
@@ -173,8 +171,8 @@ watch(tab, (t) => {
 })
 
 onMounted(async () => {
-	stale.cards = false
-	cards.load()
+	stale[tab.value] = false
+	active.value.load()
 	try {
 		const opts = await fetchFilterOptions()
 		warehouseOptions.value = opts?.warehouses || []
@@ -208,7 +206,7 @@ function openDetail({ data }) {
 	detail.value = { show: true, row: data, period: { ...period.value } }
 }
 
-// ---- Export + Recalculate (W40-6) ----
+// ---- Export (W40-6) ----
 const exporting = ref(false)
 async function exportAs(file_format) {
 	exporting.value = true
@@ -224,17 +222,6 @@ const exportOptions = [
 	{ label: 'Excel (.xlsx)', icon: 'file', onClick: () => exportAs('xlsx') },
 	{ label: 'CSV (.csv)', icon: 'file-text', onClick: () => exportAs('csv') },
 ]
-
-const confirmRecalc = ref(false)
-const recalculating = ref(false)
-async function doRecalculate() {
-	recalculating.value = true
-	await runRecalculate(
-		{ ...filters.value, search: search.value.trim(), search_by: searchBy.value },
-		() => moves.load(),
-	)
-	recalculating.value = false
-}
 
 // Stock Balance: UOM tampilan per baris, default = Default Inventory UOM item
 const balanceUom = reactive({})
@@ -308,16 +295,6 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						:label="activeFilterCount ? `Filters (${activeFilterCount})` : 'Open Filter'"
 						icon-left="filter"
 						@click="showFilters = !showFilters"
-					/>
-					<Button
-						v-if="tab === 'movements' && can.recalculate"
-						variant="solid"
-						theme="red"
-						label="Recalculate Inventory"
-						icon-left="refresh-cw"
-						:loading="recalculating"
-						:disabled="!moves.total"
-						@click="confirmRecalc = true"
 					/>
 					<Dropdown v-if="can.export && tab !== 'balance'" :options="exportOptions" align="end">
 						<Button variant="subtle" label="Export" icon-left="share" :loading="exporting" />
@@ -663,16 +640,6 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 			:period="detail.period"
 			:can="can"
 			@recalculated="moves.load()"
-		/>
-		<ConfirmDialog
-			v-model="confirmRecalc"
-			:options="{
-				title: 'Recalculate Inventory',
-				message: `Repost stock valuation from ${periodLabel} for the ${moves.total} item/warehouse rows matching the current filters (only those with transactions in the period). This is a heavy background job and may take several minutes. Continue?`,
-				confirmLabel: 'Recalculate',
-				theme: 'danger',
-			}"
-			:onConfirm="doRecalculate"
 		/>
 	</div>
 </template>
