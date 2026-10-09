@@ -1,17 +1,12 @@
 import { createApp } from 'vue'
-import { resourcesPlugin } from '@frappe-ui/resources'
 import PrimeVue from 'primevue/config'
 import App from './App.vue'
 import router from './router'
 import { initSession } from './lib/session'
 import { gudangPreset } from './lib/primevue'
 import 'primeicons/primeicons.css'
-import '@fontsource/ibm-plex-sans/latin-400.css'
-import '@fontsource/ibm-plex-sans/latin-500.css'
-import '@fontsource/ibm-plex-sans/latin-600.css'
-import '@fontsource/ibm-plex-sans/latin-700.css'
+import './gudang.css'
 import './primevue.css'
-import './index.css'
 
 async function start() {
 	await initSession()
@@ -21,14 +16,12 @@ async function start() {
 		window.__vueError = String((err && (err.stack || err.message)) || err) + ' [' + info + ']'
 		console.error('[gudang-spa]', err, info)
 	}
-	app.use(resourcesPlugin)
-	// PrimeVue (W33-r8): komponen data (DataTable/Select) halaman Serah
-	// Terima Gudang. Dark selector = atribut data-theme yang sama dgn preset
-	// frappe-ui, jadi satu toggle membalik kedua library.
+	// PrimeVue (W33-r8): komponen data (DataTable/Select/Dialog) Inventory.
+	// Terang-saja — darkModeSelector dimatikan.
 	app.use(PrimeVue, {
 		theme: {
 			preset: gudangPreset,
-			options: { darkModeSelector: '[data-theme="dark"]' },
+			options: { darkModeSelector: 'none' },
 		},
 		ripple: false,
 	})

@@ -3,11 +3,13 @@ import { call, callGet } from '@/lib/api'
 // Lapisan data papan serah terima — endpoint SAMA dengan halaman klasik,
 // tidak ada perubahan server (warehouse_app + production_app).
 
-export async function fetchWorkOrders({ search = '', filters = [], limitStart = 0 } = {}) {
+export async function fetchWorkOrders({ search = '', filters = [], limitStart = 0, pageLen = 50 } = {}) {
 	return call('warehouse_app.warehouse_app.gudang_request.requestable_work_orders', {
 		search,
 		filters: JSON.stringify(filters || []),
 		limit_start: limitStart,
+		limit_page_length: pageLen,
+		paginated: 1,
 	})
 }
 

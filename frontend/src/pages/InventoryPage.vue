@@ -1,21 +1,19 @@
 <script setup>
-// Halaman Inventory Report (W40). Tiga tab di atas ledger native: Stock Cards
-// (satu baris per SLE), Inventory Movements (Beginning/IN/OUT/Ending per
-// item+gudang) dan Stock Balance (saldo Bin saat ini, UOM bisa diganti per baris). Semua tabel lazy — paginasi, filter, agregasi di server
+// Halaman Inventory Report (W40, redesign W41). Tiga tab di atas ledger
+// native: Stock Cards (satu baris per SLE), Inventory Movements
+// (Beginning/IN/OUT/Ending per item+gudang) dan Stock Balance (saldo Bin saat
+// ini). Semua tabel lazy — paginasi, filter, agregasi di server
 // (warehouse_app.warehouse_app.inventory). Qty dalam Default Inventory UOM
-// item, nilai dalam Rupiah.
+// item, nilai dalam Rupiah. Chrome (toolbar/filter/tab) pakai class native
+// gudang.css + ikon lucide; tabel & Select tetap PrimeVue. Tanpa Tailwind —
+// styling via gudang.css + <style> lokal ber-prefix .inv-.
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import ColumnGroup from 'primevue/columngroup'
 import Row from 'primevue/row'
 import Select from 'primevue/select'
-import { Button } from '@frappe-ui/components/Button'
-import { TextInput } from '@frappe-ui/components/TextInput'
-import { TabButtons } from '@frappe-ui/components/TabButtons'
-import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
-import { Dropdown } from '@frappe-ui/components/Dropdown'
-import { dayjs } from '@frappe-ui/utils/dayjs'
+import dayjs from 'dayjs'
 import DateRangeField from '@/components/DateRangeField.vue'
 import InventoryDetailDialog from '@/components/InventoryDetailDialog.vue'
 import {
@@ -28,10 +26,20 @@ import {
 import { fmtQty, fmtRp, fmtDateTime } from '@/lib/format'
 import { toast } from '@/lib/toast'
 
+import {
+	Search as SearchIcon,
+	Filter as FilterIcon,
+	RefreshCw as RefreshIcon,
+	Download as DownloadIcon,
+	FileSpreadsheet as FileSpreadsheetIcon,
+	FileText as FileTextIcon,
+	Layers as LayersIcon,
+} from 'lucide-vue-next'
+
 const tabs = [
-	{ label: 'Stock Balance', value: 'balance', icon: 'package' },
-	{ label: 'Stock Cards', value: 'cards', icon: 'list' },
-	{ label: 'Inventory Movements', value: 'movements', icon: 'trending-up' },
+	{ label: 'Stock Balance', value: 'balance' },
+	{ label: 'Stock Cards', value: 'cards' },
+	{ label: 'Inventory Movements', value: 'movements' },
 ]
 const tab = ref('balance')
 
@@ -43,6 +51,7 @@ const can = ref({ export: false })
 const item = ref('')
 const itemGroup = ref(null)
 const showFilters = ref(false)
+const exportOpen = ref(false)
 
 const RANGES = ['Today', 'Yesterday', 'This Week', 'This Month', 'Custom']
 const range = ref('This Month')
@@ -209,6 +218,7 @@ function openDetail({ data }) {
 // ---- Export (W40-6) ----
 const exporting = ref(false)
 async function exportAs(file_format) {
+	exportOpen.value = false
 	exporting.value = true
 	try {
 		await downloadExport({ kind: tab.value, file_format, ...filters.value, ...searchArgs() })
@@ -218,10 +228,6 @@ async function exportAs(file_format) {
 		exporting.value = false
 	}
 }
-const exportOptions = [
-	{ label: 'Excel (.xlsx)', icon: 'file', onClick: () => exportAs('xlsx') },
-	{ label: 'CSV (.csv)', icon: 'file-text', onClick: () => exportAs('csv') },
-]
 
 const PAGINATOR =
 	'CurrentPageReport FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown'
@@ -229,23 +235,23 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 </script>
 
 <template>
-	<div class="space-y-4">
-		<!-- header -->
-		<div class="flex flex-wrap items-end justify-between gap-3">
-			<div>
-				<h1 class="text-2xl font-semibold tracking-tight text-ink-gray-9">Inventory Report</h1>
-				<p class="mt-0.5 text-sm text-ink-gray-5">
+	<div class="inv-page">
+		<!-- page-head -->
+		<div class="page-head">
+			<div class="ph-left">
+				<h1>Inventory Report</h1>
+				<p class="sub">
 					Stock ledger movements and balances per item and division
-					<span v-if="periodLabel && tab !== 'balance'" class="text-ink-gray-7">· {{ periodLabel }}</span>
+					<span v-if="periodLabel && tab !== 'balance'">· {{ periodLabel }}</span>
 				</p>
 			</div>
-			<label class="flex items-center gap-2 text-sm text-ink-gray-5">
+			<label class="ph-division">
 				<span>Division</span>
 				<Select
 					v-model="warehouse"
 					:options="warehouseOptions"
 					placeholder="All"
-					class="pv-select min-w-64"
+					class="pv-select inv-division-select"
 					showClear
 					filter
 					filterPlaceholder="Search warehouse..."
@@ -253,84 +259,119 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 			</label>
 		</div>
 
-		<div class="rounded-lg border border-outline-gray-1 bg-surface-modal">
-			<!-- tab + kontrol -->
-			<div class="flex flex-wrap items-center gap-2 border-b border-outline-gray-1 p-3">
-				<TabButtons v-model="tab" :buttons="tabs" />
-				<div class="mx-1 hidden h-5 w-px bg-outline-gray-2 sm:block" />
-				<select
-					v-if="tab !== 'balance'"
-					v-model="range"
-					class="h-8 rounded border border-outline-gray-2 bg-surface-modal py-0 pl-2.5 pr-8 text-sm text-ink-gray-8"
-					aria-label="Time range"
-				>
+		<div class="panel">
+			<!-- toolbar -->
+			<div class="toolbar inv-toolbar">
+				<div class="dseg" role="tablist" aria-label="Report type">
+					<button
+						v-for="t in tabs"
+						:key="t.value"
+						type="button"
+						class="dseg-btn"
+						:class="{ on: tab === t.value }"
+						role="tab"
+						:aria-selected="tab === t.value ? 'true' : 'false'"
+						@click="tab = t.value"
+					>
+						{{ t.label }}
+					</button>
+				</div>
+				<select v-if="tab !== 'balance'" v-model="range" class="select" aria-label="Time range">
 					<option v-for="r in RANGES" :key="r" :value="r">{{ r }}</option>
 				</select>
-				<div v-if="tab !== 'balance' && range === 'Custom'" class="w-56">
+				<div v-if="tab !== 'balance' && range === 'Custom'" class="inv-daterange">
 					<DateRangeField v-model:from="customFrom" v-model:to="customTo" placeholder="Select date range" />
 				</div>
-				<select
-					v-model="searchBy"
-					class="h-8 rounded border border-outline-gray-2 bg-surface-modal py-0 pl-2.5 pr-8 text-sm text-ink-gray-8"
-					aria-label="Search by"
-				>
+				<select v-model="searchBy" class="select" aria-label="Search by">
 					<option v-for="o in SEARCH_BY" :key="o.value" :value="o.value">by {{ o.label }}</option>
 				</select>
-				<div class="w-56">
-					<TextInput v-model="search" type="text" placeholder="Find Inventory..">
-						<template #prefix><FeatherIcon name="search" class="h-4 w-4" /></template>
-					</TextInput>
+				<div class="searchbox">
+					<span class="search-ico"><SearchIcon :size="15" :stroke-width="2" /></span>
+					<input v-model="search" type="search" class="input" placeholder="Find Inventory.." aria-label="Find Inventory" />
 				</div>
-				<div class="ml-auto flex items-center gap-2">
-					<Button
-						:variant="showFilters ? 'solid' : 'subtle'"
-						:label="activeFilterCount ? `Filters (${activeFilterCount})` : 'Open Filter'"
-						icon-left="filter"
-						@click="showFilters = !showFilters"
-					/>
-					<Dropdown v-if="can.export && tab !== 'balance'" :options="exportOptions" align="end">
-						<Button variant="subtle" label="Export" icon-left="share" :loading="exporting" />
-					</Dropdown>
-					<Button variant="subtle" icon="refresh-cw" aria-label="Refresh" :loading="active.loading" @click="active.load()" />
-				</div>
-			</div>
 
-			<!-- panel filter -->
-			<div
-				v-if="showFilters"
-				class="grid gap-3 border-b border-outline-gray-1 bg-surface-gray-1 p-3 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end"
-			>
-				<label class="space-y-1 text-xs text-ink-gray-5">
-					<span>Item</span>
-					<TextInput v-model="item" type="text" placeholder="Item code or name..." />
-				</label>
-				<label class="space-y-1 text-xs text-ink-gray-5">
-					<span>Item Group</span>
-					<Select
-						v-model="itemGroup"
-						:options="itemGroupOptions"
-						placeholder="All item groups"
-						class="pv-select w-full"
-						showClear
-						filter
-					/>
-				</label>
-				<label class="space-y-1 text-xs text-ink-gray-5">
-					<span>Warehouse</span>
-					<Select
-						v-model="warehouse"
-						:options="warehouseOptions"
-						placeholder="All warehouses"
-						class="pv-select w-full"
-						showClear
-						filter
-					/>
-				</label>
-				<Button variant="outline" label="Clear" :disabled="!activeFilterCount" @click="clearFilters" />
+				<!-- filter popover -->
+				<div class="filterwrap">
+					<button
+						type="button"
+						class="btn filterbtn"
+						:class="{ active: showFilters }"
+						:aria-expanded="showFilters ? 'true' : 'false'"
+						@click="showFilters = !showFilters"
+					>
+						<FilterIcon :size="14" :stroke-width="2" />
+						<span>Filters</span>
+						<span v-if="activeFilterCount" class="filtercount">{{ activeFilterCount }}</span>
+					</button>
+					<div v-if="showFilters" class="popoverlay" @click="showFilters = false"></div>
+					<Transition name="pop">
+						<div v-if="showFilters" class="filterpanel">
+							<div class="ffield">
+								<label>Item</label>
+								<input v-model="item" type="text" class="input" placeholder="Item code or name..." />
+							</div>
+							<div class="ffield">
+								<label>Item Group</label>
+								<Select
+									v-model="itemGroup"
+									:options="itemGroupOptions"
+									placeholder="All item groups"
+									class="pv-select inv-wfull"
+									showClear
+									filter
+								/>
+							</div>
+							<div class="ffield">
+								<label>Warehouse</label>
+								<Select
+									v-model="warehouse"
+									:options="warehouseOptions"
+									placeholder="All warehouses"
+									class="pv-select inv-wfull"
+									showClear
+									filter
+								/>
+							</div>
+							<button type="button" class="btn filter-clear" :disabled="!activeFilterCount" @click="clearFilters">
+								Clear
+							</button>
+						</div>
+					</Transition>
+				</div>
+
+				<!-- export popover -->
+				<div v-if="can.export && tab !== 'balance'" class="filterwrap">
+					<button type="button" class="btn filterbtn" :disabled="exporting" @click="exportOpen = !exportOpen">
+						<DownloadIcon :size="14" :stroke-width="2" />
+						<span>Export</span>
+					</button>
+					<div v-if="exportOpen" class="popoverlay" @click="exportOpen = false"></div>
+					<Transition name="pop">
+						<div v-if="exportOpen" class="filterpanel pop-right inv-exportpanel">
+							<button type="button" class="btn" @click="exportAs('xlsx')">
+								<FileSpreadsheetIcon :size="14" :stroke-width="2" /> Excel (.xlsx)
+							</button>
+							<button type="button" class="btn" @click="exportAs('csv')">
+								<FileTextIcon :size="14" :stroke-width="2" /> CSV (.csv)
+							</button>
+						</div>
+					</Transition>
+				</div>
+
+				<button
+					type="button"
+					class="btn"
+					:disabled="active.loading"
+					aria-label="Refresh"
+					title="Refresh"
+					@click="active.load()"
+				>
+					<RefreshIcon :size="15" :stroke-width="2" />
+				</button>
 			</div>
 
 			<!-- Stock Cards -->
-			<div v-if="tab === 'cards'" class="transition-opacity" :class="{ 'opacity-50': cards.loading }">
+			<div v-if="tab === 'cards'" class="inv-pane" :class="{ dim: cards.loading }">
 				<DataTable
 					:value="cards.rows"
 					dataKey="name"
@@ -346,46 +387,40 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					@page="cards.onPage"
 				>
 					<template #empty>
-						<div class="flex flex-col items-center gap-2 px-6 py-14 text-center">
-							<FeatherIcon name="layers" class="h-8 w-8 text-ink-gray-3" />
-							<p class="text-sm text-ink-gray-4">
-								No stock transactions in this period. Try a different time range or clear the filters.
-							</p>
+						<div class="empty-inset">
+							<div class="eico"><LayersIcon :size="18" /></div>
+							<p class="etitle">No stock transactions in this period</p>
+							<p class="ehint">Try a different time range or clear the filters.</p>
 						</div>
 					</template>
 
 					<Column header="Item Code">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
+							<span class="inv-code">{{ data.item_code }}</span>
 						</template>
 					</Column>
 					<Column header="Item Name">
 						<template #body="{ data }">
-							<span class="text-ink-gray-8">{{ data.item_name }}</span>
+							<span class="inv-ink">{{ data.item_name }}</span>
 						</template>
 					</Column>
 					<Column header="Division">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap text-ink-gray-6">{{ data.warehouse }}</span>
+							<span class="inv-nw inv-muted">{{ data.warehouse }}</span>
 						</template>
 					</Column>
 					<Column header="Date">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap text-ink-gray-5">{{ fmtDateTime(data.posting_datetime) }}</span>
+							<span class="inv-nw inv-muted">{{ fmtDateTime(data.posting_datetime) }}</span>
 						</template>
 					</Column>
 					<Column header="Reference">
 						<template #body="{ data }">
-							<div class="whitespace-nowrap">
-								<div class="text-ink-gray-8">{{ data.voucher_type }}</div>
-								<a
-									:href="desk(data.voucher_type, data.voucher_no)"
-									target="_blank"
-									class="font-mono text-xs text-ink-gray-5 underline decoration-transparent underline-offset-2 hover:decoration-current"
-									>{{ data.voucher_no }}</a
-								>
-								<div v-if="data.counterparty" class="text-xs text-ink-gray-6">
-									<span class="font-medium">{{ data.counterparty.dir === 'to' ? 'To' : 'From' }}:</span>
+							<div class="inv-nw">
+								<div class="inv-ink">{{ data.voucher_type }}</div>
+								<a :href="desk(data.voucher_type, data.voucher_no)" target="_blank" class="inv-link">{{ data.voucher_no }}</a>
+								<div v-if="data.counterparty" class="inv-xs inv-muted">
+									<span class="inv-med">{{ data.counterparty.dir === 'to' ? 'To' : 'From' }}:</span>
 									{{ [data.counterparty.warehouse, data.counterparty.party, data.counterparty.company].filter(Boolean).join(' · ') }}
 								</div>
 							</div>
@@ -393,51 +428,47 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					</Column>
 					<Column header="Stock Before" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<div class="whitespace-nowrap tabular-nums" :class="data.qty_before < 0 ? 'text-red-600' : 'text-ink-gray-8'">
+							<div class="inv-num" :class="data.qty_before < 0 ? 'inv-bad' : 'inv-ink'">
 								{{ fmtQty(data.qty_before) }}
-								<div class="text-xs text-ink-gray-4">{{ data.uom }}</div>
+								<div class="inv-xs inv-faint">{{ data.uom }}</div>
 							</div>
 						</template>
 					</Column>
 					<Column header="Balance Before" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap tabular-nums text-ink-gray-7">{{ fmtRp(data.value_before) }}</span>
+							<span class="inv-num inv-muted">{{ fmtRp(data.value_before) }}</span>
 						</template>
 					</Column>
 					<Column header="In" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span v-if="data.qty_in != null" class="whitespace-nowrap tabular-nums text-green-700 dark:text-green-400">
-								{{ fmtQty(data.qty_in) }}
-							</span>
-							<span v-else class="text-ink-gray-4">-</span>
+							<span v-if="data.qty_in != null" class="inv-num inv-ok">{{ fmtQty(data.qty_in) }}</span>
+							<span v-else class="inv-faint">-</span>
 						</template>
 					</Column>
 					<Column header="Out" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span v-if="data.qty_out != null" class="whitespace-nowrap tabular-nums text-red-600 dark:text-red-400">
-								{{ fmtQty(data.qty_out) }}
-							</span>
-							<span v-else class="text-ink-gray-4">-</span>
+							<span v-if="data.qty_out != null" class="inv-num inv-bad">{{ fmtQty(data.qty_out) }}</span>
+							<span v-else class="inv-faint">-</span>
 						</template>
 					</Column>
 					<Column header="Stock After" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<div class="whitespace-nowrap tabular-nums font-medium" :class="data.qty_after < 0 ? 'text-red-600' : 'text-ink-gray-9'">
+							<div class="inv-num inv-med" :class="data.qty_after < 0 ? 'inv-bad' : 'inv-ink'">
 								{{ fmtQty(data.qty_after) }}
-								<div class="text-xs font-normal text-ink-gray-4">{{ data.uom }}</div>
+								<div class="inv-xs inv-faint">{{ data.uom }}</div>
 							</div>
 						</template>
 					</Column>
 					<Column header="Balance After" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap tabular-nums text-ink-gray-8">{{ fmtRp(data.value_after) }}</span>
+							<span class="inv-num inv-ink">{{ fmtRp(data.value_after) }}</span>
 						</template>
 					</Column>
 				</DataTable>
 			</div>
 
 			<!-- Stock Balance -->
-			<div v-else-if="tab === 'balance'" class="transition-opacity" :class="{ 'opacity-50': balance.loading }">
+			<div v-else-if="tab === 'balance'" class="inv-pane" :class="{ dim: balance.loading }">
 				<DataTable
 					:value="balance.rows"
 					:dataKey="(r) => r.item_code + '|' + r.warehouse"
@@ -453,53 +484,49 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					@page="balance.onPage"
 				>
 					<template #empty>
-						<div class="flex flex-col items-center gap-2 px-6 py-14 text-center">
-							<FeatherIcon name="layers" class="h-8 w-8 text-ink-gray-3" />
-							<p class="text-sm text-ink-gray-4">No stock on hand. Try clearing the filters.</p>
+						<div class="empty-inset">
+							<div class="eico"><LayersIcon :size="18" /></div>
+							<p class="etitle">No stock on hand</p>
+							<p class="ehint">Try clearing the filters.</p>
 						</div>
 					</template>
 
 					<Column header="Item Code">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
+							<span class="inv-code">{{ data.item_code }}</span>
 						</template>
 					</Column>
 					<Column header="Item Name">
 						<template #body="{ data }">
-							<div class="text-ink-gray-8">{{ data.item_name }}</div>
-							<div class="text-xs text-ink-gray-5">{{ data.item_group }}</div>
+							<div class="inv-ink">{{ data.item_name }}</div>
+							<div class="inv-xs inv-muted">{{ data.item_group }}</div>
 						</template>
 					</Column>
 					<Column header="Division">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap text-ink-gray-6">{{ data.warehouse }}</span>
+							<span class="inv-nw inv-muted">{{ data.warehouse }}</span>
 						</template>
 					</Column>
 					<Column header="UOM">
 						<template #body="{ data }">
-							<span class="text-ink-gray-7">{{ data.uom }}</span>
+							<span class="inv-muted">{{ data.uom }}</span>
 						</template>
 					</Column>
 					<Column v-for="c in BALANCE_QTY" :key="c.key" :header="c.label" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span
-								class="whitespace-nowrap tabular-nums"
-								:class="[data[c.key] < 0 ? 'text-red-600' : 'text-ink-gray-8', c.key === 'actual_qty' ? 'font-medium' : '']"
-							>
+							<span class="inv-num" :class="[data[c.key] < 0 ? 'inv-bad' : 'inv-ink', c.key === 'actual_qty' ? 'inv-med' : '']">
 								{{ fmtQty(data[c.key]) }}
 							</span>
 						</template>
 					</Column>
 					<Column header="Valuation Rate" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap tabular-nums text-ink-gray-7">{{ fmtRp(data.valuation_rate) }}</span>
+							<span class="inv-num inv-muted">{{ fmtRp(data.valuation_rate) }}</span>
 						</template>
 					</Column>
 					<Column header="Stock Value" headerClass="num" bodyClass="num">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap tabular-nums" :class="data.stock_value < 0 ? 'text-red-600' : 'text-ink-gray-9'">
-								{{ fmtRp(data.stock_value) }}
-							</span>
+							<span class="inv-num" :class="data.stock_value < 0 ? 'inv-bad' : 'inv-ink'">{{ fmtRp(data.stock_value) }}</span>
 						</template>
 					</Column>
 
@@ -507,13 +534,13 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						<Row>
 							<Column :colspan="8">
 								<template #footer>
-									<div class="text-ink-gray-9">Total</div>
-									<div class="text-xs font-normal text-ink-gray-5">all {{ balance.total }} results</div>
+									<div class="inv-foot-title">Total</div>
+									<div class="inv-foot-sub">all {{ balance.total }} results</div>
 								</template>
 							</Column>
 							<Column footerClass="num">
 								<template #footer>
-									<div class="whitespace-nowrap" :class="balance.totals?.stock_value < 0 ? 'text-red-600' : 'text-ink-gray-9'">
+									<div class="inv-num" :class="balance.totals?.stock_value < 0 ? 'inv-bad' : 'inv-ink'">
 										{{ fmtRp(balance.totals?.stock_value) }}
 									</div>
 								</template>
@@ -524,7 +551,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 			</div>
 
 			<!-- Inventory Movements -->
-			<div v-else class="transition-opacity" :class="{ 'opacity-50': moves.loading }">
+			<div v-else class="inv-pane" :class="{ dim: moves.loading }">
 				<DataTable
 					:value="moves.rows"
 					:dataKey="(r) => r.item_code + '|' + r.warehouse"
@@ -541,25 +568,24 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					@row-click="openDetail"
 				>
 					<template #empty>
-						<div class="flex flex-col items-center gap-2 px-6 py-14 text-center">
-							<FeatherIcon name="layers" class="h-8 w-8 text-ink-gray-3" />
-							<p class="text-sm text-ink-gray-4">
-								No inventory found for this period. Try a different time range or clear the filters.
-							</p>
+						<div class="empty-inset">
+							<div class="eico"><LayersIcon :size="18" /></div>
+							<p class="etitle">No inventory found for this period</p>
+							<p class="ehint">Try a different time range or clear the filters.</p>
 						</div>
 					</template>
 
 					<Column header="Item Code">
 						<template #body="{ data }">
-							<span class="whitespace-nowrap font-mono text-xs text-ink-gray-6">{{ data.item_code }}</span>
+							<span class="inv-code">{{ data.item_code }}</span>
 						</template>
 					</Column>
 					<Column header="Item Name">
 						<template #body="{ data }">
-							<div class="text-ink-gray-8">
-								{{ data.item_name }} <span class="text-ink-gray-4">/ {{ data.uom }}</span>
+							<div class="inv-ink">
+								{{ data.item_name }} <span class="inv-faint">/ {{ data.uom }}</span>
 							</div>
-							<div class="text-xs text-ink-gray-5">at {{ data.warehouse }}</div>
+							<div class="inv-xs inv-muted">at {{ data.warehouse }}</div>
 						</template>
 					</Column>
 					<Column
@@ -571,20 +597,21 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						:style="{ width: '15%' }"
 					>
 						<template #body="{ data }">
-							<div
-								class="whitespace-nowrap tabular-nums"
-								:class="c.key === 'end' && isNegative(data) ? '-m-3 bg-red-800 p-3 text-white' : ''"
-							>
+							<div class="inv-num" :class="{ 'inv-neg-block': c.key === 'end' && isNegative(data) }">
 								<template v-if="isEmpty(data, c.key)">
-									<div class="text-ink-gray-4">-</div>
-									<div class="text-xs text-ink-gray-4">-N/A-</div>
+									<div class="inv-faint">-</div>
+									<div class="inv-xs inv-faint">-N/A-</div>
 								</template>
 								<template v-else>
-									<div :class="c.key === 'end' ? 'font-medium' : ''">
+									<div :class="c.key === 'end' ? 'inv-med' : ''">
 										{{ fmtQty(data[c.key + '_qty']) }}
-										<span class="text-xs" :class="c.key === 'end' && isNegative(data) ? 'text-red-200' : 'text-ink-gray-4'">{{ data.uom }}</span>
+										<span
+											class="inv-xs"
+											:class="c.key === 'end' && isNegative(data) ? 'inv-neg-uom' : 'inv-faint'"
+											>{{ data.uom }}</span
+										>
 									</div>
-									<div class="text-xs" :class="c.key === 'end' && isNegative(data) ? 'text-red-100' : 'text-ink-gray-5'">
+									<div class="inv-xs" :class="c.key === 'end' && isNegative(data) ? 'inv-neg-val' : 'inv-muted'">
 										{{ fmtRp(data[c.key + '_value']) }}
 									</div>
 								</template>
@@ -596,19 +623,16 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						<Row>
 							<Column :colspan="2">
 								<template #footer>
-									<div class="text-ink-gray-9">Total</div>
-									<div class="text-xs font-normal text-ink-gray-5">all {{ moves.total }} results</div>
+									<div class="inv-foot-title">Total</div>
+									<div class="inv-foot-sub">all {{ moves.total }} results</div>
 								</template>
 							</Column>
 							<Column v-for="c in MOVE_COLS" :key="c.key" footerClass="num">
 								<template #footer>
-									<div
-										class="whitespace-nowrap"
-										:class="moves.totals?.[c.key + '_value'] < 0 ? 'text-red-600' : 'text-ink-gray-9'"
-									>
+									<div class="inv-num" :class="moves.totals?.[c.key + '_value'] < 0 ? 'inv-bad' : 'inv-ink'">
 										{{ fmtRp(moves.totals?.[c.key + '_value']) }}
 									</div>
-									<div class="text-xs font-normal text-ink-gray-5">value</div>
+									<div class="inv-foot-sub">value</div>
 								</template>
 							</Column>
 						</Row>
@@ -625,3 +649,217 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 		/>
 	</div>
 </template>
+
+<style>
+/* ===== Skin lokal Inventory (W41): tabel PrimeVue + modal detail mengikuti
+   token gudang.css. Non-scoped karena juga membungkus tabel di
+   InventoryDetailDialog (dialog hanya dibuka dari halaman ini). Pengganti
+   skin abu primevue.css yang dibuang oleh fondasi. Tanpa Tailwind. ===== */
+
+/* -- utilitas teks ber-prefix .inv- (dipakai juga oleh dialog) -- */
+.inv-ink { color: var(--ink); }
+.inv-muted { color: var(--muted); }
+.inv-faint { color: var(--faint); }
+.inv-bad { color: var(--bad-ink); }
+.inv-ok { color: var(--ok-strong); }
+.inv-med { font-weight: 500; }
+.inv-xs { font-size: 12px; }
+.inv-nw { white-space: nowrap; }
+.inv-num { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.inv-wfull { width: 100%; }
+.inv-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.inv-link {
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px; color: var(--muted);
+	text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 2px;
+}
+.inv-link:hover { text-decoration-color: currentColor; }
+.inv-foot-title { font-weight: 600; color: var(--ink); }
+.inv-foot-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
+/* ending negatif: blok merah solid menempel ke tepi sel (bg bad + teks putih) */
+.inv-neg-block { margin: -12px; padding: 12px; background: var(--bad-ink, #9c4736); color: #fff; }
+.inv-neg-uom { color: rgba(255, 255, 255, 0.8); }
+.inv-neg-val { color: rgba(255, 255, 255, 0.9); }
+
+/* -- pane tab: redup saat loading -- */
+.inv-pane { transition: opacity 0.15s ease; }
+.inv-pane.dim { opacity: 0.5; }
+
+/* -- popover filter/export (pola styles.css production; fallback ringan
+   bila gudang.css belum memuatnya, duplikat tidak konflik) -- */
+.inv-page .popoverlay { position: fixed; inset: 0; z-index: 20; }
+.inv-page .pop-enter-active { transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.32, 0.72, 0, 1); }
+.inv-page .pop-leave-active { transition: opacity 0.12s ease; }
+.inv-page .pop-enter-from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+.inv-page .pop-leave-to { opacity: 0; }
+.inv-page .ffield { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.inv-page .ffield > label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.inv-page .filter-clear { margin-top: 4px; color: var(--bad-ink); }
+.inv-page .filter-clear:disabled { opacity: 0.45; cursor: not-allowed; }
+.pop-right { left: auto; right: 0; transform-origin: top right; }
+.inv-exportpanel { width: 200px; }
+.inv-exportpanel .btn { justify-content: flex-start; width: 100%; }
+.inv-toolbar { margin-bottom: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.inv-daterange { width: 15rem; flex: none; }
+.ph-division { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.ph-division .inv-division-select { min-width: 15rem; }
+
+/* -- DataTable: header uppercase 10.5px muted, pemisah 1px var(--line),
+   hover brand-softer, angka tabular-nums kanan -- */
+.pv-table .p-datatable-table {
+	min-width: 1500px;
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.pv-table .p-datatable-thead > tr > th {
+	background: transparent;
+	color: var(--faint);
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	padding: 0.5rem 0.75rem;
+	font-size: 10.5px;
+	font-weight: 650;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	text-align: left;
+	white-space: nowrap;
+	vertical-align: middle;
+}
+
+.pv-table .p-datatable-tbody > tr > td {
+	background: transparent;
+	border: 0;
+	border-bottom: 1px solid var(--line);
+	padding: 0.7rem 0.75rem;
+	font-size: 0.875rem;
+	text-align: left;
+	vertical-align: middle;
+}
+
+.pv-table .p-datatable-tbody > tr:last-child > td {
+	border-bottom: 0;
+}
+
+.pv-table .p-datatable-tbody > tr:hover > td {
+	background: var(--brand-softer);
+}
+
+.pv-table .p-datatable-tbody > tr.p-datatable-row-selected > td {
+	background: var(--brand-soft);
+}
+
+.pv-table .p-datatable-empty-message > td {
+	padding: 0;
+	border: 0;
+}
+
+.pv-table .p-datatable-sort-icon {
+	color: var(--faint);
+}
+
+.pv-table .p-datatable-tfoot > tr > td {
+	background: var(--grey-bg, rgba(0, 0, 0, 0.04));
+	border: 0;
+	border-top: 1px solid var(--line);
+	padding: 0.625rem 0.75rem;
+	font-size: 0.875rem;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+/* -- Paginator -- */
+.pv-table .p-paginator {
+	background: transparent;
+	border: 0;
+	border-top: 1px solid var(--line);
+	border-radius: 0;
+	padding: 0.5rem 0.75rem;
+	color: var(--muted);
+	font-size: 12px;
+}
+
+/* -- kolom angka rata kanan -- */
+.pv-table .p-datatable-thead > tr > th.num,
+.pv-table .p-datatable-tbody > tr > td.num,
+.pv-table .p-datatable-tfoot > tr > td.num {
+	text-align: right;
+}
+.pv-table .p-datatable-thead > tr > th.num .p-datatable-column-header-content {
+	justify-content: flex-end;
+}
+.pv-table-fit .p-datatable-table {
+	min-width: 1100px;
+}
+.pv-table-fit.pv-table-click .p-datatable-table {
+	min-width: 900px;
+}
+/* layar sempit: tabel di-scroll di dalam card, halaman tidak ikut melebar */
+.pv-table-fit .p-datatable-table-container,
+.pv-table-modal .p-datatable-table-container {
+	overflow-x: auto;
+}
+
+/* baris bisa diklik (Movements -> modal detail) */
+.pv-table-click .p-datatable-tbody > tr {
+	cursor: pointer;
+}
+
+/* tabel di dalam modal: tanpa min-width halaman */
+.pv-table-modal .p-datatable-table {
+	min-width: 760px;
+}
+
+/* -- Select (toolbar & filter) -- */
+.pv-select.p-select {
+	height: 2rem;
+	border-radius: var(--radius, 8px);
+	border-color: var(--line2);
+	background: var(--surface);
+	font: inherit;
+	font-size: 0.875rem;
+	box-shadow: none;
+}
+
+.pv-select.p-select:not(.p-disabled):hover {
+	border-color: var(--faint);
+}
+
+.pv-select.p-select:not(.p-disabled).p-focus {
+	border-color: var(--brand);
+	outline: none;
+	box-shadow: none;
+}
+
+.pv-select .p-select-label {
+	display: flex;
+	align-items: center;
+	padding: 0 1.75rem 0 0.625rem;
+	color: var(--ink);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pv-select.p-select .p-select-label.p-placeholder {
+	color: var(--faint);
+}
+
+.pv-select .p-select-dropdown {
+	width: 1.75rem;
+	color: var(--muted);
+}
+
+/* -- modal detail Inventory: tinggi mengikuti isi, scroll di body -- */
+.inv-dialog.p-dialog {
+	max-height: 92vh;
+	overflow: hidden;
+	background: var(--surface, #ffffff);
+	border-radius: 12px;
+}
+
+.inv-dialog-max.p-dialog {
+	max-height: 100vh;
+	border-radius: 0;
+}
+</style>

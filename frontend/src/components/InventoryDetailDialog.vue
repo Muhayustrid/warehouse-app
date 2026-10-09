@@ -1,20 +1,42 @@
 <script setup>
-// Modal detail Inventory Movements (W40-3): satu item+gudang dalam periode
-// aktif. Ringkasan dari baris tabel induk (tanpa fetch ulang); Stock Cards
-// lazy per halaman (endpoint stock_cards + item_code persis); Inventory
-// Information dimuat saat accordion pertama kali dibuka.
+// Modal detail Inventory Movements (W40-3, redesign W41): satu item+gudang
+// dalam periode aktif. Ringkasan dari baris tabel induk (tanpa fetch ulang);
+// Stock Cards lazy per halaman (endpoint stock_cards + item_code persis);
+// Inventory Information dimuat saat accordion pertama kali dibuka.
+// Dialog/DataTable/Tooltip tetap PrimeVue; chrome (header/accordion/tombol)
+// native gudang.css + ikon lucide. Tanpa Tailwind — styling via gudang.css +
+// <style> lokal ber-prefix .inv- (skin .pv-table/.pv-select/.inv-dialog
+// didefinisikan non-scoped di InventoryPage.vue).
 import { computed, ref, watch } from 'vue'
 import Dialog from 'primevue/dialog'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tooltip from 'primevue/tooltip'
-import { Button } from '@frappe-ui/components/Button'
-import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
-import { Dropdown } from '@frappe-ui/components/Dropdown'
-import { dayjs } from '@frappe-ui/utils/dayjs'
+import dayjs from 'dayjs'
 import { fetchStockCards, fetchInventoryInfo, downloadExport } from '@/data/inventory'
 import { fmtQty, fmtRp, fmtDate } from '@/lib/format'
 import { toast } from '@/lib/toast'
+
+import {
+	Maximize2 as MaximizeIcon,
+	Minimize2 as MinimizeIcon,
+	X as XIcon,
+	ChevronDown as ChevronDownIcon,
+	ChevronUp as ChevronUpIcon,
+	Calendar as CalendarIcon,
+	Clock as ClockIcon,
+	Download as DownloadIcon,
+	FileSpreadsheet as FileSpreadsheetIcon,
+	FileText as FileTextIcon,
+	LogIn as LogInIcon,
+	LogOut as LogOutIcon,
+	Repeat as RepeatIcon,
+	Truck as TruckIcon,
+	Send as SendIcon,
+	ShoppingCart as ShoppingCartIcon,
+	ClipboardCheck as ClipboardCheckIcon,
+	File as FileIcon,
+} from 'lucide-vue-next'
 
 const vTooltip = Tooltip
 
@@ -29,6 +51,7 @@ const maximized = ref(false)
 const open = ref({ info: false, summary: true, cards: true })
 const info = ref(null)
 const cards = ref({ rows: [], total: 0, first: 0, pageLen: 20, loading: false })
+const exportOpen = ref(false)
 
 const dateLabel = computed(() => {
 	const f = (d) => dayjs(d).format('ddd, D MMM YYYY')
@@ -38,19 +61,19 @@ const dateLabel = computed(() => {
 
 const SUMMARY = [
 	{ key: 'begin', label: 'Beginning', icon: null },
-	{ key: 'in', label: 'In', icon: 'log-in' },
-	{ key: 'out', label: 'Out', icon: 'log-out' },
+	{ key: 'in', label: 'In', icon: LogInIcon },
+	{ key: 'out', label: 'Out', icon: LogOutIcon },
 	{ key: 'end', label: 'Ending', icon: null },
 ]
 
 const VOUCHER_ICON = {
-	'Stock Entry': 'repeat',
-	'Purchase Receipt': 'truck',
-	'Purchase Invoice': 'file-text',
-	'Delivery Note': 'send',
-	'Sales Invoice': 'shopping-cart',
-	'POS Invoice': 'shopping-cart',
-	'Stock Reconciliation': 'check-square',
+	'Stock Entry': RepeatIcon,
+	'Purchase Receipt': TruckIcon,
+	'Purchase Invoice': FileTextIcon,
+	'Delivery Note': SendIcon,
+	'Sales Invoice': ShoppingCartIcon,
+	'POS Invoice': ShoppingCartIcon,
+	'Stock Reconciliation': ClipboardCheckIcon,
 }
 
 let seq = 0
@@ -105,6 +128,7 @@ const pair = () => ({ ...props.period, item_code: props.row.item_code, warehouse
 
 const exporting = ref(false)
 async function exportAs(file_format) {
+	exportOpen.value = false
 	exporting.value = true
 	try {
 		await downloadExport({ kind: 'cards', file_format, ...pair() })
@@ -114,10 +138,6 @@ async function exportAs(file_format) {
 		exporting.value = false
 	}
 }
-const exportOptions = [
-	{ label: 'Excel (.xlsx)', icon: 'file', onClick: () => exportAs('xlsx') },
-	{ label: 'CSV (.csv)', icon: 'file-text', onClick: () => exportAs('csv') },
-]
 
 const time = (dt) => String(dt || '').slice(11, 16)
 const shortDate = (dt) => fmtDate(dt).slice(0, 6)
@@ -137,62 +157,59 @@ const desk = (doctype, name) =>
 		:class="{ 'inv-dialog-max': maximized }"
 	>
 		<template #container="{ closeCallback }">
-			<div v-if="row" class="flex max-h-full min-h-0 flex-col">
+			<div v-if="row" class="inv-modal-body">
 				<!-- header -->
-				<div class="flex flex-wrap items-start justify-between gap-4 border-b border-outline-gray-1 px-6 py-5">
-					<div class="min-w-0">
-						<div class="flex flex-wrap items-center gap-2">
-							<span class="rounded bg-surface-gray-2 px-2 py-0.5 font-mono text-sm text-ink-gray-7">{{ row.item_code }}</span>
-							<span class="text-xl font-semibold text-ink-gray-9">{{ row.item_name }}</span>
-							<span class="text-xl text-ink-gray-4">/ {{ row.uom }}</span>
+				<div class="inv-modal-head">
+					<div class="inv-modal-id">
+						<div class="inv-modal-title">
+							<span class="inv-modal-code">{{ row.item_code }}</span>
+							<span class="inv-modal-name">{{ row.item_name }}</span>
+							<span class="inv-modal-uom">/ {{ row.uom }}</span>
 						</div>
-						<div class="mt-1 text-base font-semibold text-red-700 dark:text-red-400">at {{ row.warehouse }}</div>
-						<div class="mt-1 text-sm text-ink-gray-5">
-							Date: <span class="italic text-ink-gray-7">{{ dateLabel }}</span>
+						<div class="inv-modal-wh">at {{ row.warehouse }}</div>
+						<div class="inv-modal-date">
+							Date: <span class="inv-modal-period">{{ dateLabel }}</span>
 						</div>
 					</div>
-					<div class="flex shrink-0 gap-2">
-						<Button
-							variant="subtle"
-							:label="maximized ? 'Restore' : 'Maximize'"
-							:icon-right="maximized ? 'minimize-2' : 'maximize-2'"
-							@click="maximized = !maximized"
-						/>
-						<Button variant="subtle" label="Close" icon-right="x" @click="closeCallback" />
+					<div class="inv-modal-tools">
+						<button type="button" class="btn" @click="maximized = !maximized">
+							<component :is="maximized ? MinimizeIcon : MaximizeIcon" :size="14" :stroke-width="2" />
+							{{ maximized ? 'Restore' : 'Maximize' }}
+						</button>
+						<button type="button" class="btn" @click="closeCallback">
+							<XIcon :size="14" :stroke-width="2" /> Close
+						</button>
 					</div>
 				</div>
 
-				<div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+				<div class="inv-modal-scroll">
 					<!-- Inventory Information -->
-					<section class="rounded-lg bg-surface-gray-2">
-						<button
-							class="flex w-full items-center justify-between px-4 py-3 text-left text-base font-semibold text-ink-gray-8"
-							@click="toggleInfo"
-						>
+					<section class="inv-info-box">
+						<button type="button" class="inv-acc inv-acc-boxed" @click="toggleInfo">
 							Inventory Information
-							<FeatherIcon :name="open.info ? 'chevron-up' : 'chevron-down'" class="h-4 w-4" />
+							<component :is="open.info ? ChevronUpIcon : ChevronDownIcon" :size="16" :stroke-width="2" />
 						</button>
-						<div v-if="open.info" class="border-t border-outline-gray-2 px-4 py-3">
-							<p v-if="!info" class="text-sm text-ink-gray-5">Loading...</p>
-							<p v-else-if="!info.item_name" class="text-sm text-ink-gray-5">No bin found for this warehouse.</p>
-							<dl v-else class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
-								<div><dt class="text-xs text-ink-gray-5">Item Group</dt><dd class="text-ink-gray-8">{{ info.item_group }}</dd></div>
-								<div><dt class="text-xs text-ink-gray-5">Company</dt><dd class="text-ink-gray-8">{{ info.company }}</dd></div>
+						<div v-if="open.info" class="inv-info-body">
+							<p v-if="!info" class="inv-muted">Loading...</p>
+							<p v-else-if="!info.item_name" class="inv-muted">No bin found for this warehouse.</p>
+							<dl v-else class="inv-info-grid">
+								<div><dt>Item Group</dt><dd>{{ info.item_group }}</dd></div>
+								<div><dt>Company</dt><dd>{{ info.company }}</dd></div>
 								<div>
-									<dt class="text-xs text-ink-gray-5">Inventory UOM</dt>
-									<dd class="text-ink-gray-8">
+									<dt>Inventory UOM</dt>
+									<dd>
 										{{ info.uom }}
-										<span v-if="info.factor !== 1" class="text-ink-gray-5">(1 = {{ fmtQty(info.factor, 4) }} {{ info.stock_uom }})</span>
+										<span v-if="info.factor !== 1" class="inv-faint">(1 = {{ fmtQty(info.factor, 4) }} {{ info.stock_uom }})</span>
 									</dd>
 								</div>
-								<div><dt class="text-xs text-ink-gray-5">Current Stock</dt><dd class="tabular-nums text-ink-gray-8">{{ fmtQty(info.actual_qty) }} {{ info.uom }}</dd></div>
-								<div><dt class="text-xs text-ink-gray-5">Reserved</dt><dd class="tabular-nums text-ink-gray-8">{{ fmtQty(info.reserved_qty) }} {{ info.uom }}</dd></div>
-								<div><dt class="text-xs text-ink-gray-5">Projected</dt><dd class="tabular-nums text-ink-gray-8">{{ fmtQty(info.projected_qty) }} {{ info.uom }}</dd></div>
-								<div><dt class="text-xs text-ink-gray-5">Valuation Rate</dt><dd class="tabular-nums text-ink-gray-8">{{ fmtRp(info.valuation_rate) }} / {{ info.uom }}</dd></div>
-								<div><dt class="text-xs text-ink-gray-5">Stock Value</dt><dd class="tabular-nums text-ink-gray-8">{{ fmtRp(info.stock_value) }}</dd></div>
-								<div v-if="info.description && info.description !== info.item_name" class="sm:col-span-3">
-									<dt class="text-xs text-ink-gray-5">Description</dt>
-									<dd class="text-ink-gray-8">{{ info.description.replace(/<[^>]+>/g, ' ') }}</dd>
+								<div><dt>Current Stock</dt><dd class="inv-num">{{ fmtQty(info.actual_qty) }} {{ info.uom }}</dd></div>
+								<div><dt>Reserved</dt><dd class="inv-num">{{ fmtQty(info.reserved_qty) }} {{ info.uom }}</dd></div>
+								<div><dt>Projected</dt><dd class="inv-num">{{ fmtQty(info.projected_qty) }} {{ info.uom }}</dd></div>
+								<div><dt>Valuation Rate</dt><dd class="inv-num">{{ fmtRp(info.valuation_rate) }} / {{ info.uom }}</dd></div>
+								<div><dt>Stock Value</dt><dd class="inv-num">{{ fmtRp(info.stock_value) }}</dd></div>
+								<div v-if="info.description && info.description !== info.item_name" class="inv-info-desc">
+									<dt>Description</dt>
+									<dd>{{ info.description.replace(/<[^>]+>/g, ' ') }}</dd>
 								</div>
 							</dl>
 						</div>
@@ -200,60 +217,59 @@ const desk = (doctype, name) =>
 
 					<!-- Movement Summary -->
 					<section>
-						<button
-							class="flex w-full items-center justify-between border-b border-outline-gray-1 pb-2 text-left text-base font-semibold text-ink-gray-8"
-							@click="open.summary = !open.summary"
-						>
+						<button type="button" class="inv-acc" @click="open.summary = !open.summary">
 							Movement Summary
-							<FeatherIcon :name="open.summary ? 'chevron-up' : 'chevron-down'" class="h-4 w-4" />
+							<component :is="open.summary ? ChevronUpIcon : ChevronDownIcon" :size="16" :stroke-width="2" />
 						</button>
-						<div v-if="open.summary" class="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+						<div v-if="open.summary" class="inv-summary-grid">
 							<div
 								v-for="s in SUMMARY"
 								:key="s.key"
-								class="overflow-hidden rounded-lg border text-center"
-								:class="
-									s.key === 'end' && (row.end_qty < 0 || row.end_value < 0)
-										? 'border-red-800 bg-red-800 text-white'
-										: 'border-outline-gray-2 text-ink-gray-9'
-								"
+								class="inv-sum-card"
+								:class="{ 'inv-sum-neg': s.key === 'end' && (row.end_qty < 0 || row.end_value < 0) }"
 							>
-								<div class="px-3 pb-3 pt-4">
-									<div class="flex items-center justify-center gap-1.5 text-sm font-semibold">
-										<FeatherIcon v-if="s.icon" :name="s.icon" class="h-4 w-4" />
+								<div class="inv-sum-main">
+									<div class="inv-sum-label">
+										<component :is="s.icon" v-if="s.icon" :size="15" :stroke-width="2" />
 										{{ s.label }}
 									</div>
-									<div class="mt-2 text-2xl tabular-nums">
+									<div class="inv-sum-qty">
 										{{ fmtQty(row[s.key + '_qty']) }}
-										<span class="text-base opacity-60">{{ row.uom }}</span>
+										<span class="inv-sum-uom">{{ row.uom }}</span>
 									</div>
 								</div>
-								<div class="border-t border-current/10 px-3 py-2 text-sm tabular-nums opacity-80">
-									{{ fmtRp(row[s.key + '_value']) }}
-								</div>
+								<div class="inv-sum-val">{{ fmtRp(row[s.key + '_value']) }}</div>
 							</div>
 						</div>
 					</section>
 
 					<!-- Stock Cards -->
 					<section>
-						<button
-							class="flex w-full items-center justify-between border-b border-outline-gray-1 pb-2 text-left text-base font-semibold text-ink-gray-8"
-							@click="open.cards = !open.cards"
-						>
+						<button type="button" class="inv-acc" @click="open.cards = !open.cards">
 							Stock Cards
-							<FeatherIcon :name="open.cards ? 'chevron-up' : 'chevron-down'" class="h-4 w-4" />
+							<component :is="open.cards ? ChevronUpIcon : ChevronDownIcon" :size="16" :stroke-width="2" />
 						</button>
-						<div v-if="open.cards" class="mt-3 space-y-3">
-							<div class="flex justify-end gap-2">
-								<Dropdown v-if="can.export" :options="exportOptions" align="end">
-									<Button variant="subtle" label="Export Stock Cards" icon-left="share" :loading="exporting" />
-								</Dropdown>
+						<div v-if="open.cards" class="inv-cards-wrap">
+							<div v-if="can.export" class="inv-cards-tools">
+								<div class="filterwrap">
+									<button type="button" class="btn filterbtn" :disabled="exporting" @click="exportOpen = !exportOpen">
+										<DownloadIcon :size="14" :stroke-width="2" />
+										<span>Export Stock Cards</span>
+									</button>
+									<div v-if="exportOpen" class="popoverlay" @click="exportOpen = false"></div>
+									<Transition name="pop">
+										<div v-if="exportOpen" class="filterpanel pop-right inv-exportpanel">
+											<button type="button" class="btn" @click="exportAs('xlsx')">
+												<FileSpreadsheetIcon :size="14" :stroke-width="2" /> Excel (.xlsx)
+											</button>
+											<button type="button" class="btn" @click="exportAs('csv')">
+												<FileTextIcon :size="14" :stroke-width="2" /> CSV (.csv)
+											</button>
+										</div>
+									</Transition>
+								</div>
 							</div>
-							<div
-								class="overflow-hidden rounded-lg border border-outline-gray-1 transition-opacity"
-								:class="{ 'opacity-50': cards.loading }"
-							>
+							<div class="inv-cards-table" :class="{ dim: cards.loading }">
 								<DataTable
 									:value="cards.rows"
 									dataKey="name"
@@ -269,55 +285,45 @@ const desk = (doctype, name) =>
 									@page="onPage"
 								>
 									<template #empty>
-										<p class="px-6 py-10 text-center text-sm text-ink-gray-4">
+										<p class="inv-cards-empty">
 											{{ cards.loading ? 'Loading...' : 'No stock transactions in this period.' }}
 										</p>
 									</template>
 									<Column header="Date">
 										<template #body="{ data }">
-											<div class="space-y-1 whitespace-nowrap text-ink-gray-7">
-												<div class="flex items-center gap-1.5">
-													<FeatherIcon name="calendar" class="h-3.5 w-3.5 text-ink-gray-5" />{{ shortDate(data.posting_datetime) }}
+											<div class="inv-nw inv-stamp">
+												<div class="inv-stamp-row">
+													<CalendarIcon :size="13" :stroke-width="2" />{{ shortDate(data.posting_datetime) }}
 												</div>
-												<div class="flex items-center gap-1.5">
-													<FeatherIcon name="clock" class="h-3.5 w-3.5 text-ink-gray-5" />{{ time(data.posting_datetime) }}
+												<div class="inv-stamp-row">
+													<ClockIcon :size="13" :stroke-width="2" />{{ time(data.posting_datetime) }}
 												</div>
 											</div>
 										</template>
 									</Column>
 									<Column header="Reference">
 										<template #body="{ data }">
-											<div class="flex items-start gap-3">
-												<span class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-gray-2 text-ink-gray-6">
-													<FeatherIcon :name="VOUCHER_ICON[data.voucher_type] || 'file'" class="h-4 w-4" />
+											<div class="inv-ref">
+												<span class="inv-ref-ico">
+													<component :is="VOUCHER_ICON[data.voucher_type] || FileIcon" :size="15" :stroke-width="2" />
 												</span>
-												<div class="min-w-0">
-													<div class="text-ink-gray-8">{{ data.voucher_type }}</div>
-													<a
-														:href="desk(data.voucher_type, data.voucher_no)"
-														target="_blank"
-														class="font-mono text-xs text-ink-gray-5 underline decoration-transparent underline-offset-2 hover:decoration-current"
-														>{{ data.voucher_no }}</a
-													>
-													<div v-if="data.counterparty" class="mt-1 text-xs text-ink-gray-6">
-														<span class="font-medium">{{ data.counterparty.dir === 'to' ? 'To' : 'From' }}:</span>
+												<div class="inv-ref-body">
+													<div class="inv-ink">{{ data.voucher_type }}</div>
+													<a :href="desk(data.voucher_type, data.voucher_no)" target="_blank" class="inv-link">{{ data.voucher_no }}</a>
+													<div v-if="data.counterparty" class="inv-xs inv-muted">
+														<span class="inv-med">{{ data.counterparty.dir === 'to' ? 'To' : 'From' }}:</span>
 														{{ [data.counterparty.warehouse, data.counterparty.party, data.counterparty.company].filter(Boolean).join(' · ') }}
 													</div>
-													<div
-														v-if="data.remarks"
-														class="mt-1.5 max-w-xs rounded bg-yellow-50 px-2.5 py-1.5 text-xs italic text-ink-gray-7 dark:bg-yellow-900/30"
-													>
-														{{ data.remarks }}
-													</div>
+													<div v-if="data.remarks" class="inv-remarks">{{ data.remarks }}</div>
 												</div>
 											</div>
 										</template>
 									</Column>
 									<Column header="Beginning" headerClass="num" bodyClass="num">
 										<template #body="{ data }">
-											<div class="whitespace-nowrap tabular-nums" :class="data.qty_before < 0 ? 'text-red-600' : 'text-ink-gray-8'">
-												{{ fmtQty(data.qty_before) }} <span class="text-xs text-ink-gray-4">{{ data.uom }}</span>
-												<div class="text-xs text-ink-gray-5">{{ fmtRp(data.value_before) }}</div>
+											<div class="inv-num" :class="data.qty_before < 0 ? 'inv-bad' : 'inv-ink'">
+												{{ fmtQty(data.qty_before) }} <span class="inv-xs inv-faint">{{ data.uom }}</span>
+												<div class="inv-xs inv-muted">{{ fmtRp(data.value_before) }}</div>
 											</div>
 										</template>
 									</Column>
@@ -326,12 +332,12 @@ const desk = (doctype, name) =>
 											<div
 												v-if="data.qty_in != null"
 												v-tooltip.top="unitPrice(data, data.qty_in)"
-												class="cursor-help whitespace-nowrap tabular-nums text-green-700 dark:text-green-400"
+												class="inv-num inv-help inv-ok"
 											>
-												{{ fmtQty(data.qty_in) }} <span class="text-xs text-ink-gray-4">{{ data.uom }}</span>
-												<div class="text-xs text-ink-gray-5">{{ fmtRp(data.value_change) }}</div>
+												{{ fmtQty(data.qty_in) }} <span class="inv-xs inv-faint">{{ data.uom }}</span>
+												<div class="inv-xs inv-muted">{{ fmtRp(data.value_change) }}</div>
 											</div>
-											<span v-else class="text-ink-gray-4">-</span>
+											<span v-else class="inv-faint">-</span>
 										</template>
 									</Column>
 									<Column header="Out" headerClass="num" bodyClass="num">
@@ -339,19 +345,19 @@ const desk = (doctype, name) =>
 											<div
 												v-if="data.qty_out != null"
 												v-tooltip.top="unitPrice(data, data.qty_out)"
-												class="cursor-help whitespace-nowrap tabular-nums text-red-600 dark:text-red-400"
+												class="inv-num inv-help inv-bad"
 											>
-												{{ fmtQty(data.qty_out) }} <span class="text-xs text-ink-gray-4">{{ data.uom }}</span>
-												<div class="text-xs text-ink-gray-5">{{ fmtRp(-data.value_change) }}</div>
+												{{ fmtQty(data.qty_out) }} <span class="inv-xs inv-faint">{{ data.uom }}</span>
+												<div class="inv-xs inv-muted">{{ fmtRp(-data.value_change) }}</div>
 											</div>
-											<span v-else class="text-ink-gray-4">-</span>
+											<span v-else class="inv-faint">-</span>
 										</template>
 									</Column>
 									<Column header="Ending" headerClass="num" bodyClass="num">
 										<template #body="{ data }">
-											<div class="whitespace-nowrap font-medium tabular-nums" :class="data.qty_after < 0 ? 'text-red-600' : 'text-ink-gray-9'">
-												{{ fmtQty(data.qty_after) }} <span class="text-xs font-normal text-ink-gray-4">{{ data.uom }}</span>
-												<div class="text-xs font-normal text-ink-gray-5">{{ fmtRp(data.value_after) }}</div>
+											<div class="inv-num inv-med" :class="data.qty_after < 0 ? 'inv-bad' : 'inv-ink'">
+												{{ fmtQty(data.qty_after) }} <span class="inv-xs inv-faint">{{ data.uom }}</span>
+												<div class="inv-xs inv-muted">{{ fmtRp(data.value_after) }}</div>
 											</div>
 										</template>
 									</Column>
@@ -364,3 +370,107 @@ const desk = (doctype, name) =>
 		</template>
 	</Dialog>
 </template>
+
+<style>
+/* chrome modal yang butuh class gudang.css namun tak lewat InventoryPage:
+   popover export + panel kanan (skin .pv-table/.pv-select/.inv-dialog sendiri
+   sudah didefinisikan di InventoryPage.vue, non-scoped, berlaku di sini) */
+.inv-dialog .popoverlay { position: fixed; inset: 0; z-index: 60; }
+.inv-dialog .pop-enter-active { transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.32, 0.72, 0, 1); }
+.inv-dialog .pop-leave-active { transition: opacity 0.12s ease; }
+.inv-dialog .pop-enter-from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+.inv-dialog .pop-leave-to { opacity: 0; }
+.inv-dialog .inv-exportpanel { width: 220px; }
+.inv-dialog .inv-exportpanel .btn { justify-content: flex-start; width: 100%; }
+
+/* -- kerangka modal -- */
+.inv-modal-body { display: flex; flex-direction: column; max-height: 100%; min-height: 0; }
+.inv-modal-head {
+	display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+	gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--line);
+}
+.inv-modal-id { min-width: 0; }
+.inv-modal-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.inv-modal-code {
+	padding: 2px 8px; border-radius: 6px; background: var(--grey-bg, rgba(0, 0, 0, 0.05));
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; color: var(--muted);
+}
+.inv-modal-name { font-size: 20px; font-weight: 600; color: var(--ink); }
+.inv-modal-uom { font-size: 20px; color: var(--faint); }
+.inv-modal-wh { margin-top: 4px; font-size: 16px; font-weight: 600; color: var(--bad-ink); }
+.inv-modal-date { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.inv-modal-period { font-style: italic; color: var(--muted); }
+.inv-modal-tools { display: flex; flex: none; gap: 8px; }
+.inv-modal-tools .btn { gap: 6px; display: inline-flex; align-items: center; }
+.inv-modal-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; }
+
+/* -- accordion (Inventory Information / Movement Summary / Stock Cards) -- */
+.inv-acc {
+	display: flex; width: 100%; align-items: center; justify-content: space-between;
+	border: 0; background: none; cursor: pointer; font: inherit; text-align: left;
+	padding: 0 0 8px; margin-bottom: 0; font-size: 16px; font-weight: 600; color: var(--ink);
+	border-bottom: 1px solid var(--line);
+}
+.inv-acc-boxed { padding: 12px 16px; border-bottom: 0; }
+.inv-info-box { border-radius: 10px; background: var(--grey-bg, rgba(0, 0, 0, 0.04)); }
+.inv-acc-boxed { border-bottom: 0; }
+.inv-info-box .inv-info-body { border-top: 1px solid var(--line); padding: 12px 16px; }
+
+/* -- Inventory Information -- */
+.inv-info-body > p { margin: 0; font-size: 13px; color: var(--muted); }
+.inv-info-grid {
+	display: grid; gap: 12px 24px; margin: 0; font-size: 13px;
+	grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 640px) { .inv-info-grid { grid-template-columns: repeat(3, 1fr); } }
+.inv-info-grid dt { font-size: 12px; color: var(--muted); }
+.inv-info-grid dd { margin: 0; color: var(--ink); }
+.inv-info-desc { grid-column: 1 / -1; }
+
+/* -- Movement Summary: 4 kartu -- */
+.inv-summary-grid {
+	display: grid; gap: 12px; margin-top: 16px; grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 1024px) { .inv-summary-grid { grid-template-columns: repeat(4, 1fr); } }
+.inv-sum-card {
+	overflow: hidden; text-align: center; border: 1px solid var(--line);
+	border-radius: 10px; color: var(--ink); background: var(--surface);
+}
+.inv-sum-card.inv-sum-neg { border-color: transparent; background: var(--bad-ink, #9c4736); color: #fff; }
+.inv-sum-main { padding: 16px 12px 12px; }
+.inv-sum-label {
+	display: flex; align-items: center; justify-content: center; gap: 6px;
+	font-size: 13px; font-weight: 600;
+}
+.inv-sum-qty { margin-top: 8px; font-size: 24px; font-variant-numeric: tabular-nums; }
+.inv-sum-uom { font-size: 16px; opacity: 0.6; }
+.inv-sum-val {
+	padding: 8px 12px; font-size: 13px; font-variant-numeric: tabular-nums; opacity: 0.8;
+	border-top: 1px solid rgba(127, 127, 127, 0.25);
+}
+
+/* -- Stock Cards di modal -- */
+.inv-cards-wrap { margin-top: 12px; }
+.inv-cards-tools { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.inv-cards-table {
+	overflow: hidden; border: 1px solid var(--line); border-radius: 10px;
+	transition: opacity 0.15s ease;
+}
+.inv-cards-table.dim { opacity: 0.5; }
+.inv-cards-empty { margin: 0; padding: 40px 24px; text-align: center; font-size: 13px; color: var(--faint); }
+.inv-stamp { color: var(--muted); }
+.inv-stamp-row { display: flex; align-items: center; gap: 6px; }
+.inv-stamp-row svg { color: var(--faint); }
+.inv-ref { display: flex; align-items: flex-start; gap: 12px; }
+.inv-ref-ico {
+	display: flex; flex: none; width: 36px; height: 36px; margin-top: 2px;
+	align-items: center; justify-content: center; border-radius: 50%;
+	background: var(--grey-bg, rgba(0, 0, 0, 0.05)); color: var(--muted);
+}
+.inv-ref-body { min-width: 0; }
+.inv-remarks {
+	max-width: 20rem; margin-top: 6px; padding: 6px 10px; border-radius: 8px;
+	background: var(--warn-bg, #f7ecd2); font-size: 12px; font-style: italic; color: var(--warn-ink, #7a5a14);
+}
+.inv-help { cursor: help; }
+</style>

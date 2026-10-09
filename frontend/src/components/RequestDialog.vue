@@ -2,10 +2,9 @@
 // Dialog konfirmasi request massal (N WO) — tanpa input: qty = hasil penuh
 // tiap WO (server otoritatif, semantik W30). Submit berurutan per WO;
 // hasil parsial ditampilkan apa adanya (pola submit_bulk halaman klasik).
-import { ref, computed, watch } from 'vue'
-import { Dialog } from '@frappe-ui/components/Dialog'
-import { Button } from '@frappe-ui/components/Button'
-import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
+// Bahasa visual production_workspace: <dialog class="dialog"> + .dlg-*.
+import { ref, computed, watch, nextTick } from 'vue'
+import { ClipboardCheck, CircleAlert } from 'lucide-vue-next'
 import { createRequest } from '@/data/board'
 import { fmtNum } from '@/lib/format'
 
@@ -15,6 +14,7 @@ const props = defineProps({
 const emit = defineEmits(['done'])
 const show = defineModel({ type: Boolean, default: false })
 
+const dlg = ref(null)
 const phase = ref('confirm') // confirm | result
 const submitting = ref(false)
 const okList = ref([])
@@ -52,80 +52,112 @@ async function submit() {
 }
 
 function close() {
-	show.value = false
+	dlg.value?.close()
 }
 
-// dialog ditutup (apapun jalannya) → kembali ke fase konfirmasi
+// sinkron model → <dialog>; buka = reset fase + showModal, tutup = close
 watch(show, (v) => {
-	if (!v) {
-		setTimeout(() => {
-			phase.value = 'confirm'
-		}, 200)
+	if (v) {
+		phase.value = 'confirm'
+		nextTick(() => dlg.value?.showModal())
+	} else {
+		dlg.value?.close()
 	}
 })
+
+function onCancel() {
+	// Esc / cancel native: kembalikan fase konfirmasi + tutup via model
+	setTimeout(() => {
+		phase.value = 'confirm'
+	})
+	show.value = false
+}
 </script>
 
 <template>
-	<Dialog v-model="show" :options="{ title, size: 'xl' }">
-		<template #body-content>
+	<Teleport to="body">
+		<dialog ref="dlg" class="dialog dialog-wide" :aria-label="title" @cancel.prevent="onCancel">
+			<header class="dlg-head">
+				<div class="dlg-ico"><ClipboardCheck :size="17" :stroke-width="2" /></div>
+				<div class="dlg-hgroup">
+					<h3>{{ title }}</h3>
+					<p class="dlg-sub">Qty-only bulk request (W30) — server otoritatif.</p>
+				</div>
+			</header>
 			<template v-if="phase === 'confirm'">
-				<p class="mb-4 text-sm text-ink-gray-5">
+				<p class="dlg-note">
 					Request qty equals the full produced output of each Work Order.
 				</p>
-				<div class="overflow-hidden rounded-lg border border-outline-gray-1">
-					<table class="w-full text-sm">
-						<tbody>
-							<tr
-								v-for="r in rows"
-								:key="r.name"
-								class="border-b border-outline-gray-1 last:border-b-0"
-							>
-								<td class="px-3 py-2.5">
-									<div class="font-medium text-ink-gray-8">
-										Batch <b>{{ r.custom_adonan_ke || '-' }}</b> · {{ r.item_name }}
-									</div>
-									<div class="mt-0.5 text-xs text-ink-gray-5">
-										{{ r.name }} · yield {{ fmtNum(r.produced_qty) }}
-										{{ r.stock_uom }}
-									</div>
-								</td>
-								<td class="whitespace-nowrap px-3 py-2.5 text-right font-medium text-ink-gray-7">
-									{{ rowQty(r) }}
-								</td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-			</template>
-			<template v-else>
-				<p v-if="okList.length" class="mb-3 text-sm text-ink-gray-6">
-					<b>Created:</b> {{ okList.join(', ') }}
-				</p>
-				<div class="space-y-2">
-					<div
-						v-for="f in failList"
-						:key="f.wo"
-						class="flex items-start gap-2 rounded-md bg-surface-red-1 p-2.5 text-sm text-ink-red-4"
-					>
-						<FeatherIcon name="alert-circle" class="mt-0.5 h-4 w-4 shrink-0" />
-						<span><b>{{ f.wo }}</b> — {{ f.error }}</span>
+				<div class="wo-body dlg-table">
+					<div class="wo-thead hrow">
+						<span>Batch · Item</span>
+						<span>Work Order</span>
+						<span class="th-kanan">Qty</span>
+					</div>
+					<div v-for="r in rows" :key="r.name" class="wo-row hrow">
+						<span class="hitem">
+							<strong>Batch {{ r.custom_adonan_ke || '-' }}</strong>
+							{{ r.item_name }}
+							<small>{{ r.name }} · yield {{ fmtNum(r.produced_qty) }} {{ r.stock_uom }}</small>
+						</span>
+						<span class="hwo">{{ r.name }}</span>
+						<span class="wo-qty c-qty">
+							<span class="qmain">{{ rowQty(r) }}</span>
+						</span>
 					</div>
 				</div>
 			</template>
-		</template>
-		<template #actions>
-			<template v-if="phase === 'confirm'">
-				<Button variant="subtle" label="Cancel" @click="show = false" />
-				<Button
-					variant="solid"
-					label="Create Request"
-					:loading="submitting"
-					@click="submit"
-				/>
-			</template>
 			<template v-else>
-				<Button variant="solid" label="Close" @click="close" />
+				<p v-if="okList.length" class="dlg-note ok-note">
+					<strong>Created:</strong> {{ okList.join(', ') }}
+				</p>
+				<div class="failwrap">
+					<div v-for="f in failList" :key="f.wo" class="failrow" role="alert">
+						<CircleAlert :size="15" :stroke-width="2" class="fico" />
+						<span><strong>{{ f.wo }}</strong> — {{ f.error }}</span>
+					</div>
+				</div>
 			</template>
-		</template>
-	</Dialog>
+			<div class="dlg-actions">
+				<template v-if="phase === 'confirm'">
+					<button type="button" class="btn" @click="close">Cancel</button>
+					<button type="button" class="btn btn-primary" :disabled="submitting" @click="submit">
+						{{ submitting ? 'Creating…' : 'Create Request' }}
+					</button>
+				</template>
+				<template v-else>
+					<button type="button" class="btn btn-primary" @click="close">Close</button>
+				</template>
+			</div>
+		</dialog>
+	</Teleport>
 </template>
+
+<style scoped>
+.dlg-note { color: var(--muted, inherit); font-size: 13.5px; margin: 0 0 10px; }
+.ok-note strong { color: var(--ok-strong, inherit); }
+.dlg-table .wo-thead, .dlg-table .wo-row {
+  grid-template-columns: minmax(160px, 1.4fr) minmax(120px, 1fr) 90px;
+  cursor: default;
+  padding: 9px 12px;
+}
+.dlg-table .wo-row:hover { background: transparent; box-shadow: none; }
+.th-kanan { text-align: right; }
+.hitem { display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
+.hitem small { color: var(--faint, inherit); font-size: 11px; }
+.hwo { font-size: 12px; color: var(--muted, inherit); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-qty { align-items: flex-end; }
+.c-qty .qmain { font-weight: 600; font-size: 13px; }
+.failwrap { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.failrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bad-bg, #f6e1dc);
+  color: var(--bad-ink, #9c4736);
+  font-size: 13px;
+}
+.failrow .fico { flex: none; margin-top: 2px; }
+</style>

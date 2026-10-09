@@ -3,115 +3,126 @@ import { ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import Toasts from '@/components/Toasts.vue'
 import SideNav from '@/components/SideNav.vue'
-import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
-import { useTheme, cycleTheme } from '@/lib/theme'
 import { sessionUser } from '@/lib/session'
 import { initials } from '@/lib/format'
-import { loadPref, savePref } from '@/lib/prefs'
+import {
+	Boxes,
+	ChevronDown,
+	LayoutGrid,
+	ListChecks,
+	Package,
+	Settings,
+	Warehouse,
+} from 'lucide-vue-next'
 
-const { theme } = useTheme()
 const user = sessionUser()
 const route = useRoute()
-const mobileNav = ref(false)
+// drawer ala production_workspace: burger membukanya di SEMUA lebar layar
+// (rail lipat versi lama dibuang — tak ada yang memakainya di template)
+const navOpen = ref(false)
+const userMenu = ref(false)
 
-// sidebar desktop bisa dilipat ala YouTube; keadaan diingat lintas kunjungan
-const collapsed = ref(loadPref('sidebar_collapsed', false))
-
-function toggleNav() {
-	if (window.matchMedia('(min-width: 768px)').matches) {
-		collapsed.value = !collapsed.value
-		savePref('sidebar_collapsed', collapsed.value)
-	} else {
-		mobileNav.value = !mobileNav.value
-	}
-}
-
-const themeIcon = { light: 'sun', dark: 'moon', system: 'monitor' }
-
-// tutup drawer mobile saat pindah halaman
+// tutup drawer & menu profil saat pindah halaman
 watch(
 	() => route.path,
 	() => {
-		mobileNav.value = false
+		navOpen.value = false
+		userMenu.value = false
 	},
 )
 </script>
 
 <template>
-	<!-- topbar: identitas + utilitas (navigasi pindah ke sidebar ala Desk) -->
-	<header class="sticky top-0 z-30 border-b border-outline-gray-1 bg-surface-modal">
-		<div class="flex h-14 items-center px-4 sm:px-6">
-			<div class="flex items-center gap-1.5">
-				<button
-					class="flex h-8 w-8 items-center justify-center rounded-md text-ink-gray-6 hover:bg-surface-gray-3 hover:text-ink-gray-9"
-					aria-label="Menu"
-					@click="toggleNav"
-				>
-					<FeatherIcon name="menu" class="h-4 w-4" />
-				</button>
-				<div class="mx-1 h-5 w-px bg-[var(--outline-gray-2)]" aria-hidden="true" />
-				<div class="flex items-center gap-2">
-					<!-- logo app yang sama dgn Desk (hooks add_to_apps_screen) -->
-					<img :src="'/assets/warehouse_app/logo.svg'" alt="" class="h-8 w-8 shrink-0" />
-					<span class="text-base font-semibold tracking-tight text-ink-gray-9">Gudang</span>
-				</div>
-			</div>
-			<div class="ml-auto flex items-center gap-1.5">
-				<button
-					class="flex h-8 w-8 items-center justify-center rounded-md text-ink-gray-6 hover:bg-surface-gray-3 hover:text-ink-gray-9"
-					:title="`Theme: ${theme}`"
-					@click="cycleTheme()"
-				>
-					<FeatherIcon :name="themeIcon[theme] || 'sun'" class="h-4 w-4" />
-				</button>
-				<a
-					href="/app"
-					class="hidden h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-ink-gray-6 hover:bg-surface-gray-3 hover:text-ink-gray-9 sm:flex"
-					title="Open ERPNext Desk"
-				>
-					Desk
-					<FeatherIcon name="external-link" class="h-3.5 w-3.5" />
-				</a>
-				<div
-					class="ml-1 flex h-8 w-8 items-center justify-center rounded-full bg-surface-gray-4 text-xs font-semibold text-ink-gray-7"
-					:title="user"
-				>
-					{{ initials(user) }}
-				</div>
-			</div>
-		</div>
-	</header>
+	<div class="app" :class="{ 'nav-open': navOpen }">
+		<div class="backdrop" aria-hidden="true" @click="navOpen = false"></div>
 
-	<div class="flex flex-1">
-		<!-- sidebar desktop: penuh <-> rail ikon ala YouTube -->
-		<aside
-			class="hidden shrink-0 border-r border-outline-gray-1 bg-surface-modal md:block"
-			:class="collapsed ? 'w-[4.5rem]' : 'w-60'"
-		>
-			<div class="sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto">
-				<SideNav :collapsed="collapsed" />
+		<header class="topbar">
+			<button class="navburger" aria-label="Buka/tutup menu" @click="navOpen = !navOpen">
+				<span class="bars"><span></span><span></span><span></span></span>
+			</button>
+			<div class="brand">
+				<span class="brandmark"><Warehouse :size="18" :stroke-width="1.9" /></span>
+				<div class="brandtext">
+					<span class="brandname">GUDANG<span class="brandtint">APP</span></span>
+					<span class="brandsub">Warehouse workspace</span>
+				</div>
+			</div>
+			<div class="topuser">
+				<button
+					type="button"
+					class="userbtn"
+					:aria-expanded="userMenu"
+					aria-haspopup="menu"
+					aria-label="Menu pengguna"
+					@click="userMenu = !userMenu"
+					@keydown.esc="userMenu = false"
+				>
+					<span class="avatar">{{ initials(user) }}</span>
+					<span class="uinfo">
+						<span class="uname">{{ user }}</span>
+						<span class="urole">ERPNext</span>
+					</span>
+					<ChevronDown :size="14" :stroke-width="2" class="uchev" :class="{ open: userMenu }" />
+				</button>
+				<template v-if="userMenu">
+					<div class="usermenu-overlay" aria-hidden="true" @click="userMenu = false"></div>
+					<transition name="pop" appear>
+						<div class="usermenu" role="menu">
+							<a role="menuitem" class="usermenu-item" href="/app">
+								<LayoutGrid :size="16" :stroke-width="1.9" />
+								Buka ERPNext Desk
+							</a>
+						</div>
+					</transition>
+				</template>
+			</div>
+		</header>
+
+		<aside class="sidenav" aria-label="Navigasi utama">
+			<div class="sideinner">
+				<div class="sidedrop">
+					<button class="navburger" aria-label="Tutup menu" @click="navOpen = false">
+						<span class="bars"><span></span><span></span><span></span></span>
+					</button>
+					<div class="brand">
+						<span class="brandmark"><Warehouse :size="18" :stroke-width="1.9" /></span>
+						<div class="brandtext">
+							<span class="brandname">GUDANG<span class="brandtint">APP</span></span>
+							<span class="brandsub">Warehouse workspace</span>
+						</div>
+					</div>
+				</div>
+				<SideNav />
 			</div>
 		</aside>
 
-		<!-- drawer mobile -->
-		<template v-if="mobileNav">
-			<div
-				class="fixed inset-0 z-40 bg-ink-gray-9/30 md:hidden"
-				@click="mobileNav = false"
-			/>
-			<aside
-				class="fixed bottom-0 left-0 top-14 z-40 w-60 overflow-y-auto border-r border-outline-gray-1 bg-surface-modal md:hidden"
-			>
-				<SideNav />
-			</aside>
-		</template>
+		<nav class="bottomnav" aria-label="Navigasi utama">
+			<RouterLink to="/" class="bnav-item" :class="{ on: route.path === '/' }">
+				<span class="bnav-ic"><ListChecks :size="20" :stroke-width="1.9" /></span>
+				<span class="bnav-label">Requests</span>
+			</RouterLink>
+			<RouterLink to="/serah-terima" class="bnav-item" :class="{ on: route.path === '/serah-terima' }">
+				<span class="bnav-ic"><Package :size="20" :stroke-width="1.9" /></span>
+				<span class="bnav-label">Monitoring</span>
+			</RouterLink>
+			<RouterLink to="/inventory" class="bnav-item" :class="{ on: route.path === '/inventory' }">
+				<span class="bnav-ic"><Boxes :size="20" :stroke-width="1.9" /></span>
+				<span class="bnav-label">Inventory</span>
+			</RouterLink>
+			<RouterLink to="/settings" class="bnav-item" :class="{ on: route.path === '/settings' }">
+				<span class="bnav-ic"><Settings :size="20" :stroke-width="1.9" /></span>
+				<span class="bnav-label">Lainnya</span>
+			</RouterLink>
+		</nav>
 
-		<main
-			class="mx-auto w-full min-w-0 flex-1 px-4 pb-16 pt-6 sm:px-6"
-			:class="route.meta.wide ? 'max-w-none' : 'max-w-6xl'"
-		>
-			<RouterView />
-		</main>
+		<div class="maincol">
+			<div class="content" :class="{ wide: route.meta.wide }">
+				<div :key="route.path" class="view-anim">
+					<RouterView />
+				</div>
+			</div>
+		</div>
+
+		<Toasts />
 	</div>
-	<Toasts />
 </template>

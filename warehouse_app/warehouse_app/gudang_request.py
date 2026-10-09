@@ -86,7 +86,7 @@ def filter_fields():
 
 
 @frappe.whitelist()
-def requestable_work_orders(search=None, filters=None, limit_start=0):
+def requestable_work_orders(search=None, filters=None, limit_start=0, limit_page_length=50, paginated=0):
 	"""Daftar WO siap-diminta untuk user gudang: adonan + item + produced qty.
 
 	- WO submitted, bukan Stopped/Closed/Cancelled, produced qty > 0.
@@ -96,9 +96,14 @@ def requestable_work_orders(search=None, filters=None, limit_start=0):
 	  create_request (throw duplikat di bawah row lock).
 	- `filters`: JSON list [{field, operator, value}] — field wajib ada di
 	  whitelist FILTER_FIELDS; nilai kosong dilewati.
-	- `limit_start`: offset tombol Load more client (halaman tetap 50).
+	- `limit_start`: offset halaman; `limit_page_length`: ukuran halaman
+	  (20/50/100/250) — kompatibel dgn pemanggil lama (load more: offset
+	  kelipatan 50).
+	- `paginated`: 0 = balas LIST (kontrak lama, dipakai gate + caller lama);
+	  1 = balas {rows, total} utk pager SPA (total = seluruh WO cocok).
 	"""
 	limit_start = max(cint(limit_start), 0)
+	limit_page_length = min(max(cint(limit_page_length or 50), 1), 250)
 	filters_base = [
 		["docstatus", "=", 1],
 		["status", "not in", list(STATUS_TERBLOKIR)],
@@ -120,6 +125,18 @@ def requestable_work_orders(search=None, filters=None, limit_start=0):
 	for parsed_flt in _parse_filters(filters):
 		filters_base.append(parsed_flt)
 
+	# total dihitung terpisah dari halaman (count query ringan) supaya pager
+	# client tahu jumlah halaman tanpa memuat seluruh baris.
+	total = len(
+		frappe.get_all(
+			"Work Order",
+			filters=filters_base,
+			or_filters=or_filters,
+			pluck="name",
+			limit_page_length=0,
+		)
+	)
+
 	rows = frappe.get_list(
 		"Work Order",
 		filters=filters_base,
@@ -136,7 +153,7 @@ def requestable_work_orders(search=None, filters=None, limit_start=0):
 			"custom_handover_material_request",
 		],
 		order_by="creation desc",
-		limit_page_length=50,
+		limit_page_length=limit_page_length,
 		limit_start=limit_start,
 	)
 
@@ -188,7 +205,12 @@ def requestable_work_orders(search=None, filters=None, limit_start=0):
 		r.expected_units = int(round(flt(r.produced_qty) / factor))
 		r.display_uom = r.get("display_uom") or r.stock_uom
 
-	return rows
+	# Default (paginated=0) = list polos — kontrak LAMA utuh, semua pemanggil
+	# lama (gate w9/w16/w19 memanggil fungsi langsung) tak perlu diubah.
+	# Client SPA mengirim paginated=1 dan menerima {rows, total} untuk pager.
+	if not paginated:
+		return rows
+	return frappe._dict({"rows": rows, "total": total})
 
 
 def _parse_filters(filters):

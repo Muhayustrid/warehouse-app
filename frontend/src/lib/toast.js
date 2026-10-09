@@ -1,13 +1,13 @@
 import { reactive } from 'vue'
 
-// Host toast mini di atas komponen <Toast> frappe-ui (versi 0.1.278 tidak
-// mengekspor renderer koleksinya dari root — ini penggantinya).
+// Toast mini custom — dirender oleh Toasts.vue,
+// fixed bottom-right (lihat .toastbox di gudang.css).
 let seq = 0
 export const toasts = reactive([])
 
 function show(message, type = 'info', duration = 4000) {
 	const id = ++seq
-	toasts.push({ id, message: String(message || ''), type, duration })
+	toasts.push({ id, message: String(message || ''), type })
 	if (duration) {
 		setTimeout(() => dismiss(id), duration)
 	}

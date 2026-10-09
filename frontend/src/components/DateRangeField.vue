@@ -4,12 +4,11 @@
 // tetap terbuka, field ikut terisi) → tanggal kedua = "to" (kalender tutup).
 // Hanya from → tetap jadi filter (server mengubah between satu-sisi jadi >=).
 // Nilai internal ISO YYYY-MM-DD; tampilan DD-MM-YYYY.
-import { computed, ref } from 'vue'
-import { Popover } from '@frappe-ui/components/Popover'
-import { Button } from '@frappe-ui/components/Button'
-import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
-import { dayjs } from '@frappe-ui/utils/dayjs'
-import { months, monthStart, generateWeeks } from '@frappe-ui/components/DatePicker'
+// Bahasa visual production_workspace: popup manual ala .filterpanel.
+import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { Calendar } from 'lucide-vue-next'
+import dayjs from 'dayjs'
+import { months, monthStart, generateWeeks } from '@/lib/calendar'
 
 const props = defineProps({
 	from: { type: String, default: '' },
@@ -18,9 +17,30 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:from', 'update:to'])
 
+const open = ref(false)
+const root = ref(null)
 const view = ref('date')
 const year = ref(dayjs().year())
 const month = ref(dayjs().month())
+
+function onDocClick(e) {
+	if (open.value && root.value && !root.value.contains(e.target)) {
+		open.value = false
+	}
+}
+function onKey(e) {
+	if (e.key === 'Escape') {
+		open.value = false
+	}
+}
+onMounted(() => {
+	document.addEventListener('click', onDocClick)
+	document.addEventListener('keydown', onKey)
+})
+onUnmounted(() => {
+	document.removeEventListener('click', onDocClick)
+	document.removeEventListener('keydown', onKey)
+})
 
 const fmt = (iso) => {
 	const d = dayjs(iso)
@@ -68,7 +88,7 @@ function goToday() {
 	month.value = now.month()
 }
 
-function pick(date, togglePopover) {
+function pick(date) {
 	const iso = date.format('YYYY-MM-DD')
 	if (props.from && props.to) {
 		// sudah lengkap → mulai rentang baru
@@ -82,103 +102,145 @@ function pick(date, togglePopover) {
 		}
 		emit('update:from', f)
 		emit('update:to', t)
-		togglePopover() // kedua tanggal terisi → tutup kalender
+		open.value = false // kedua tanggal terisi → tutup kalender
 	} else {
 		// tanggal pertama = from; kalender tetap terbuka untuk to
 		emit('update:from', iso)
 	}
 }
 
-function clear(togglePopover) {
+function clear() {
 	emit('update:from', '')
 	emit('update:to', '')
-	togglePopover()
+	open.value = false
 }
 </script>
 
 <template>
-	<Popover placement="bottom-start">
-		<template #target="{ togglePopover, isOpen }">
-			<button
-				type="button"
-				class="flex h-8 w-full min-w-0 items-center justify-between gap-1 rounded border bg-surface-modal px-1.5 text-xs"
-				:class="[
-					display ? 'border-outline-gray-2 text-ink-gray-8' : 'border-outline-gray-2 text-ink-gray-4',
-					isOpen ? 'border-outline-gray-3 bg-surface-gray-1' : '',
-				]"
-				:title="display || placeholder"
-				@click="togglePopover()"
-			>
-				<span class="truncate">{{ display || placeholder }}</span>
-				<FeatherIcon name="calendar" class="h-3.5 w-3.5 shrink-0 text-ink-gray-4" />
-			</button>
-		</template>
-		<template #body="{ togglePopover }">
-			<div
-				class="w-fit min-w-[15.5rem] select-none rounded-lg bg-surface-modal text-base text-ink-gray-9 shadow-2xl ring-1 ring-black ring-opacity-5"
-			>
-				<div class="flex items-center justify-between gap-1 p-2 pb-0">
-					<Button
-						variant="ghost"
-						size="sm"
-						class="text-sm font-medium text-ink-gray-7"
-						:label="monthLabel"
-						@click="view = view === 'date' ? 'month' : 'date'"
-					/>
-					<div class="flex items-center">
-						<Button variant="ghost" icon="chevron-left" class="size-7" label="previous" @click="prev" />
-						<Button variant="ghost" size="sm" class="text-xs" label="Today" @click="goToday" />
-						<Button variant="ghost" icon="chevron-right" class="size-7" label="next" @click="next" />
+	<div ref="root" class="filterwrap drangefield">
+		<button
+			type="button"
+			class="input drange-btn"
+			:title="display || placeholder"
+			@click="open = !open"
+		>
+			<span class="drange-label" :class="{ 'rp-ph': !display }">{{ display || placeholder }}</span>
+			<Calendar :size="14" :stroke-width="2" class="drange-ico" />
+		</button>
+		<div v-if="open" class="popoverlay" @click="open = false" />
+		<Transition name="pop">
+			<div v-if="open" class="filterpanel dcal">
+				<div class="dcal-head">
+					<button type="button" class="linkbtn dcal-title" @click="view = view === 'date' ? 'month' : 'date'">
+						{{ monthLabel }}
+					</button>
+					<div class="dcal-nav">
+						<button type="button" class="btn btn-sm iconbtn" aria-label="Previous month" @click="prev">‹</button>
+						<button type="button" class="btn btn-sm" @click="goToday">Today</button>
+						<button type="button" class="btn btn-sm iconbtn" aria-label="Next month" @click="next">›</button>
 					</div>
 				</div>
-				<div v-if="view === 'date'" class="p-2">
-					<div class="mb-1 flex items-center text-xs font-medium uppercase text-ink-gray-4">
-						<div v-for="(d, i) in ['S', 'M', 'T', 'W', 'T', 'F', 'S']" :key="i" class="flex h-6 w-8 items-center justify-center">
-							{{ d }}
-						</div>
+				<div v-if="view === 'date'" class="dcal-grid" role="grid">
+					<div class="dcal-dow" role="row">
+						<span v-for="(d, i) in ['S', 'M', 'T', 'W', 'T', 'F', 'S']" :key="i">{{ d }}</span>
 					</div>
-					<div v-for="(week, wi) in weeks" :key="wi" class="flex" role="row">
+					<div v-for="(week, wi) in weeks" :key="wi" class="dcal-week" role="row">
 						<button
 							v-for="d in week"
 							:key="d.key"
 							type="button"
 							role="gridcell"
-							class="flex h-8 w-8 cursor-pointer items-center justify-center rounded text-sm focus:outline-none"
-							:class="[
-								d.inMonth ? 'text-ink-gray-8' : 'text-ink-gray-3',
-								d.isToday ? 'font-extrabold text-ink-gray-9' : '',
-								d.isFrom || d.isTo
-									? 'bg-surface-gray-6 text-ink-white hover:bg-surface-gray-6'
-									: d.inRange
-										? 'rounded-none bg-surface-gray-3'
-										: 'hover:bg-surface-gray-2',
-								d.isFrom && !d.isTo ? 'rounded-l-md rounded-r-none' : '',
-								d.isTo && !d.isFrom ? 'rounded-r-md rounded-l-none' : '',
-							]"
+							class="dcal-day"
+							:class="{
+								out: !d.inMonth,
+								today: d.isToday,
+								edge: d.isFrom || d.isTo,
+								inrange: d.inRange,
+							}"
 							:aria-selected="d.isFrom || d.isTo ? 'true' : 'false'"
 							:aria-label="d.date.format('YYYY-MM-DD')"
-							@click="pick(d.date, togglePopover)"
+							@click="pick(d.date)"
 						>
 							{{ d.date.date() }}
 						</button>
 					</div>
 				</div>
-				<div v-else class="grid grid-cols-3 gap-1 p-2" role="grid" aria-label="Select month">
+				<div v-else class="dcal-months" role="grid" aria-label="Select month">
 					<button
 						v-for="(m, i) in months"
 						:key="m"
 						type="button"
-						class="cursor-pointer rounded py-2 text-center text-sm hover:bg-surface-gray-2 focus:outline-none"
-						:class="i === month ? 'bg-surface-gray-6 text-ink-white hover:bg-surface-gray-6' : ''"
+						class="dcal-m"
+						:class="{ on: i === month }"
 						@click="month = i; view = 'date'"
 					>
 						{{ m.slice(0, 3) }}
 					</button>
 				</div>
-				<div class="flex justify-end gap-1 border-t border-outline-gray-1 p-2 dark:border-outline-gray-2">
-					<Button size="sm" variant="outline" label="Clear" :disabled="!from && !to" @click="clear(togglePopover)" />
+				<div class="dcal-foot">
+					<button type="button" class="btn btn-sm" :disabled="!from && !to" @click="clear">Clear</button>
 				</div>
 			</div>
-		</template>
-	</Popover>
+		</Transition>
+	</div>
 </template>
+
+<style scoped>
+.drange-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 150px;
+  text-align: left;
+  cursor: pointer;
+}
+.drange-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.drange-label.rp-ph { color: var(--faint, inherit); }
+.drange-ico { flex: none; color: var(--faint, inherit); }
+.dcal { right: 0; left: auto; width: 260px; transform-origin: top right; }
+.dcal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dcal-title { font-size: 13px; }
+.dcal-nav { display: flex; align-items: center; gap: 4px; }
+.iconbtn { width: 28px; padding: 0; display: grid; place-items: center; font-size: 14px; }
+.dcal-grid { margin-top: 10px; }
+.dcal-dow, .dcal-week { display: grid; grid-template-columns: repeat(7, 1fr); }
+.dcal-dow span {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint, inherit);
+  padding: 3px 0;
+}
+.dcal-day {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink, inherit);
+  height: 30px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.dcal-day:hover { background: var(--brand-softer, rgba(102, 163, 191, 0.1)); }
+.dcal-day.out { color: var(--faint, inherit); }
+.dcal-day.today { font-weight: 800; }
+.dcal-day.inrange { border-radius: 0; background: var(--brand-softer, rgba(102, 163, 191, 0.1)); }
+.dcal-day.edge { background: var(--brand-soft, rgba(102, 163, 191, 0.18)); color: var(--brand-strong, inherit); font-weight: 700; }
+.dcal-months { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 10px; }
+.dcal-m {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink, inherit);
+  padding: 8px 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.dcal-m:hover { background: var(--brand-softer, rgba(102, 163, 191, 0.1)); }
+.dcal-m.on { background: var(--brand-soft, rgba(102, 163, 191, 0.18)); color: var(--brand-strong, inherit); font-weight: 700; }
+.dcal-foot { display: flex; justify-content: flex-end; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line, rgba(0, 0, 0, 0.08)); }
+</style>

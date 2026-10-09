@@ -2,44 +2,34 @@
 // Papan Serah Terima Gudang (SPA, W33) — port paritas penuh dari page
 // klasik gudang_request: search, filter builder, UOM switcher, pemilih
 // kolom, kepadatan, checklist + deteksi grup, dialog bulk/group (qty-only,
-// semantik W30), cancel tunggal/grup, pill status, Load more.
+// semantik W30), cancel tunggal/grup, Load more.
+// Bahasa visual production_workspace: .page-head/.toolbar/.wo-body/.wo-row.
 import { ref, computed, watch, onMounted } from 'vue'
-import { Button } from '@frappe-ui/components/Button'
-import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
+import { Search, RefreshCw, SearchX } from 'lucide-vue-next'
 import { toast } from '@/lib/toast'
 import { fetchWorkOrders, fetchFilterFields, cancelRequest, cancelGroupRequest } from '@/data/board'
 import { loadPref, savePref } from '@/lib/prefs'
 import { fmtNum } from '@/lib/format'
-import { dayjs } from '@frappe-ui/utils/dayjs'
+import dayjs from 'dayjs'
 import FilterBuilder from '@/components/FilterBuilder.vue'
-import DisplayMenu from '@/components/DisplayMenu.vue'
 import RequestDialog from '@/components/RequestDialog.vue'
 import GroupRequestDialog from '@/components/GroupRequestDialog.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 
-const PAGE_SIZE = 50
-
-// Item & Qty selalu tampil; sisanya bisa disembunyikan lewat Display
-// (item_code/warehouse = baris kedua di sel Item/Work Order).
-const ALL_COLUMNS = [
-	{ key: 'batch', label: 'Batch' },
-	{ key: 'item_code', label: 'Item Code' },
-	{ key: 'wo', label: 'Work Order' },
-	{ key: 'warehouse', label: 'Warehouse' },
-	{ key: 'status', label: 'Status' },
-]
+// pilihan jumlah baris per halaman (permintaan user: 20/50/100/250)
+const PAGE_SIZES = [20, 50, 100, 250]
 
 // ---- state
 const rows = ref([])
-const lastFetchCount = ref(0)
+const total = ref(0)
 const loading = ref(false)
 const search = ref('')
 const filters = ref([])
 const fieldMeta = ref(null)
 const selectedNames = ref([])
 const qtyUom = ref(loadPref('qty_uom', ''))
-const visibleCols = ref(loadPref('columns', ALL_COLUMNS.map((c) => c.key)).filter((k) => ALL_COLUMNS.some((c) => c.key === k)))
-const density = ref(loadPref('density', 'comfort'))
+const savedSize = loadPref('page_size', 50)
+const pageSize = ref(PAGE_SIZES.includes(savedSize) ? savedSize : 50)
 
 const bulkDialog = ref(false)
 const groupDialog = ref(false)
@@ -48,19 +38,6 @@ const cancelTarget = ref(null) // { mr, plan, size } | null
 // baris Requested yang dilibatkan utk cancel — tampil di bar mengapung,
 // gaya yang sama dgn bar Create Request (saling eksklusif dgn seleksi)
 const cancelPick = ref(null)
-
-const show = (key) => visibleCols.value.includes(key)
-const pad = computed(() => (density.value === 'compact' ? 'py-1.5' : 'py-3'))
-
-function setCols(keys) {
-  // render ulang tanpa fetch; seleksi dikosongkan (pola klasik);
-  // simpan dalam urutan kanonik ALL_COLUMNS
-  const canonical = ALL_COLUMNS.filter((c) => keys.includes(c.key)).map((c) => c.key)
-  selectedNames.value = []
-  cancelPick.value = null
-  visibleCols.value = canonical
-  savePref('columns', canonical)
-}
 
 // ---- UOM kolom Qty
 const uomOptions = computed(() => {
@@ -96,9 +73,9 @@ function qtyValue(r) {
 const stateOf = (r) => (r.request_active ? 'requested' : r.request_shipped ? 'shipped' : 'ready')
 const VIEWS = [
 	{ key: 'all', label: 'All' },
-	{ key: 'ready', label: 'Ready', dot: 'bg-blue-500' },
-	{ key: 'requested', label: 'Requested', dot: 'bg-orange-500' },
-	{ key: 'shipped', label: 'Shipped', dot: 'bg-green-500' },
+	{ key: 'ready', label: 'Ready' },
+	{ key: 'requested', label: 'Requested' },
+	{ key: 'shipped', label: 'Shipped' },
 ]
 const view = ref('all')
 const counts = computed(() => {
@@ -199,7 +176,7 @@ function toggleAll(checked) {
 	}
 }
 
-// ---- muat data
+// ---- muat data (pagination server-side)
 function activeFilters() {
 	return filters.value.filter((f) =>
 		Array.isArray(f.value)
@@ -208,22 +185,21 @@ function activeFilters() {
 	)
 }
 
-async function load(append = false) {
+// halaman dimuat dari awal setiap kali filter/ukuran berubah (offset aman)
+async function load(page = 1) {
 	loading.value = true
 	try {
 		const res = await fetchWorkOrders({
 			search: search.value,
 			filters: activeFilters(),
-			limitStart: append ? rows.value.length : 0,
+			limitStart: (page - 1) * pageSize.value,
+			pageLen: pageSize.value,
 		})
-		// frappeRequest sudah mengembalikan data.message — array baris langsung
-		const fetched = Array.isArray(res) ? res : []
-		lastFetchCount.value = fetched.length
-		rows.value = append ? rows.value.concat(fetched) : fetched
-		if (!append) {
-			selectedNames.value = []
-			cancelPick.value = null
-		}
+		// server balas {rows, total} — bentuk baru pagination
+		rows.value = Array.isArray(res?.rows) ? res.rows : []
+		total.value = Number(res?.total || 0)
+		selectedNames.value = []
+		cancelPick.value = null
 		// normalisasi pilihan uom tersimpan (tak ada di opsi → stock uom)
 		if (rows.value.length) {
 			const opts = uomOptions.value
@@ -239,29 +215,37 @@ async function load(append = false) {
 	}
 }
 
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const page = ref(1)
+function goPage(p) {
+	const next = Math.min(Math.max(1, p), totalPages.value)
+	page.value = next
+	load(next)
+}
+function setPageSize(n) {
+	pageSize.value = n
+	savePref('page_size', n)
+	goPage(1)
+}
+
 let searchTimer = null
 watch(search, () => {
 	clearTimeout(searchTimer)
-	searchTimer = setTimeout(() => load(), 350)
+	searchTimer = setTimeout(() => load(1), 350)
 })
-
-// kepadatan dipilih di DisplayMenu (v-model) — persist di sini
-watch(density, (v) => savePref('density', v))
 
 // filter berubah: FilterBuilder emit 'change' (bukan watch deep — see quirk)
 let filterTimer = null
 function onFilterChange() {
 	clearTimeout(filterTimer)
-	filterTimer = setTimeout(() => load(), 300)
+	filterTimer = setTimeout(() => load(1), 300)
 }
 
 function refresh() {
 	clearTimeout(searchTimer)
 	clearTimeout(filterTimer)
-	load()
+	load(page.value)
 }
-
-const canLoadMore = computed(() => rows.value.length > 0 && lastFetchCount.value >= PAGE_SIZE)
 
 onMounted(async () => {
 	try {
@@ -269,7 +253,7 @@ onMounted(async () => {
 	} catch (e) {
 		/* filter tetap bisa dipakai tanpa meta? tidak — tapi jangan blok papan */
 	}
-	load()
+	load(1)
 })
 
 // ---- aksi
@@ -287,12 +271,12 @@ function onBulkDone({ ok, fail }) {
 	if (ok && !fail) {
 		toast.success(`${ok} request${ok > 1 ? 's' : ''} created`)
 	}
-	load()
+	load(page.value)
 }
 
 function onGroupDone({ boxPlan, size }) {
 	toast.success(`Group request created: ${boxPlan} · ${size} Work Orders`)
-	load()
+	load(page.value)
 }
 
 function askCancel() {
@@ -344,252 +328,225 @@ async function doCancel() {
 	} catch (e) {
 		toast.error(e.message)
 	}
-	load()
+	load(page.value)
 }
 </script>
 
 <template>
-	<div class="space-y-5">
+	<div class="board">
 		<!-- header -->
-		<div>
-			<h1 class="text-2xl font-semibold tracking-tight text-ink-gray-9">Handover Requests</h1>
-			<p class="mt-1 text-sm text-ink-gray-5">
-				Finished batches from production. Select the ones the warehouse should receive and create a request.
-			</p>
+		<div class="page-head">
+			<div class="ph-left">
+				<h1>Handover Requests</h1>
+				<p class="sub">
+					Finished batches from production. Select the ones the warehouse should receive and create a request.
+				</p>
+			</div>
 		</div>
 
-		<!-- daftar per hari produksi: tab status + toolbar menempel di kepala kartu -->
-		<div class="overflow-hidden rounded-lg border border-outline-gray-2 bg-surface-modal">
-			<div class="flex gap-6 overflow-x-auto border-b border-outline-gray-2 px-4" role="tablist" aria-label="Status">
+		<!-- toolbar: search + tab status segmented + filter + display + uom + refresh -->
+		<div class="toolbar">
+			<div class="searchbox">
+				<Search :size="15" :stroke-width="2" class="search-ico" />
+				<input
+					v-model="search"
+					class="input"
+					type="search"
+					placeholder="Search batch, item, or work order"
+					aria-label="Search batch, item, or work order"
+					@keydown.enter="refresh"
+				/>
+			</div>
+			<div class="dseg" role="tablist" aria-label="Status">
 				<button
 					v-for="v in VIEWS"
 					:key="v.key"
+					type="button"
 					role="tab"
+					class="dseg-btn"
+					:class="{ on: view === v.key }"
 					:aria-selected="view === v.key"
-					class="-mb-px flex h-11 shrink-0 items-center gap-2 border-b-2 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-outline-gray-4"
-					:class="view === v.key ? 'border-gray-900 font-medium text-ink-gray-9 dark:border-gray-100' : 'border-transparent text-ink-gray-5 hover:text-ink-gray-8'"
 					@click="view = v.key; selectedNames = []; cancelPick = null"
 				>
-					<span v-if="v.dot" class="h-2 w-2 rounded-full" :class="v.dot" />
 					{{ v.label }}
-					<span
-						class="rounded-full px-1.5 text-xs tabular-nums"
-						:class="view === v.key ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : 'bg-surface-gray-2 text-ink-gray-6'"
-						>{{ counts[v.key] }}</span
-					>
+					<span class="dseg-count">{{ counts[v.key] }}</span>
 				</button>
 			</div>
-			<div class="flex flex-wrap items-center gap-2 border-b border-outline-gray-2 bg-surface-gray-1 px-4 py-3">
-				<label class="relative min-w-0 flex-1 basis-64">
-					<span class="sr-only">Search</span>
-					<FeatherIcon name="search" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-gray-5" />
-					<input
-						v-model="search"
-						type="search"
-						placeholder="Search batch, item, or work order"
-						class="h-9 w-full rounded-md border border-outline-gray-2 bg-surface-white pl-9 pr-3 text-sm text-ink-gray-8 placeholder:text-ink-gray-4 focus:border-outline-gray-4 focus:outline-none focus:ring-2 focus:ring-outline-gray-2 dark:bg-surface-gray-2"
-						@keydown.enter="refresh"
-					/>
-				</label>
-				<FilterBuilder v-model="filters" :meta="fieldMeta" @change="onFilterChange" />
-				<DisplayMenu
-					v-model:visible="visibleCols"
-					v-model:density="density"
-					:columns="ALL_COLUMNS"
-					@update:visible="setCols"
-				/>
-				<select
-					v-if="uomOptions.length > 1"
-					class="h-8 rounded border border-outline-gray-2 bg-surface-white py-0 pl-2.5 pr-8 text-sm text-ink-gray-7 dark:bg-surface-gray-2"
-					:value="qtyUom"
-					aria-label="Qty unit"
-					@change="setUom($event.target.value)"
+			<FilterBuilder v-model="filters" :meta="fieldMeta" @change="onFilterChange" />
+			<select
+				v-if="uomOptions.length > 1"
+				class="select uom-select"
+				:value="qtyUom"
+				aria-label="Qty unit"
+				@change="setUom($event.target.value)"
+			>
+				<option v-for="o in uomOptions" :key="o" :value="o">{{ o }}</option>
+			</select>
+			<button
+				type="button"
+				class="btn iconbtn"
+				:disabled="loading"
+				aria-label="Refresh"
+				title="Refresh"
+				@click="refresh()"
+			>
+				<RefreshCw :size="14" :stroke-width="2" />
+			</button>
+		</div>
+
+		<!-- daftar per hari produksi -->
+		<div class="wo-body" :class="{ 'is-loading': loading }">
+			<div v-if="days.length" class="wo-thead">
+				<span></span>
+				<span>Batch</span>
+				<span>Item</span>
+				<span class="th-kanan">Qty</span>
+				<span>Work Order</span>
+				<span>Status</span>
+			</div>
+			<template v-for="day in days" :key="day.date">
+				<div class="dayhead">
+					{{ dayLabel(day.date) }}
+					<span class="dcount">{{ day.rows.length }} {{ day.rows.length === 1 ? 'batch' : 'batches' }}</span>
+					<label v-if="dayState(day).any" class="dcheck">
+						<input
+							type="checkbox"
+							:checked="dayState(day).all"
+							:indeterminate.prop="dayState(day).some"
+							:aria-label="`Select ready batches from ${dayLabel(day.date)}`"
+							@change="toggleDay(day, $event.target.checked)"
+						/>
+					</label>
+				</div>
+				<div
+					v-for="r in day.rows"
+					:key="r.name"
+					class="wo-row"
+					role="button"
+					tabindex="0"
+					:class="{
+						'is-selected': selectedNames.includes(r.name),
+						'is-cancel': cancelPick === r.name,
+						shipped: r.request_shipped,
+					}"
+					:aria-label="`Select ${r.item_name} batch ${r.custom_adonan_ke || r.name}`"
+					@click="toggleRow(r)"
+					@keydown.enter.prevent="toggleRow(r)"
 				>
-					<option v-for="o in uomOptions" :key="o" :value="o">{{ o }}</option>
-				</select>
-				<Button variant="ghost" icon="refresh-cw" :loading="loading" aria-label="Refresh" title="Refresh" @click="refresh()" />
-			</div>
-			<div class="overflow-x-auto transition-opacity" :class="{ 'opacity-50': loading }">
-				<table class="w-full text-sm">
-					<thead>
-						<tr class="border-b border-outline-gray-2 text-left text-xs text-ink-gray-5">
-							<th class="w-10 py-2.5 pl-4 pr-2">
-								<input
-									type="checkbox"
-									class="h-3.5 w-3.5 accent-ink-gray-9"
-									:checked="allChecked"
-									:indeterminate.prop="someChecked"
-									:disabled="!selectableRows.length"
-									aria-label="Select all ready batches"
-									@change="toggleAll($event.target.checked)"
-								/>
-							</th>
-							<th v-if="show('batch')" class="w-20 px-2 py-2.5 font-medium">Batch</th>
-							<th class="px-3 py-2.5 font-medium">Item</th>
-							<th class="px-3 py-2.5 text-right font-medium">Qty</th>
-							<th v-if="show('wo') || show('warehouse')" class="hidden px-3 py-2.5 font-medium md:table-cell">
-								{{ show('wo') ? 'Work Order' : 'Warehouse' }}
-							</th>
-							<th v-if="show('status')" class="px-3 py-2.5 pr-4 font-medium">Status</th>
-						</tr>
-					</thead>
-					<tbody v-for="day in days" :key="day.date">
-						<tr class="border-b border-outline-gray-1 bg-surface-gray-1">
-							<td class="py-2 pl-4 pr-2">
-								<input
-									v-if="dayState(day).any"
-									type="checkbox"
-									class="h-3.5 w-3.5 accent-ink-gray-9"
-									:checked="dayState(day).all"
-									:indeterminate.prop="dayState(day).some"
-									:aria-label="`Select ready batches from ${dayLabel(day.date)}`"
-									@change="toggleDay(day, $event.target.checked)"
-								/>
-							</td>
-							<td colspan="5" class="py-2 pr-4 text-xs">
-								<span class="font-semibold text-ink-gray-8">{{ dayLabel(day.date) }}</span>
-								<span class="ml-2 text-ink-gray-5">{{ day.rows.length }} {{ day.rows.length === 1 ? 'batch' : 'batches' }}</span>
-							</td>
-						</tr>
-						<tr
-							v-for="r in day.rows"
-							:key="r.name"
-							class="group border-b border-outline-gray-1 last:border-b-0"
-							:class="[
-								r.request_shipped ? 'cursor-default' : 'cursor-pointer hover:bg-surface-gray-1',
-								selectedNames.includes(r.name) && 'bg-surface-selected hover:bg-surface-selected',
-								cancelPick === r.name && 'bg-orange-50 hover:bg-orange-50 dark:bg-orange-500/10',
-							]"
-							@click="toggleRow(r)"
+					<span class="c-sel">
+						<input
+							type="checkbox"
+							:disabled="!isSelectable(r)"
+							:checked="selectedNames.includes(r.name)"
+							:aria-label="`Select ${r.item_name} batch ${r.custom_adonan_ke || r.name}`"
+							@click.stop
+							@change="toggleRow(r)"
+						/>
+					</span>
+					<span class="c-batch">
+						<span v-if="r.custom_adonan_ke" class="btile">{{ r.custom_adonan_ke }}</span>
+						<span v-else class="bdash">–</span>
+					</span>
+					<span class="c-item">
+						<span class="wo-prod">
+							{{ r.item_name }}
+							<small>{{ r.production_item }}</small>
+						</span>
+					</span>
+					<span class="wo-qty c-qty">
+						<span class="qmain">{{ qtyValue(r).n }}</span>
+						<span class="qsub">{{ qtyValue(r).uom }}</span>
+					</span>
+					<span class="c-wo">
+						<a
+							:href="`/app/work-order/${encodeURIComponent(r.name)}`"
+							target="_blank"
+							class="rowlink"
+							@click.stop
+							>{{ r.name }}</a
 						>
-							<td class="relative pl-4 pr-2" :class="pad">
-								<span
-									class="absolute inset-y-0 left-0 w-[3px]"
-									:class="{ 'bg-blue-500': stateOf(r) === 'ready', 'bg-orange-500': stateOf(r) === 'requested', 'bg-green-500': stateOf(r) === 'shipped' }"
-								/>
-								<input
-									type="checkbox"
-									class="h-3.5 w-3.5 accent-ink-gray-9"
-									:disabled="!isSelectable(r)"
-									:checked="selectedNames.includes(r.name)"
-									:aria-label="`Select ${r.item_name} batch ${r.custom_adonan_ke || r.name}`"
-									@click.stop
-									@change="toggleRow(r)"
-								/>
-							</td>
-							<td v-if="show('batch')" class="px-2" :class="pad">
-								<span
-									v-if="r.custom_adonan_ke"
-									class="inline-flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-outline-gray-2 px-2 text-base font-semibold tabular-nums text-ink-gray-9"
-									>{{ r.custom_adonan_ke }}</span
-								>
-								<span v-else class="pl-3 text-ink-gray-4">–</span>
-							</td>
-							<td class="px-3" :class="pad">
-								<div class="font-medium text-ink-gray-9">{{ r.item_name }}</div>
-								<div v-if="show('item_code')" class="text-xs text-ink-gray-5">{{ r.production_item }}</div>
-							</td>
-							<td class="whitespace-nowrap px-3 text-right tabular-nums" :class="pad">
-								<span class="text-base font-semibold text-ink-gray-9">{{ qtyValue(r).n }}</span>
-								<span class="ml-1 text-xs text-ink-gray-5">{{ qtyValue(r).uom }}</span>
-							</td>
-							<td v-if="show('wo') || show('warehouse')" class="hidden px-3 md:table-cell" :class="pad">
-								<a
-									v-if="show('wo')"
-									:href="`/app/work-order/${encodeURIComponent(r.name)}`"
-									target="_blank"
-									class="whitespace-nowrap text-ink-gray-7 underline decoration-transparent underline-offset-2 hover:decoration-current"
-									@click.stop
-									>{{ r.name }}</a
-								>
-								<div v-if="show('warehouse')" class="whitespace-nowrap text-xs text-ink-gray-5">{{ r.fg_warehouse }}</div>
-							</td>
-							<td v-if="show('status')" class="px-3 pr-4" :class="pad">
-								<div class="whitespace-nowrap text-ink-gray-8">
-									{{ stateOf(r) === 'ready' ? 'Ready' : stateOf(r) === 'requested' ? 'Requested' : 'Shipped' }}
-								</div>
-								<div v-if="r.custom_handover_material_request" class="whitespace-nowrap text-xs text-ink-gray-5">
-									<template>
-										<a
-											:href="`/app/material-request/${encodeURIComponent(r.custom_handover_material_request)}`"
-											target="_blank"
-											class="underline decoration-transparent underline-offset-2 hover:decoration-current"
-											@click.stop
-											>{{ r.custom_handover_material_request }}</a
-										>
-										<span v-if="r.box_plan">, group of {{ r.group_size || 0 }}</span>
-									</template>
-								</div>
-							</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-			<div v-if="!shownRows.length && !loading" class="flex flex-col items-center gap-2 px-6 py-16 text-center">
-				<FeatherIcon name="inbox" class="h-8 w-8 text-ink-gray-3" />
-				<p class="text-sm text-ink-gray-6">
+						<small class="wsub">{{ r.fg_warehouse }}</small>
+					</span>
+					<span class="c-status">
+						<span v-if="stateOf(r) === 'ready'" class="badge b-run">Ready</span>
+						<span v-else-if="stateOf(r) === 'requested'" class="chip chip-warn">Requested</span>
+						<span v-else class="badge b-done">Shipped</span>
+						<span v-if="r.custom_handover_material_request" class="mrline">
+							<a
+								:href="`/app/material-request/${encodeURIComponent(r.custom_handover_material_request)}`"
+								target="_blank"
+								class="rowlink"
+								@click.stop
+								>{{ r.custom_handover_material_request }}</a
+							>
+							<template v-if="r.box_plan">, group of {{ r.group_size || 0 }}</template>
+						</span>
+					</span>
+				</div>
+			</template>
+			<div v-if="!shownRows.length && !loading" class="empty-inset">
+				<span class="eico"><SearchX :size="19" :stroke-width="1.8" /></span>
+				<p class="etitle">No batches here</p>
+				<p class="ehint">
 					{{
 						rows.length
 							? `No ${VIEWS.find((v) => v.key === view).label.toLowerCase()} batches in this list.`
 							: 'No finished batches match. Try a different search or clear the filters.'
 					}}
 				</p>
-				<Button v-if="rows.length" variant="ghost" size="sm" label="Show all" @click="view = 'all'" />
+				<button v-if="rows.length" type="button" class="linkbtn" @click="view = 'all'">Show all</button>
 			</div>
-			<div v-if="rows.length" class="flex items-center justify-between border-t border-outline-gray-2 px-4 py-2">
-				<span class="text-xs text-ink-gray-5">
-					Showing {{ fmtNum(shownRows.length) }} of {{ fmtNum(rows.length) }} loaded
-				</span>
-				<Button v-if="canLoadMore" variant="ghost" size="sm" :loading="loading" label="Load more" @click="load(true)" />
+		</div>
+
+		<!-- pagination server-side: ukuran halaman 20/50/100/250 -->
+		<div v-if="total" class="pagination-bar pagination-footer cold-pagination">
+			<span>
+				Showing {{ fmtNum((page - 1) * pageSize + 1) }}–{{ fmtNum(Math.min(page * pageSize, total)) }}
+				of {{ fmtNum(total) }}
+			</span>
+			<label class="page-size-control">
+				<span>Per page</span>
+				<select class="select" :value="pageSize" aria-label="Rows per page" @change="setPageSize(Number($event.target.value))">
+					<option v-for="n in PAGE_SIZES" :key="n" :value="n">{{ n }}</option>
+				</select>
+			</label>
+			<div class="pagination-buttons">
+				<button type="button" class="btn btn-sm" :disabled="loading || page <= 1" @click="goPage(page - 1)">
+					‹ Prev
+				</button>
+				<span class="pg-num">{{ page }} / {{ totalPages }}</span>
+				<button type="button" class="btn btn-sm" :disabled="loading || page >= totalPages" @click="goPage(page + 1)">
+					Next ›
+				</button>
 			</div>
 		</div>
 
 		<!-- bar aksi seleksi (mengapung) -->
-		<div
-			v-if="nSelected"
-			class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-outline-gray-2 bg-surface-modal py-2 pl-5 pr-2 shadow-lg"
-		>
-			<span class="whitespace-nowrap text-sm font-medium text-ink-gray-7">
-				{{ nSelected }} selected
-			</span>
-			<button
-				class="text-sm text-ink-gray-4 hover:text-ink-gray-7"
-				@click="selectedNames = []"
-			>
-				Clear
-			</button>
-			<Button variant="solid" @click="onPrimaryAction">
+		<div v-if="nSelected" class="floatbar">
+			<span class="fb-count">{{ nSelected }} selected</span>
+			<button type="button" class="linkbtn fb-clear" @click="selectedNames = []">Clear</button>
+			<button type="button" class="btn btn-sm btn-primary" @click="onPrimaryAction">
 				{{
 					groupSelection
 						? `Create Group Request (${nSelected})`
-						: nSelected
-							? `Create Request (${nSelected})`
-							: 'Create Request'
+						: `Create Request (${nSelected})`
 				}}
-			</Button>
+			</button>
 		</div>
 
 		<!-- bar cancel (mengapung, gaya yang sama) — muncul saat baris Requested diklik -->
-		<div
-			v-if="cancelPickRow"
-			class="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-outline-gray-2 bg-surface-modal py-2 pl-5 pr-2 shadow-lg"
-		>
-			<span class="text-sm font-medium text-ink-gray-7">
+		<div v-if="cancelPickRow" class="floatbar">
+			<span class="fb-count">
 				{{
 					cancelPickRow.box_plan
 						? `Group ${cancelPickRow.box_plan} · ${fmtNum(Number(cancelPickRow.group_size || 0))} Work Orders`
 						: cancelPickRow.custom_handover_material_request
 				}}
 			</span>
-			<button class="text-sm text-ink-gray-4 hover:text-ink-gray-7" @click="cancelPick = null">
-				Clear
+			<button type="button" class="linkbtn fb-clear" @click="cancelPick = null">Clear</button>
+			<button type="button" class="btn btn-sm btn-danger" @click="askCancel()">
+				{{ cancelPickRow.box_plan ? 'Cancel Group' : 'Cancel Request' }}
 			</button>
-			<Button
-				variant="subtle"
-				theme="red"
-				:label="cancelPickRow.box_plan ? 'Cancel Group' : 'Cancel Request'"
-				@click="askCancel()"
-			/>
 		</div>
 
 		<!-- dialog -->
@@ -598,3 +555,119 @@ async function doCancel() {
 		<ConfirmDialog v-model="cancelOpen" :options="cancelOptions" :on-confirm="doCancel" />
 	</div>
 </template>
+
+<style scoped>
+/* ---- grid kolom (desktop), satu bentuk tetap: header & baris SELALU sejajar.
+   [sel][batch][item — lebar fleksibel][qty — rata kanan][work order][status]
+   Qty diberi lebar cukup + gap besar sebelum Work Order supaya angka tak
+   menempel ke kolom sebelahnya (keluhan proporsi). */
+.wo-thead, .wo-row {
+  grid-template-columns: 32px 56px minmax(220px, 1.6fr) 110px minmax(170px, 1fr) 150px;
+  column-gap: 20px;
+}
+.wo-row .c-qty { padding-right: 4px; }
+.pg-num { font-size: 12.5px; color: var(--muted, inherit); font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
+
+.th-kanan { text-align: right; }
+.uom-select { width: auto; min-width: 96px; }
+.iconbtn { width: 34px; padding: 0; display: grid; place-items: center; }
+.dseg-count {
+  min-width: 17px;
+  height: 17px;
+  border-radius: 9px;
+  background: var(--grey-bg, rgba(0, 0, 0, 0.06));
+  color: var(--muted, inherit);
+  font-size: 10.5px;
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 4px;
+}
+.dseg-btn.on .dseg-count { background: var(--brand-soft, rgba(102, 163, 191, 0.18)); color: var(--brand-strong, inherit); }
+
+/* kepala grup hari */
+.dayhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-top: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+  background: rgba(243, 246, 249, 0.7);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted, inherit);
+}
+.dayhead .dcount { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint, inherit); }
+.dayhead .dcheck { margin-left: auto; display: inline-flex; }
+.dayhead input { accent-color: var(--brand, currentColor); }
+
+/* sel baris */
+.wo-row input[type="checkbox"] { accent-color: var(--brand, currentColor); }
+.c-sel { display: grid; place-items: center; }
+.c-item, .c-wo { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.c-wo small, .c-wo .wsub { color: var(--faint, inherit); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-status { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+.mrline { font-size: 11px; color: var(--faint, inherit); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.rowlink { color: var(--brand-strong, inherit); text-decoration: none; }
+.rowlink:hover { text-decoration: underline; }
+.btile {
+  display: inline-grid;
+  place-items: center;
+  min-width: 40px;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--line2, var(--line, rgba(0, 0, 0, 0.1)));
+  border-radius: 8px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.bdash { color: var(--faint, inherit); padding-left: 12px; }
+
+/* state baris */
+.wo-row.is-selected, .wo-row.is-selected:hover { background: var(--brand-soft, rgba(102, 163, 191, 0.14)); box-shadow: inset 2.5px 0 0 var(--brand, currentColor); }
+.wo-row.is-cancel, .wo-row.is-cancel:hover { background: var(--warn-bg, #f7ecd2); box-shadow: inset 2.5px 0 0 var(--warn-ink, inherit); }
+.wo-row.shipped { cursor: default; }
+.wo-row.shipped:hover { background: transparent; box-shadow: none; }
+.wo-body.is-loading { opacity: 0.5; pointer-events: none; }
+
+/* mobile ≤820px: thead hilang, baris menumpuk (auto-placement: sel dgn
+   grid-column 1/-1 tiap baris sendiri; status dipaksa pojok kanan atas) */
+@media (max-width: 820px) {
+  /* bar mengapung di atas bottom-nav HP */
+  .floatbar { bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .wo-thead { display: none; }
+  .wo-row { grid-template-columns: auto 1fr auto; gap: 3px 12px; padding: 12px 14px; }
+  .c-batch, .c-item, .c-wo, .c-qty { grid-column: 1 / -1; }
+  .c-status { grid-column: 3; grid-row: 1; align-items: flex-end; }
+  .c-batch { order: 6; }
+  .dayhead { padding: 6px 14px; }
+}
+
+/* bar aksi mengapung */
+.floatbar {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100vw - 32px);
+  padding: 6px 6px 6px 16px;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  box-shadow: 0 18px 48px -16px rgba(36, 48, 58, 0.3);
+}
+.fb-count { font-size: 12.5px; font-weight: 600; color: var(--ink, inherit); white-space: nowrap; }
+.fb-clear { font-size: 12.5px; color: var(--muted, inherit); }
+
+/* tombol merah (cancel) — production tak punya varian btn-danger */
+.btn-danger { background: var(--bad-bg, #f6e1dc); border-color: transparent; color: var(--bad-ink, #9c4736); }
+.btn-danger:hover:not(:disabled) { background: var(--bad-ink, #9c4736); color: #fff; }
+</style>

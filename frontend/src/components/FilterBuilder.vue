@@ -4,10 +4,9 @@
 // (Date = field rentang kalender, Select/Float/Data input biasa).
 // Date selalu 'between' [from, to]: server mengubah satu sisi kosong
 // menjadi >= / <= (lihat _date_filter gudang_request).
-import { computed } from 'vue'
-import { Popover } from '@frappe-ui/components/Popover'
-import { Button } from '@frappe-ui/components/Button'
-import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
+// Bahasa visual production_workspace: .filterwrap/.filterpanel/.frows.
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { Filter, Plus, X } from 'lucide-vue-next'
 import DateRangeField from '@/components/DateRangeField.vue'
 
 const props = defineProps({
@@ -28,6 +27,9 @@ const OP_LABELS = {
 	'<': '<',
 }
 
+const open = ref(false)
+const root = ref(null)
+
 const activeCount = computed(
 	() =>
 		filters.value.filter((f) =>
@@ -36,6 +38,25 @@ const activeCount = computed(
 				: String(f.value || '').trim() !== '',
 		).length,
 )
+
+function onDocClick(e) {
+	if (open.value && root.value && !root.value.contains(e.target)) {
+		open.value = false
+	}
+}
+function onKey(e) {
+	if (e.key === 'Escape') {
+		open.value = false
+	}
+}
+onMounted(() => {
+	document.addEventListener('click', onDocClick)
+	document.addEventListener('keydown', onKey)
+})
+onUnmounted(() => {
+	document.removeEventListener('click', onDocClick)
+	document.removeEventListener('keydown', onKey)
+})
 
 function metaFor(field) {
 	return (props.meta || {})[field] || { operators: ['like'], fieldtype: 'Data' }
@@ -100,48 +121,53 @@ function clearAll() {
 </script>
 
 <template>
-	<Popover placement="bottom-start">
-		<template #target="{ togglePopover }">
-			<Button variant="subtle" label="Filter" icon-left="filter" @click="togglePopover()">
-				<template #suffix>
-					<span
-						v-if="activeCount"
-						class="rounded-full bg-surface-selected px-1.5 text-xs font-semibold text-ink-gray-7"
-						>{{ activeCount }}</span
-					>
-				</template>
-			</Button>
-		</template>
-		<template #body-main>
-			<div class="w-[400px] max-w-[calc(100vw-2rem)] p-3">
-				<p v-if="!filters.length" class="py-2 text-center text-sm text-ink-gray-4">
-					No filters
-				</p>
-				<div v-else class="space-y-2">
-					<div
-						v-for="(f, i) in filters"
-						:key="i"
-						class="grid min-w-0 grid-cols-[1.1fr_0.9fr_1.3fr_auto] items-center gap-1.5"
-					>
-						<select
-							class="h-8 min-w-0 rounded border border-outline-gray-2 bg-surface-modal px-1.5 text-xs text-ink-gray-7"
-							:value="f.field"
-							@change="onFieldChange(i, $event)"
-						>
-							<option v-for="(cfg, key) in meta" :key="key" :value="key">
-								{{ cfg.label }}
-							</option>
-						</select>
+	<div ref="root" class="filterwrap">
+		<button
+			type="button"
+			class="btn filterbtn"
+			:class="{ active: activeCount }"
+			aria-label="Filter"
+			@click="open = !open"
+		>
+			<Filter :size="14" :stroke-width="2" />
+			<span>Filter</span>
+			<span v-if="activeCount" class="filtercount">{{ activeCount }}</span>
+		</button>
+		<div v-if="open" class="popoverlay" @click="open = false" />
+		<Transition name="pop">
+			<div v-if="open" class="filterpanel">
+				<div class="frows">
+					<p v-if="!filters.length" class="frows-none">No filters</p>
+					<div v-for="(f, i) in filters" :key="i" class="frow">
+						<div class="frow-head">
+							<select
+								class="select fsel"
+								:value="f.field"
+								@change="onFieldChange(i, $event)"
+							>
+								<option v-for="(cfg, key) in meta" :key="key" :value="key">
+									{{ cfg.label }}
+								</option>
+							</select>
+							<button
+								type="button"
+								class="frow-x"
+								title="Remove filter"
+								@click="removeFilter(i)"
+							>
+								<X :size="13" :stroke-width="2.2" />
+							</button>
+						</div>
 						<!-- Date: alur rentang kalender sudah mencakup from/to — operator dikunci -->
 						<span
 							v-if="metaFor(f.field).fieldtype === 'Date'"
-							class="truncate text-xs text-ink-gray-5"
+							class="fhint"
 							title="Pick the first date for 'from', the second for 'to' — one date alone filters from that day"
 							>between</span
 						>
 						<select
 							v-else
-							class="h-8 min-w-0 rounded border border-outline-gray-2 bg-surface-modal px-1.5 text-xs text-ink-gray-7"
+							class="select fsel"
 							:value="f.operator"
 							@change="onOperatorChange(i, $event)"
 						>
@@ -152,7 +178,6 @@ function clearAll() {
 						<!-- nilai -->
 						<DateRangeField
 							v-if="metaFor(f.field).fieldtype === 'Date'"
-							class="min-w-0"
 							:from="rangeOf(f)[0] || ''"
 							:to="rangeOf(f)[1] || ''"
 							@update:from="onRangeChange(i, 'from', $event)"
@@ -160,7 +185,7 @@ function clearAll() {
 						/>
 						<select
 							v-else-if="metaFor(f.field).fieldtype === 'Select'"
-							class="h-8 w-full min-w-0 rounded border border-outline-gray-2 bg-surface-modal px-1.5 text-xs text-ink-gray-7"
+							class="select"
 							:value="f.value || ''"
 							@change="onValueChange(i, $event)"
 						>
@@ -174,43 +199,36 @@ function clearAll() {
 							type="number"
 							step="1"
 							min="0"
-							class="h-8 w-full min-w-0 rounded border border-outline-gray-2 bg-surface-modal px-1.5 text-xs text-ink-gray-7"
+							class="input"
 							:value="f.value || ''"
 							@change="onValueChange(i, $event)"
 						/>
 						<input
 							v-else
 							type="text"
-							class="h-8 w-full min-w-0 rounded border border-outline-gray-2 bg-surface-modal px-1.5 text-xs text-ink-gray-7"
+							class="input"
 							:placeholder="metaFor(f.field).placeholder || ''"
 							:value="f.value || ''"
 							@input="onValueChange(i, $event)"
 						/>
-						<button
-							class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-gray-4 hover:bg-surface-gray-3 hover:text-ink-gray-7"
-							title="Remove filter"
-							@click="removeFilter(i)"
-						>
-							<FeatherIcon name="x" class="h-3.5 w-3.5" />
-						</button>
 					</div>
 				</div>
-				<div class="mt-3 flex items-center justify-between border-t border-outline-gray-1 pt-2">
-					<button
-						class="text-sm font-medium text-ink-gray-6 hover:text-ink-gray-9"
-						@click="addFilter"
-					>
-						+ Add Filter
+				<div class="frows-foot">
+					<button type="button" class="linkbtn" @click="addFilter">
+						<Plus :size="13" :stroke-width="2.4" />
+						Add Filter
 					</button>
-					<button
-						v-if="filters.length"
-						class="text-sm text-ink-gray-4 hover:text-ink-gray-7"
-						@click="clearAll"
-					>
+					<button v-if="filters.length" type="button" class="linkbtn filter-clear" @click="clearAll">
 						Clear All
 					</button>
 				</div>
 			</div>
-		</template>
-	</Popover>
+		</Transition>
+	</div>
 </template>
+
+<style scoped>
+.fsel { height: 30px; font-size: 12.5px; }
+.fhint { font-size: 12px; color: var(--muted, inherit); }
+.linkbtn { display: inline-flex; align-items: center; gap: 4px; }
+</style>
