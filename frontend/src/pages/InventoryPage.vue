@@ -282,7 +282,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 				<select
 					v-if="tab !== 'balance'"
 					v-model="range"
-					class="h-8 rounded border border-outline-gray-2 bg-surface-modal px-2 text-sm text-ink-gray-8"
+					class="h-8 rounded border border-outline-gray-2 bg-surface-modal py-0 pl-2.5 pr-8 text-sm text-ink-gray-8"
 					aria-label="Time range"
 				>
 					<option v-for="r in RANGES" :key="r" :value="r">{{ r }}</option>
@@ -292,7 +292,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 				</div>
 				<select
 					v-model="searchBy"
-					class="h-8 rounded border border-outline-gray-2 bg-surface-modal px-2 text-sm text-ink-gray-8"
+					class="h-8 rounded border border-outline-gray-2 bg-surface-modal py-0 pl-2.5 pr-8 text-sm text-ink-gray-8"
 					aria-label="Search by"
 				>
 					<option v-for="o in SEARCH_BY" :key="o.value" :value="o.value">by {{ o.label }}</option>
