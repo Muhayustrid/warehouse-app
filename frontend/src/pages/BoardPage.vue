@@ -5,7 +5,6 @@
 // semantik W30), cancel tunggal/grup, pill status, Load more.
 import { ref, computed, watch, onMounted } from 'vue'
 import { Button } from '@frappe-ui/components/Button'
-import { TextInput } from '@frappe-ui/components/TextInput'
 import FeatherIcon from '@frappe-ui/components/FeatherIcon.vue'
 import { toast } from '@/lib/toast'
 import { fetchWorkOrders, fetchFilterFields, cancelRequest, cancelGroupRequest } from '@/data/board'
@@ -352,43 +351,46 @@ async function doCancel() {
 <template>
 	<div class="space-y-5">
 		<!-- header -->
-		<div class="flex flex-wrap items-start justify-between gap-3">
-			<div>
-				<h1 class="text-2xl font-semibold tracking-tight text-ink-gray-9">Handover Requests</h1>
-				<p class="mt-1 text-sm text-ink-gray-5">
-					Finished batches from production. Select the ones the warehouse should receive and create a request.
-				</p>
-			</div>
-			<Button variant="subtle" label="Refresh" icon-left="refresh-cw" :loading="loading" @click="refresh()" />
+		<div>
+			<h1 class="text-2xl font-semibold tracking-tight text-ink-gray-9">Handover Requests</h1>
+			<p class="mt-1 text-sm text-ink-gray-5">
+				Finished batches from production. Select the ones the warehouse should receive and create a request.
+			</p>
 		</div>
 
-		<!-- status + toolbar -->
-		<div class="flex flex-wrap items-center justify-between gap-3">
-			<div class="flex flex-wrap gap-1 rounded-lg bg-surface-gray-2 p-1" role="tablist" aria-label="Status">
+		<!-- daftar per hari produksi: tab status + toolbar menempel di kepala kartu -->
+		<div class="overflow-hidden rounded-lg border border-outline-gray-2 bg-surface-modal">
+			<div class="flex gap-6 overflow-x-auto border-b border-outline-gray-2 px-4" role="tablist" aria-label="Status">
 				<button
 					v-for="v in VIEWS"
 					:key="v.key"
 					role="tab"
 					:aria-selected="view === v.key"
-					class="flex h-7 items-center gap-2 rounded-md px-3 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-outline-gray-4"
-					:class="view === v.key ? 'bg-surface-white font-medium text-ink-gray-9 shadow-sm dark:bg-surface-gray-4' : 'text-ink-gray-6 hover:text-ink-gray-8'"
+					class="-mb-px flex h-11 shrink-0 items-center gap-2 border-b-2 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-outline-gray-4"
+					:class="view === v.key ? 'border-gray-900 font-medium text-ink-gray-9 dark:border-gray-100' : 'border-transparent text-ink-gray-5 hover:text-ink-gray-8'"
 					@click="view = v.key; selectedNames = []; cancelPick = null"
 				>
 					<span v-if="v.dot" class="h-2 w-2 rounded-full" :class="v.dot" />
 					{{ v.label }}
-					<span class="tabular-nums text-ink-gray-5">{{ counts[v.key] }}</span>
+					<span
+						class="rounded-full px-1.5 text-xs tabular-nums"
+						:class="view === v.key ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : 'bg-surface-gray-2 text-ink-gray-6'"
+						>{{ counts[v.key] }}</span
+					>
 				</button>
 			</div>
-			<div class="flex flex-wrap items-center gap-2">
-				<TextInput
-					v-model="search"
-					class="w-full sm:w-64"
-					type="text"
-					placeholder="Search batch, item, or work order"
-					@keydown.enter="refresh"
-				>
-					<template #prefix><FeatherIcon name="search" class="h-4 w-4 text-ink-gray-5" /></template>
-				</TextInput>
+			<div class="flex flex-wrap items-center gap-2 border-b border-outline-gray-2 bg-surface-gray-1 px-4 py-3">
+				<label class="relative min-w-0 flex-1 basis-64">
+					<span class="sr-only">Search</span>
+					<FeatherIcon name="search" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-gray-5" />
+					<input
+						v-model="search"
+						type="search"
+						placeholder="Search batch, item, or work order"
+						class="h-9 w-full rounded-md border border-outline-gray-2 bg-surface-white pl-9 pr-3 text-sm text-ink-gray-8 placeholder:text-ink-gray-4 focus:border-outline-gray-4 focus:outline-none focus:ring-2 focus:ring-outline-gray-2 dark:bg-surface-gray-2"
+						@keydown.enter="refresh"
+					/>
+				</label>
 				<FilterBuilder v-model="filters" :meta="fieldMeta" @change="onFilterChange" />
 				<DisplayMenu
 					v-model:visible="visibleCols"
@@ -398,22 +400,16 @@ async function doCancel() {
 				/>
 				<select
 					v-if="uomOptions.length > 1"
-					class="h-8 rounded border border-outline-gray-2 bg-surface-modal py-0 pl-2.5 pr-8 text-sm text-ink-gray-7"
+					class="h-8 rounded border border-outline-gray-2 bg-surface-white py-0 pl-2.5 pr-8 text-sm text-ink-gray-7 dark:bg-surface-gray-2"
 					:value="qtyUom"
 					aria-label="Qty unit"
 					@change="setUom($event.target.value)"
 				>
 					<option v-for="o in uomOptions" :key="o" :value="o">{{ o }}</option>
 				</select>
+				<Button variant="ghost" icon="refresh-cw" :loading="loading" aria-label="Refresh" title="Refresh" @click="refresh()" />
 			</div>
-		</div>
-
-		<!-- daftar per hari produksi -->
-		<div
-			class="overflow-hidden rounded-lg border border-outline-gray-2 bg-surface-modal transition-opacity"
-			:class="{ 'opacity-50': loading }"
-		>
-			<div class="overflow-x-auto">
+			<div class="overflow-x-auto transition-opacity" :class="{ 'opacity-50': loading }">
 				<table class="w-full text-sm">
 					<thead>
 						<tr class="border-b border-outline-gray-2 text-left text-xs text-ink-gray-5">
