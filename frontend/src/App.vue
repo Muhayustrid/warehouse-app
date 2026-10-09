@@ -88,7 +88,7 @@ watch(
 			class="hidden shrink-0 border-r border-outline-gray-1 bg-surface-modal md:block"
 			:class="collapsed ? 'w-[4.5rem]' : 'w-60'"
 		>
-			<div class="sticky top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
+			<div class="sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto">
 				<SideNav :collapsed="collapsed" />
 			</div>
 		</aside>

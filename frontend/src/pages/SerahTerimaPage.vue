@@ -169,7 +169,7 @@ onMounted(() => {
 <template>
 	<div class="space-y-5">
 		<div>
-			<h1 class="text-2xl font-semibold tracking-tight text-ink-gray-9">Serah Terima Gudang</h1>
+			<h1 class="text-2xl font-semibold tracking-tight text-ink-gray-9">Handover Monitoring</h1>
 			<p class="mt-1 text-sm text-ink-gray-5">
 				Material Requests from production and how much has reached the warehouse.
 			</p>
