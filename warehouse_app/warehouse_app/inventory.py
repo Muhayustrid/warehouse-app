@@ -58,10 +58,12 @@ def _page(page, page_len):
 	return max(cint(page), 1), page_len
 
 def _sle_filters(
-	from_date=None, to_date=None, warehouse=None, item=None, item_group=None, item_code=None
+	from_date=None, to_date=None, warehouse=None, item=None, item_group=None, item_code=None,
+	search=None, search_by="name",
 ):
 	"""WHERE atas alias s (SLE) + i (Item). Kembali (sql, values, butuh_join_item).
-	item = cari (like kode/nama); item_code = satu item persis (modal detail)."""
+	item = cari (like kode/nama); item_code = satu item persis (modal detail);
+	search = kotak cari toolbar per kolom search_by (lihat SEARCH_BY)."""
 	conds = ["s.is_cancelled = 0"]
 	values = {}
 	if item_code:
@@ -89,6 +91,10 @@ def _sle_filters(
 		)
 		values.update(ig_lft=lft, ig_rgt=rgt)
 		need_item = True
+	if search and str(search).strip():
+		conds.append(f"{SEARCH_BY.get(search_by, SEARCH_BY['name'])} like %(search)s")
+		values["search"] = f"%{str(search).strip()}%"
+		need_item = True
 	_apply_user_permissions(conds, values, {"Warehouse": "s.warehouse", "Company": "s.company"})
 	return " and ".join(conds), values, need_item
 
@@ -109,6 +115,8 @@ def stock_cards(
 	item=None,
 	item_group=None,
 	item_code=None,
+	search=None,
+	search_by="name",
 	page=1,
 	page_len=20,
 ):
@@ -116,7 +124,9 @@ def stock_cards(
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	page, page_len = _page(page, page_len)
 	rows, total = _stock_cards(
-		(from_date, to_date, warehouse, item, item_group, item_code), page_len, (page - 1) * page_len
+		(from_date, to_date, warehouse, item, item_group, item_code, search, search_by),
+		page_len,
+		(page - 1) * page_len,
 	)
 	return {"rows": rows, "total": total}
 
@@ -297,10 +307,9 @@ def _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, se
 	"""Agregat mentah per item+gudang (qty stock UOM), urut item_code, warehouse."""
 	from_dt = str(getdate(from_date)) if from_date else "1900-01-01"
 	# history sebelum periode tetap discan (Beginning), jadi from_date tak masuk WHERE
-	where, values, _ = _sle_filters(None, to_date, warehouse, item, item_group, item_code)
-	if search and str(search).strip():
-		where += f" and {SEARCH_BY.get(search_by, SEARCH_BY['name'])} like %(search)s"
-		values["search"] = f"%{str(search).strip()}%"
+	where, values, _ = _sle_filters(
+		None, to_date, warehouse, item, item_group, item_code, search, search_by
+	)
 	values["from"] = from_dt
 
 	is_in = "(dq > 0 or (dq = 0 and dv > 0))"
@@ -373,6 +382,63 @@ def _movement_rows(chunk):
 			}
 		)
 	return rows
+
+@frappe.whitelist()
+def stock_balance(
+	warehouse=None, item=None, item_group=None, search=None, search_by="name", page=1, page_len=20
+):
+	"""Tab Stock Balance: saldo saat ini per item+gudang (Bin, actual_qty != 0).
+	Qty dikirim dalam stock UOM + daftar UOM item (faktor konversi) agar UOM
+	tampilan bisa diganti di klien tanpa fetch ulang; default = Default Inventory UOM."""
+	frappe.has_permission("Bin", "read", throw=True)
+	page, page_len = _page(page, page_len)
+	conds, values = ["b.actual_qty != 0"], {}
+	if warehouse:
+		conds.append("b.warehouse = %(warehouse)s")
+		values["warehouse"] = warehouse
+	if item and str(item).strip():
+		conds.append("(b.item_code like %(item)s or i.item_name like %(item)s)")
+		values["item"] = f"%{str(item).strip()}%"
+	if item_group:
+		lft, rgt = frappe.db.get_value("Item Group", item_group, ["lft", "rgt"]) or (0, 0)
+		conds.append(
+			"i.item_group in (select name from `tabItem Group` where lft >= %(ig_lft)s and rgt <= %(ig_rgt)s)"
+		)
+		values.update(ig_lft=lft, ig_rgt=rgt)
+	if search and str(search).strip():
+		col = SEARCH_BY.get(search_by, SEARCH_BY["name"]).replace("s.", "b.")
+		conds.append(f"{col} like %(search)s")
+		values["search"] = f"%{str(search).strip()}%"
+	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse"})
+	where = " and ".join(conds)
+	base = f"from `tabBin` b join `tabItem` i on i.name = b.item_code where {where}"
+
+	total, total_value = frappe.db.sql(f"select count(*), ifnull(sum(b.stock_value), 0) {base}", values)[0]
+	values.update(limit=page_len, offset=(page - 1) * page_len)
+	rows = frappe.db.sql(
+		f"""select b.item_code, i.item_name, i.item_group, b.warehouse, i.stock_uom,
+			i.custom_default_inventory_unit_of_measure as default_uom,
+			b.actual_qty, b.reserved_qty, b.projected_qty, b.valuation_rate, b.stock_value
+		{base} order by b.item_code, b.warehouse limit %(limit)s offset %(offset)s""",
+		values,
+		as_dict=True,
+	)
+	uoms = {}
+	if rows:
+		for d in frappe.db.sql(
+			"""select parent, uom, conversion_factor from `tabUOM Conversion Detail`
+			where parent in %(codes)s and conversion_factor > 0 order by parent, idx""",
+			{"codes": tuple({r.item_code for r in rows})},
+			as_dict=True,
+		):
+			uoms.setdefault(d.parent, []).append({"uom": d.uom, "factor": d.conversion_factor})
+	for r in rows:
+		r.uoms = uoms.get(r.item_code) or []
+		if not any(u["uom"] == r.stock_uom for u in r.uoms):
+			r.uoms.insert(0, {"uom": r.stock_uom, "factor": 1})
+		if not any(u["uom"] == r.default_uom for u in r.uoms):
+			r.default_uom = r.stock_uom
+	return {"rows": rows, "total": total, "totals": {"stock_value": total_value}}
 
 @frappe.whitelist()
 def inventory_info(item_code, warehouse):
@@ -487,7 +553,7 @@ def export(
 		# ponytail: satu file dibangun di memori; batas EXPORT_MAX baris —
 		# perlu export bertahap (background + File) bila periode melebihi itu.
 		rows, total = _stock_cards(
-			(from_date, to_date, warehouse, item, item_group, item_code), EXPORT_MAX, 0
+			(from_date, to_date, warehouse, item, item_group, item_code, search, search_by), EXPORT_MAX, 0
 		)
 		if total > EXPORT_MAX:
 			frappe.throw(

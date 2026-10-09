@@ -13,6 +13,10 @@ export function fetchMovements(params) {
 	return callGet(API + 'movements', params)
 }
 
+export function fetchStockBalance(params) {
+	return callGet(API + 'stock_balance', params)
+}
+
 export function fetchInventoryInfo(item_code, warehouse) {
 	return callGet(API + 'inventory_info', { item_code, warehouse })
 }

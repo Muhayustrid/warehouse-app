@@ -51,11 +51,8 @@ watch(
 				</button>
 				<div class="mx-1 h-5 w-px bg-[var(--outline-gray-2)]" aria-hidden="true" />
 				<div class="flex items-center gap-2">
-					<div
-						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[#171717] text-white dark:bg-[#F8F8F8] dark:text-[#171717]"
-					>
-						<FeatherIcon name="package" class="h-4 w-4" :stroke-width="2" />
-					</div>
+					<!-- logo app yang sama dgn Desk (hooks add_to_apps_screen) -->
+					<img :src="'/assets/warehouse_app/logo.svg'" alt="" class="h-8 w-8 shrink-0" />
 					<span class="text-base font-semibold tracking-tight text-ink-gray-9">Gudang</span>
 				</div>
 			</div>

@@ -11,10 +11,10 @@ const sections = [
 	{
 		title: 'Gudang',
 		items: [
-			{ to: '/', label: 'Handover Requests', icon: 'clipboard-list' },
+			{ to: '/', label: 'Handover Requests', icon: 'clipboard' },
 			// halaman SPA pengganti shortcut report Desk (W33-r8)
 			{ to: '/serah-terima', label: 'Serah Terima Gudang', icon: 'truck' },
-			{ to: '/inventory', label: 'Inventory', icon: 'layers' },
+			{ to: '/inventory', label: 'Inventory Report', icon: 'layers' },
 			{ to: '/settings', label: 'Settings', icon: 'settings' },
 		],
 	},
