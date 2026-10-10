@@ -1,6 +1,6 @@
 <script setup>
 import { useRoute } from 'vue-router'
-import { ClipboardList, Layers, Settings, Truck } from 'lucide-vue-next'
+import { ClipboardList, Layers, Settings } from 'lucide-vue-next'
 
 // seksi Handover + Stock; Settings di dasar. counts via props (opsional).
 defineProps({
@@ -12,11 +12,7 @@ const route = useRoute()
 const sections = [
 	{
 		title: 'Handover',
-		items: [
-			{ to: '/', label: 'Requests', icon: ClipboardList, count: 'requests' },
-			// halaman SPA pengganti shortcut report Desk "Serah Terima Gudang" (W33-r8)
-			{ to: '/serah-terima', label: 'Monitoring', icon: Truck },
-		],
+		items: [{ to: '/', label: 'Requests', icon: ClipboardList, count: 'requests' }],
 	},
 	{
 		title: 'Stock',

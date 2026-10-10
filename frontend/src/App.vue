@@ -10,7 +10,6 @@ import {
 	ChevronDown,
 	LayoutGrid,
 	ListChecks,
-	Package,
 	Settings,
 	Warehouse,
 } from 'lucide-vue-next'
@@ -100,10 +99,6 @@ watch(
 			<RouterLink to="/" class="bnav-item" :class="{ on: route.path === '/' }">
 				<span class="bnav-ic"><ListChecks :size="20" :stroke-width="1.9" /></span>
 				<span class="bnav-label">Requests</span>
-			</RouterLink>
-			<RouterLink to="/serah-terima" class="bnav-item" :class="{ on: route.path === '/serah-terima' }">
-				<span class="bnav-ic"><Package :size="20" :stroke-width="1.9" /></span>
-				<span class="bnav-label">Monitoring</span>
 			</RouterLink>
 			<RouterLink to="/inventory" class="bnav-item" :class="{ on: route.path === '/inventory' }">
 				<span class="bnav-ic"><Boxes :size="20" :stroke-width="1.9" /></span>

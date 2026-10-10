@@ -99,7 +99,7 @@ const dayLabel = (d) => {
 	const x = dayjs(d)
 	if (x.isSame(dayjs(), 'day')) return 'Today'
 	if (x.isSame(dayjs().subtract(1, 'day'), 'day')) return 'Yesterday'
-	return x.format(x.isSame(dayjs(), 'year') ? 'dddd, D MMMM' : 'dddd, D MMMM YYYY')
+	return x.format('dddd')
 }
 const isSelectable = (r) => !r.request_active && !r.request_shipped
 function dayState(day) {
@@ -407,7 +407,9 @@ async function doCancel() {
 			</div>
 			<template v-for="day in days" :key="day.date">
 				<div class="dayhead">
-					{{ dayLabel(day.date) }}
+					<span class="dlabel">
+						{{ dayLabel(day.date) }}<span class="ddate">{{ dayjs(day.date).format('D MMM YYYY') }}</span>
+					</span>
 					<span class="dcount">{{ day.rows.length }} {{ day.rows.length === 1 ? 'batch' : 'batches' }}</span>
 					<label v-if="dayState(day).any" class="dcheck">
 						<input
@@ -429,6 +431,9 @@ async function doCancel() {
 						'is-selected': selectedNames.includes(r.name),
 						'is-cancel': cancelPick === r.name,
 						shipped: r.request_shipped,
+						'st-ready': stateOf(r) === 'ready',
+						'st-requested': stateOf(r) === 'requested',
+						'st-shipped': stateOf(r) === 'shipped',
 					}"
 					:aria-label="`Select ${r.item_name} batch ${r.custom_adonan_ke || r.name}`"
 					@click="toggleRow(r)"
@@ -586,7 +591,7 @@ async function doCancel() {
 }
 .dseg-btn.on .dseg-count { background: var(--brand-soft, rgba(102, 163, 191, 0.18)); color: var(--brand-strong, inherit); }
 
-/* kepala grup hari */
+/* kepala grup hari — satu baris (nowrap), label + tanggal + jumlah sejajar */
 .dayhead {
   display: flex;
   align-items: center;
@@ -599,6 +604,16 @@ async function doCancel() {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted, inherit);
+  flex-wrap: nowrap;
+}
+.dayhead .dlabel, .dayhead .dcount { white-space: nowrap; }
+.dayhead .ddate {
+  margin-left: 8px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--faint, inherit);
+  font-variant-numeric: tabular-nums;
 }
 .dayhead .dcount { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint, inherit); }
 .dayhead .dcheck { margin-left: auto; display: inline-flex; }
@@ -626,11 +641,18 @@ async function doCancel() {
 }
 .bdash { color: var(--faint, inherit); padding-left: 12px; }
 
+/* warna baris per status — samakan dgn pill tab (info/warn/ok) */
+.wo-row.st-ready { background: var(--info-bg, #e5eaf3); }
+.wo-row.st-requested { background: var(--warn-bg, #f7ecd2); }
+.wo-row.st-shipped { background: var(--ok-soft, #e3ede4); }
+.wo-row.st-requested:hover { background: var(--warn-bg, #f7ecd2); box-shadow: inset 2.5px 0 0 var(--warn-ink, inherit); }
+.wo-row.st-shipped:hover { background: var(--ok-soft, #e3ede4); box-shadow: none; }
+
 /* state baris */
 .wo-row.is-selected, .wo-row.is-selected:hover { background: var(--brand-soft, rgba(102, 163, 191, 0.14)); box-shadow: inset 2.5px 0 0 var(--brand, currentColor); }
 .wo-row.is-cancel, .wo-row.is-cancel:hover { background: var(--warn-bg, #f7ecd2); box-shadow: inset 2.5px 0 0 var(--warn-ink, inherit); }
 .wo-row.shipped { cursor: default; }
-.wo-row.shipped:hover { background: transparent; box-shadow: none; }
+.wo-row.shipped:hover { box-shadow: none; }
 .wo-body.is-loading { opacity: 0.5; pointer-events: none; }
 
 /* mobile ≤820px: thead hilang, baris menumpuk (auto-placement: sel dgn

@@ -18,7 +18,8 @@
 #    filter_fields, warehouse_options, get/set_handover_warehouses,
 #    get/set_group_items) — frappe 16 memakai global set `whitelisted` (bukan
 #    atribut per-fungsi); requestable_work_orders callable dan mengembalikan
-#    list; Report "Serah Terima Gudang" ada (sumber data SPA serah-terima).
+#    list; Report "Serah Terima Gudang" ada (report Desk; SPA Monitoring-nya
+#    dihapus W43 — requests + Inventory Movements dianggap cukup user).
 # 3. Redirect konfigurasi lengkap: hooks website_redirects memuat
 #    /app/gudang, /app/gudang_request, /app/gudang_settings.
 # 4. Render Desk nyata via frappe.boot.get_sidebar_items dgn fixture user
@@ -39,7 +40,7 @@ from warehouse_app.upgrade import APP, SIDEBAR, retire_legacy_desk_ui
 PREFIX = "ZZTEST-W16"
 ROLE_PAIR = ["Stock Manager", "Stock User"]
 
-SPA_URLS = {"/gudang", "/gudang/serah-terima", "/gudang/settings"}
+SPA_URLS = {"/gudang", "/gudang/settings"}
 
 REDIRECT_MAP = {
     "/app/gudang": "/gudang",

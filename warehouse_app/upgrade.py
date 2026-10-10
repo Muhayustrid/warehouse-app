@@ -32,7 +32,7 @@ def retire_legacy_desk_ui():
     """W34: pensiunkan seluruh UI Desk klasik milik app ini. Idempoten —
     tanpa record = no-op. Backend gudang_request.py/gudang_settings.py TIDAK
     disentuh (dipakai SPA + gate w9/w19); Report Serah Terima Gudang tetap
-    hidup (sumber data SPA serah-terima)."""
+    hidup (report Desk — SPA Monitoring-nya dihapus W43)."""
     retired = []
     for doctype, name in (
         ("Page", "gudang_request"),
