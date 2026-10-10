@@ -168,6 +168,7 @@ def requestable_work_orders(search=None, filters=None, limit_start=0, limit_page
 	mr_info, mr_dikirim, mr_plan = _active_request_map(rows)
 	group_items = _group_items()
 	plan_info = _group_plan_map(sorted({p for p in mr_plan.values() if p}))
+	bulk_size = _bulk_size_map(sorted({m for m in mr_info if not mr_plan.get(m)}))
 
 	for r in rows:
 		r.item_name = item_names.get(r.production_item) or r.production_item
@@ -184,7 +185,8 @@ def requestable_work_orders(search=None, filters=None, limit_start=0, limit_page
 		r.box_plan = mr_plan.get(mr) if mr else None
 		info = plan_info.get(r.box_plan) or {}
 		r.group_boxes = info.get("boxes") or []
-		r.group_size = info.get("size") or 0
+		# 2026-10-10: grup baru = SATU MR berbaris banyak (tanpa plan)
+		r.group_size = info.get("size") or bulk_size.get(mr, 0)
 		r.group_item = r.production_item in group_items
 
 	# Satuan qty request mengikuti display UOM produksi (mis. Pcs -> Pack);
@@ -346,6 +348,20 @@ def _active_request_map(rows):
 	)
 	return mr_info, mr_dikirim, mr_plan
 
+
+def _bulk_size_map(mr_names):
+	"""MR -> jumlah baris ber-WO, hanya MR bulk (> 1 baris)."""
+	if not mr_names or not frappe.db.has_column("Material Request Item", "custom_work_order"):
+		return {}
+	sizes = {}
+	for parent in frappe.get_all(
+		"Material Request Item",
+		filters={"parent": ("in", mr_names), "custom_work_order": ("is", "set")},
+		pluck="parent",
+		limit=0,
+	):
+		sizes[parent] = sizes.get(parent, 0) + 1
+	return {m: n for m, n in sizes.items() if n > 1}
 
 def _group_items():
 	"""Set item group-request dari Warehouse App Settings. Doctype belum ada

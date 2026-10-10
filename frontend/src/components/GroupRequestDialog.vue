@@ -57,7 +57,7 @@ async function submit() {
 		const res = await createGroupRequest(props.rows.map((r) => r.name))
 		show.value = false
 		// frappeRequest mengembalikan message endpoint langsung
-		emit('done', { boxPlan: (res && res.box_plan) || '', size: props.rows.length })
+		emit('done', { materialRequest: (res && res.material_request) || '', size: props.rows.length })
 	} catch (e) {
 		error.value = e.message
 	} finally {

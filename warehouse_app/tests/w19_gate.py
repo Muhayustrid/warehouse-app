@@ -16,13 +16,11 @@
 #      role-gated — gudang boleh, user tanpa role PermissionError.
 #   2. Picker (requestable_work_orders): flag group_item + field grup netral
 #      sebelum ada grup.
-#   3. create_group_request production_app (FU96/FU97: qty-only murni, tanpa
-#      payload box) -> plan HBP 1 baris kg=0 penanda + MR anggota ber-link
-#      custom_handover_box_plan, ringkasan WO = Link saja, picker aktif.
+#   3. create_group_request production_app (2026-10-10) -> SATU MR dengan
+#      satu baris per WO, ringkasan WO = Link ke MR itu, picker group_size.
 #   4. Negative: single WO (<2), item campuran — ditolak nol-tulis.
 #   5. Duplicate: grup kedua yang menyentuh anggota aktif -> ditolak.
-#   6. cancel_request member tunggal -> ditolak dengan pesan grup;
-#      cancel_group_request -> semua MR batal, link WO bersih, picker normal.
+#   6. cancel_request MR bulk -> MR batal, link semua WO bersih, picker normal.
 #
 # Fixture (prefix "ZZTEST-W19"): 2 item, 4 WO (3 item utama + 1 item lain
 # utk uji campuran), SE Manufacture per WO utama memakai POOL gudang asal
@@ -347,7 +345,6 @@ def _run_gate(check):
 	total = e1 + e2 + e3
 
 	from production_app.api.handover import (
-		cancel_group_request,
 		cancel_request,
 		create_group_request,
 	)
@@ -376,66 +373,48 @@ def _run_gate(check):
 	except Exception as e:
 		check("group_mixed_rejected", _member_mr_count() == 0, f"{type(e).__name__}: {str(e)[:180]}")
 
-	# --- Happy path: 3 WO satu item (FU96/FU97: qty-only murni) ---
+	# --- Happy path: 3 WO satu item -> SATU MR, satu baris per WO (2026-10-10) ---
 	try:
 		res = create_group_request(work_orders=json.dumps([w1, w2, w3]))
-		plan = res.get("box_plan")
-		TRACKED["hbp"].append(plan)
-		plan_doc = frappe.get_doc("Handover Box Plan", plan) if plan else None
-		plan_rows = [(flt(b.kg), b.qty) for b in plan_doc.boxes] if plan_doc else []
-		mr_names = set(res.get("material_requests") or [])
-		TRACKED["mr"].extend(sorted(mr_names))
-		mr_rows = frappe.get_all(
-			"Material Request",
-			filters=[["custom_handover_box_plan", "=", plan]],
-			fields=["name", "docstatus", "material_request_type"],
-		)
+		mr = res.get("material_request")
+		TRACKED["mr"].append(mr)
+		mr_doc = frappe.get_doc("Material Request", mr)
 		wo_state = frappe.get_all(
 			"Work Order",
 			filters={"name": ("in", [w1, w2, w3])},
-			fields=[
-				"name",
-				"custom_handover_material_request",
-			],
+			fields=["name", "custom_handover_material_request"],
 		)
 		ok = bool(
 			res.get("ok")
-			and plan
-			and plan_rows == [(0, total)]  # FU96: satu baris kg=0 penanda grup
+			and res.get("box_plan") is None
 			and int(res.get("expected_unit_count") or 0) == total
-			and len(mr_rows) == 3
-			and {d.name for d in mr_rows} == mr_names
-			and all(d.docstatus == 1 and d.material_request_type == "Material Transfer" for d in mr_rows)
+			and mr_doc.docstatus == 1
+			and mr_doc.material_request_type == "Material Transfer"
+			and sorted(i.custom_work_order for i in mr_doc.items) == sorted([w1, w2, w3])
 			and len(wo_state) == 3
-			and all(d.custom_handover_material_request in mr_names for d in wo_state)
+			and all(d.custom_handover_material_request == mr for d in wo_state)
 		)
 		check(
 			"create_group_request",
 			ok,
-			f"plan={plan!r}, plan_rows={plan_rows}, expected={res.get('expected_unit_count')}/{total}, mrs={sorted(mr_names)}, wo={wo_state}",
+			f"mr={mr!r}, rows={[i.custom_work_order for i in mr_doc.items]}, expected={res.get('expected_unit_count')}/{total}, wo={wo_state}",
 		)
 	except Exception as e:
 		check("create_group_request", False, f"{type(e).__name__}: {e}")
 		frappe.set_user("Administrator")
 		raise GateAborted()
 
-	# --- Picker: anggota aktif + info grup terisi (FU96: marker 1 baris kg=0) ---
+	# --- Picker: anggota aktif + ukuran grup dari baris MR ---
 	try:
 		rows = requestable_work_orders(search=ITEM_NAME)
 		main_rows = [r for r in rows if r.name in TRACKED["wo"][:3]]
 		ok = len(main_rows) == 3 and all(
-			r.request_active
-			and r.box_plan == plan
-			and len(r.group_boxes) == 1
-			and flt(r.group_boxes[0].get("kg")) == 0
-			and flt(r.group_boxes[0].get("qty")) == total
-			and r.group_size == 3
-			for r in main_rows
+			r.request_active and not r.box_plan and r.group_size == 3 for r in main_rows
 		)
 		check(
 			"picker_group_active",
 			ok,
-			f"rows={[(r.name, r.request_active, r.box_plan, r.group_size, r.group_boxes) for r in main_rows]}",
+			f"rows={[(r.name, r.request_active, r.box_plan, r.group_size) for r in main_rows]}",
 		)
 	except Exception as e:
 		check("picker_group_active", False, f"{type(e).__name__}: {e}")
@@ -453,23 +432,9 @@ def _run_gate(check):
 			f"{type(e).__name__}: {str(e)[:180]}, mr_before={before}, mr_after={after}",
 		)
 
-	# --- Cancel member tunggal -> ditolak dengan pesan grup ---
+	# --- cancel_request MR bulk: semua WO bersih, picker normal lagi ---
 	try:
-		mr1 = sorted(mr_names)[0]
-		cancel_request(material_request=mr1)
-		check("cancel_member_rejected", False, "cancel_request member grup TIDAK ditolak!")
-	except Exception as e:
-		msg = str(e)
-		check("cancel_member_rejected", "grup serah terima" in msg, f"{type(e).__name__}: {msg[:200]}")
-
-	# --- cancel_group_request: semua MR batal, WO bersih, picker normal lagi ---
-	try:
-		cancel_group_request(box_plan=plan)
-		mr_after = frappe.get_all(
-			"Material Request",
-			filters=[["custom_handover_box_plan", "=", plan]],
-			fields=["name", "docstatus", "status"],
-		)
+		cancel_request(material_request=mr)
 		wo_links = {
 			d.name: d.custom_handover_material_request
 			for d in frappe.get_all(
@@ -481,22 +446,20 @@ def _run_gate(check):
 		rows = requestable_work_orders(search=ITEM_NAME)
 		main_rows = [r for r in rows if r.name in TRACKED["wo"][:3]]
 		ok = bool(
-			len(mr_after) == 3
-			and all(d.docstatus == 2 and d.status == "Cancelled" for d in mr_after)
+			frappe.db.get_value("Material Request", mr, "docstatus") == 2
 			and all(v in (None, "") for v in wo_links.values())
 			and len(main_rows) == 3
-			and all(not r.request_active and not r.box_plan for r in main_rows)
+			and all(not r.request_active and not r.group_size for r in main_rows)
 		)
 		check(
 			"cancel_group_request",
 			ok,
-			f"mr={mr_after}, wo_links={wo_links}, picker={[(r.name, r.request_active, r.box_plan) for r in main_rows]}",
+			f"wo_links={wo_links}, picker={[(r.name, r.request_active, r.group_size) for r in main_rows]}",
 		)
 	except Exception as e:
 		check("cancel_group_request", False, f"{type(e).__name__}: {e}")
 	finally:
 		frappe.set_user("Administrator")
-
 
 def _teardown(check):
 	try:
