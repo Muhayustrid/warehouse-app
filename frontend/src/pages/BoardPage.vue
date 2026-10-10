@@ -407,10 +407,6 @@ async function doCancel() {
 			</div>
 			<template v-for="day in days" :key="day.date">
 				<div class="dayhead">
-					<span class="dlabel">
-						{{ dayLabel(day.date) }}<span class="ddate">{{ dayjs(day.date).format('D MMM YYYY') }}</span>
-					</span>
-					<span class="dcount">{{ day.rows.length }} {{ day.rows.length === 1 ? 'batch' : 'batches' }}</span>
 					<label v-if="dayState(day).any" class="dcheck">
 						<input
 							type="checkbox"
@@ -420,6 +416,10 @@ async function doCancel() {
 							@change="toggleDay(day, $event.target.checked)"
 						/>
 					</label>
+					<span class="dlabel">
+						{{ dayLabel(day.date) }}<span class="ddate">{{ dayjs(day.date).format('D MMM YYYY') }}</span>
+						<span class="dcount">{{ day.rows.length }} {{ day.rows.length === 1 ? 'batch' : 'batches' }}</span>
+					</span>
 				</div>
 				<div
 					v-for="r in day.rows"
@@ -567,14 +567,14 @@ async function doCancel() {
    [sel][batch][item — lebar fleksibel][qty — rata kanan][work order][status]
    Qty diberi lebar cukup + gap besar sebelum Work Order supaya angka tak
    menempel ke kolom sebelahnya (keluhan proporsi). */
-.wo-thead, .wo-row {
-  grid-template-columns: 32px 56px minmax(220px, 1.6fr) 110px minmax(170px, 1fr) 150px;
+.wo-thead, .wo-row, .dayhead {
+  grid-template-columns: 32px 56px minmax(200px, 240px) 110px minmax(220px, 1fr) 190px;
   column-gap: 20px;
 }
 .wo-row .c-qty { padding-right: 4px; }
 .pg-num { font-size: 12.5px; color: var(--muted, inherit); font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
 
-.th-kanan { text-align: right; }
+.th-kanan { text-align: right; padding-right: 4px; }
 .uom-select { width: auto; min-width: 96px; }
 .iconbtn { width: 34px; padding: 0; display: grid; place-items: center; }
 .dseg-count {
@@ -591,11 +591,12 @@ async function doCancel() {
 }
 .dseg-btn.on .dseg-count { background: var(--brand-soft, rgba(102, 163, 191, 0.18)); color: var(--brand-strong, inherit); }
 
-/* kepala grup hari — satu baris (nowrap), label + tanggal + jumlah sejajar */
+/* kepala grup hari — grid SEJALAR kolom baris (rule di atas): checkbox
+   select-all di kolom pertama (kiri, atas checkbox baris), label + tanggal +
+   jumlah di kolom Batch+Item */
 .dayhead {
-  display: flex;
+  display: grid;
   align-items: center;
-  gap: 8px;
   padding: 6px 16px;
   border-top: 1px solid var(--line, rgba(0, 0, 0, 0.08));
   background: rgba(243, 246, 249, 0.7);
@@ -604,11 +605,11 @@ async function doCancel() {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted, inherit);
-  flex-wrap: nowrap;
 }
+.dayhead .dcheck { grid-column: 1; grid-row: 1; display: inline-flex; align-items: center; }
+.dayhead .dlabel { grid-column: 2 / 4; grid-row: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .dayhead .dlabel, .dayhead .dcount { white-space: nowrap; }
 .dayhead .ddate {
-  margin-left: 8px;
   font-weight: 500;
   letter-spacing: 0.02em;
   text-transform: none;
@@ -616,7 +617,6 @@ async function doCancel() {
   font-variant-numeric: tabular-nums;
 }
 .dayhead .dcount { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint, inherit); }
-.dayhead .dcheck { margin-left: auto; display: inline-flex; }
 .dayhead input { accent-color: var(--brand, currentColor); }
 
 /* sel baris */
@@ -672,7 +672,7 @@ async function doCancel() {
   .c-batch, .c-item, .c-wo, .c-qty { grid-column: 1 / -1; }
   .c-status { grid-column: 3; grid-row: 1; align-items: flex-end; }
   .c-batch { order: 6; }
-  .dayhead { padding: 6px 14px; }
+  .dayhead { display: flex; flex-wrap: nowrap; gap: 8px; padding: 6px 14px; }
 }
 
 /* bar aksi mengapung */
