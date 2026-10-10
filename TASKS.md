@@ -394,6 +394,14 @@ Atas permintaan user ("uji end to end, fokus picklist dan batch"). Tiga lapis bu
 - Inventaris final kata "Box" di SELURUH aset gudang ter-deploy: tinggal `viewBox` (atribut SVG) + `borderBoxSize` (ResizeObserver) = nol teks yang tampil.
 - **E2E Playwright 16/16 PASS** (read-only, tanpa fixture/dokumen uji): 8081 penuh — papan render "Handover Requests", "Boxes are shared" hilang dari body, tanpa label Box 1/2/3, **chunk BoardPage yang dimuat halaman memuat teks baru & bukan lama**, settings: "requested together." tampil / "shared boxes" hilang, serah terima render bersih, mobile 390 `scrollWidth=390` tanpa overflow, konsol tanpa pageerror baru; 8082 — papan + settings + serah terima sama, bebas teks lama. Screenshot `/tmp/w37_gudang_1440.png`, `/tmp/w37_settings_1440.png`, `/tmp/w37_serah_1440.png`, `/tmp/w37_settings_390.png`.
 
+## W45 — Requests: toolbar responsif ≤820px (tab status geser menyamping, cari baris penuh) — DONE (2026-10-10, deployed + diverifikasi Playwright 390×844)
+
+**Permintaan user** (2026-10-10): "tampilan handover request sekarang yang perlu diperbaiki. terlihat itu numpuk kan" (screenshot HP: toolbar menyusut, tab "Shipped" kepotong). Akar: media query mobile gudang.css memaksa `.toolbar { flex-wrap: nowrap }` → search + dseg + tombol semua menyusut; BoardPage tak punya override toolbar mobile (Inventory sudah diperbaiki serupa di W44).
+
+1. **`BoardPage.vue`** (block mobile ≤820px yang sudah ada) — `.toolbar { flex-wrap: wrap }`; `.dseg` baris sendiri `flex: 1 1 100%` + `overflow-x: auto` (scrollbar hidden, tombol `flex: none`) → "Shipped" tak terpotong lagi; `.searchbox { flex: 1 1 100%; min-width: 0 }` → cari selebar penuh; sisa (FilterBuilder + uom + refresh) di baris bawah. Popover FilterBuilder ikut sheet penuh lebar kartu (aman: toolbar Requests tak di dalam `.panel` berkaca → `fixed` global tetap benar).
+
+**Bukti eksekusi** (Playwright headless :8088, 390×844, stub 3 baris): `scrollWidth=390` (0 overflow); baris toolbar = [search 358px][dseg 358px, scrollW 361>clientW 356][Filter 86px + refresh]; klik tab "Shipped" berhasil (1 baris tampil); popover Filter x=16 w=358 muat. Screenshot /tmp/w45_mobile.png. Deploy: pull clone (fetch+reset) + salin aset + clear-cache, ping 200.
+
 ## W44 — Inventory responsif ≤820px (mobile) — DONE (2026-10-10, deployed + diverifikasi Playwright 390×844)
 
 **Permintaan user** (2026-10-10): "aku ingin memperbaiki tampilan uinya agar responsive" (screenshot HP: title & selector Warehouse bertumpuk tak rapi, tab "Inventory M…" terpotong, popover keluar layar).
