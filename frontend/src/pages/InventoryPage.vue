@@ -58,13 +58,7 @@ const range = ref('This Month')
 const customFrom = ref('')
 const customTo = ref('')
 
-// kotak cari toolbar (semua tab): per Name/Item Code/Item Group
-const SEARCH_BY = [
-	{ label: 'Item Name', value: 'name' },
-	{ label: 'Item Code', value: 'sku' },
-	{ label: 'Item Group', value: 'item_group' },
-]
-const searchBy = ref('name')
+// kotak cari toolbar (semua tab): cari per nama item; kode/group lewat Filters
 const search = ref('')
 
 const period = computed(() => {
@@ -144,7 +138,7 @@ function lazyTable(fetcher, extra = () => ({})) {
 	return t
 }
 
-const searchArgs = () => ({ search: search.value.trim(), search_by: searchBy.value })
+const searchArgs = () => ({ search: search.value.trim(), search_by: 'name' })
 const cards = lazyTable(fetchStockCards, searchArgs)
 const moves = lazyTable(fetchMovements, searchArgs)
 const balance = lazyTable(fetchStockBalance, searchArgs)
@@ -154,24 +148,20 @@ const active = computed(() => tables[tab.value])
 // filter berubah -> tab aktif dimuat ulang, tab lain ditandai basi
 const stale = { cards: true, movements: true, balance: true }
 let typing = null
-watch(
-	[filters, () => search.value.trim(), searchBy],
-	([now, s, by], [before, sBefore, byBefore] = []) => {
-		clearTimeout(typing)
-		for (const k in stale) stale[k] = true
-		const reload = () => {
-			stale[tab.value] = false
-			active.value.reset()
-		}
-		const typed = before && (now.item !== before.item || s !== sBefore)
-		if (typed) {
-			typing = setTimeout(reload, 350)
-		} else {
-			reload()
-		}
-	},
-	{ deep: true },
-)
+watch([filters, () => search.value.trim()], ([now, s], [before, sBefore] = []) => {
+	clearTimeout(typing)
+	for (const k in stale) stale[k] = true
+	const reload = () => {
+		stale[tab.value] = false
+		active.value.reset()
+	}
+	const typed = before && (now.item !== before.item || s !== sBefore)
+	if (typed) {
+		typing = setTimeout(reload, 350)
+	} else {
+		reload()
+	}
+}, { deep: true })
 watch(tab, (t) => {
 	if (stale[t]) {
 		stale[t] = false
@@ -241,17 +231,17 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 			<div class="ph-left">
 				<h1>Inventory Report</h1>
 				<p class="sub">
-					Stock ledger movements and balances per item and division
+					Stock ledger movements and balances per item and warehouse
 					<span v-if="periodLabel && tab !== 'balance'">· {{ periodLabel }}</span>
 				</p>
 			</div>
-			<label class="ph-division">
-				<span>Division</span>
+			<label class="ph-warehouse">
+				<span>Warehouse</span>
 				<Select
 					v-model="warehouse"
 					:options="warehouseOptions"
 					placeholder="All"
-					class="pv-select inv-division-select"
+					class="pv-select inv-warehouse-select"
 					showClear
 					filter
 					filterPlaceholder="Search warehouse..."
@@ -282,9 +272,6 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 				<div v-if="tab !== 'balance' && range === 'Custom'" class="inv-daterange">
 					<DateRangeField v-model:from="customFrom" v-model:to="customTo" placeholder="Select date range" />
 				</div>
-				<select v-model="searchBy" class="select" aria-label="Search by">
-					<option v-for="o in SEARCH_BY" :key="o.value" :value="o.value">by {{ o.label }}</option>
-				</select>
 				<div class="searchbox">
 					<span class="search-ico"><SearchIcon :size="15" :stroke-width="2" /></span>
 					<input v-model="search" type="search" class="input" placeholder="Find Inventory.." aria-label="Find Inventory" />
@@ -404,7 +391,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 							<span class="inv-ink">{{ data.item_name }}</span>
 						</template>
 					</Column>
-					<Column header="Division">
+					<Column header="Warehouse">
 						<template #body="{ data }">
 							<span class="inv-nw inv-muted">{{ data.warehouse }}</span>
 						</template>
@@ -502,7 +489,7 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 							<div class="inv-xs inv-muted">{{ data.item_group }}</div>
 						</template>
 					</Column>
-					<Column header="Division">
+					<Column header="Warehouse">
 						<template #body="{ data }">
 							<span class="inv-nw inv-muted">{{ data.warehouse }}</span>
 						</template>
@@ -701,8 +688,8 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 .inv-exportpanel .btn { justify-content: flex-start; width: 100%; }
 .inv-toolbar { margin-bottom: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .inv-daterange { width: 15rem; flex: none; }
-.ph-division { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
-.ph-division .inv-division-select { min-width: 15rem; }
+.ph-warehouse { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.ph-warehouse .inv-warehouse-select { min-width: 15rem; }
 
 /* -- DataTable: header uppercase 10.5px muted, pemisah 1px var(--line),
    hover brand-softer, angka tabular-nums kanan -- */

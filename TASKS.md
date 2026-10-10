@@ -394,6 +394,15 @@ Atas permintaan user ("uji end to end, fokus picklist dan batch"). Tiga lapis bu
 - Inventaris final kata "Box" di SELURUH aset gudang ter-deploy: tinggal `viewBox` (atribut SVG) + `borderBoxSize` (ResizeObserver) = nol teks yang tampil.
 - **E2E Playwright 16/16 PASS** (read-only, tanpa fixture/dokumen uji): 8081 penuh — papan render "Handover Requests", "Boxes are shared" hilang dari body, tanpa label Box 1/2/3, **chunk BoardPage yang dimuat halaman memuat teks baru & bukan lama**, settings: "requested together." tampil / "shared boxes" hilang, serah terima render bersih, mobile 390 `scrollWidth=390` tanpa overflow, konsol tanpa pageerror baru; 8082 — papan + settings + serah terima sama, bebas teks lama. Screenshot `/tmp/w37_gudang_1440.png`, `/tmp/w37_settings_1440.png`, `/tmp/w37_serah_1440.png`, `/tmp/w37_settings_390.png`.
 
+## W42 — Inventory: hapus selector "by ..." dari toolbar (cukup Filters) + label Division → Warehouse — DONE (2026-10-10)
+
+**Permintaan user** (2026-10-10): "field by item name mending dihapus baik pada stock balance stock cards dan inventory movements, kan udh ada fitur filters kan" + "trus Division diganti warehouse yak".
+
+1. **`frontend/src/pages/InventoryPage.vue`** — selector `by Item Name/Item Code/Item Group` (SEARCH_BY) dihapus dari toolbar bersama (hilang di ketiga tab); kotak cari kini mencari **per nama item** (`search_by: 'name'` — sama dengan default endpoint, kode/group tetap tersedia di popover Filters). `watch` filter reload tidak lagi mengawasi `searchBy`. Label "Division" → "Warehouse": kepala halaman + kolom Stock Cards & Stock Balance + subjudul; class `ph-division`/`inv-division-select` → `ph-warehouse`/`inv-warehouse-select`. Backend `inventory.py` tidak disentuh (search_by tetap didukung siapa pun pemanggil lain).
+2. **Artefak build** — `npm run build` hijau; aset ter-hash baru di `public/gudang/` + `www/gudang.html` sesuai pola deploy W33-P4.
+
+**Bukti eksekusi**: build vite sukses (InventoryPage-*.js 542 kB, tidak ada error); grep pasca-edit: 0 referensi `searchBy|SEARCH_BY|Division` di `frontend/src`; toolbar kini `[tabs] [range] [🔍 Find Inventory..] [Filters] [Export] [⟳]` tanpa dropdown "by ...". Deploy aset ke container frontend stack `1oktober2026` mengikuti AGENTS.md (wajib salin manual — quirk volume sites basi di macOS Docker).
+
 ## W38 — Report "Serah Terima Gudang" lepas kolom Box 1/2/3 + gate w9/w19 diselaraskan kontrak FU96/FU97 — DONE (2026-10-06)
 
 **Permintaan user** (lanjutan langsung W37 + production_app FU96): "menurutku data lama hapus aja, karna nanti bener2 fresh, misal kamu bisa commit dan push warehouse silahkan sekalian ya!" — keputusan membuang kolom arsip box dari DB **diambil di production_app (FU97)**, dan warehouse_app (satu-satunya pembaca kolom itu) berhenti membacanya di perubahan yang sama supaya urutan deploy aman (report dulu, baru kolom di-drop).
