@@ -661,6 +661,13 @@ async function doCancel() {
   /* bar mengapung di atas bottom-nav HP */
   .floatbar { bottom: calc(76px + env(safe-area-inset-bottom)); }
   .wo-thead { display: none; }
+  /* toolbar rapi: tumpuk — tab status geser menyamping (jangan potong
+     "Shipped"), cari selebar penuh; filter + uom + refresh di baris bawah */
+  .toolbar { flex-wrap: wrap; }
+  .toolbar .dseg { flex: 1 1 100%; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .toolbar .dseg::-webkit-scrollbar { display: none; }
+  .toolbar .dseg-btn { flex: none; }
+  .toolbar .searchbox { flex: 1 1 100%; max-width: none; min-width: 0; }
   .wo-row { grid-template-columns: auto 1fr auto; gap: 3px 12px; padding: 12px 14px; }
   .c-batch, .c-item, .c-wo, .c-qty { grid-column: 1 / -1; }
   .c-status { grid-column: 3; grid-row: 1; align-items: flex-end; }
