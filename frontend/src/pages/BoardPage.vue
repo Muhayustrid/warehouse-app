@@ -274,8 +274,8 @@ function onBulkDone({ ok, fail }) {
 	load(page.value)
 }
 
-function onGroupDone({ boxPlan, size }) {
-	toast.success(`Group request created: ${boxPlan} · ${size} Work Orders`)
+function onGroupDone({ materialRequest, size }) {
+	toast.success(`Group request created: ${materialRequest} · ${size} Work Orders`)
 	load(page.value)
 }
 
@@ -288,6 +288,7 @@ function askCancel() {
 		mr: r.custom_handover_material_request,
 		plan: r.box_plan || null,
 		size: Number(r.group_size || 0),
+		group: !!r.box_plan || Number(r.group_size || 0) > 1,
 	}
 	cancelOpen.value = true
 }
@@ -297,7 +298,7 @@ const cancelOptions = computed(() => {
 	if (!t) {
 		return {}
 	}
-	return t.plan
+	return t.group
 		? {
 				title: 'Cancel Group Request',
 				message: `Cancel the ENTIRE group (${t.size} Work Orders)? All unshipped members are cancelled together.`,
@@ -479,7 +480,7 @@ async function doCancel() {
 								@click.stop
 								>{{ r.custom_handover_material_request }}</a
 							>
-							<template v-if="r.box_plan">, group of {{ r.group_size || 0 }}</template>
+							<template v-if="r.box_plan || r.group_size > 1">, group of {{ r.group_size || 0 }}</template>
 						</span>
 					</span>
 				</div>
@@ -538,14 +539,14 @@ async function doCancel() {
 		<div v-if="cancelPickRow" class="floatbar">
 			<span class="fb-count">
 				{{
-					cancelPickRow.box_plan
-						? `Group ${cancelPickRow.box_plan} · ${fmtNum(Number(cancelPickRow.group_size || 0))} Work Orders`
+					cancelPickRow.box_plan || cancelPickRow.group_size > 1
+						? `Group ${cancelPickRow.box_plan || cancelPickRow.custom_handover_material_request} · ${fmtNum(Number(cancelPickRow.group_size || 0))} Work Orders`
 						: cancelPickRow.custom_handover_material_request
 				}}
 			</span>
 			<button type="button" class="linkbtn fb-clear" @click="cancelPick = null">Clear</button>
 			<button type="button" class="btn btn-sm btn-danger" @click="askCancel()">
-				{{ cancelPickRow.box_plan ? 'Cancel Group' : 'Cancel Request' }}
+				{{ cancelPickRow.box_plan || cancelPickRow.group_size > 1 ? 'Cancel Group' : 'Cancel Request' }}
 			</button>
 		</div>
 
