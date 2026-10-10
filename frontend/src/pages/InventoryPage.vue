@@ -100,6 +100,9 @@ function clearFilters() {
 	item.value = ''
 	itemGroup.value = null
 	warehouse.value = null
+	range.value = 'This Month'
+	customFrom.value = ''
+	customTo.value = ''
 }
 
 // ---- tabel lazy per tab ----
@@ -266,12 +269,6 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 						{{ t.label }}
 					</button>
 				</div>
-				<select v-if="tab !== 'balance'" v-model="range" class="select" aria-label="Time range">
-					<option v-for="r in RANGES" :key="r" :value="r">{{ r }}</option>
-				</select>
-				<div v-if="tab !== 'balance' && range === 'Custom'" class="inv-daterange">
-					<DateRangeField v-model:from="customFrom" v-model:to="customTo" placeholder="Select date range" />
-				</div>
 				<div class="searchbox">
 					<span class="search-ico"><SearchIcon :size="15" :stroke-width="2" /></span>
 					<input v-model="search" type="search" class="input" placeholder="Find Inventory.." aria-label="Find Inventory" />
@@ -293,6 +290,20 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					<div v-if="showFilters" class="popoverlay" @click="showFilters = false"></div>
 					<Transition name="pop">
 						<div v-if="showFilters" class="filterpanel">
+							<!-- rentang waktu: hanya berguna utk ledger (cards/movements),
+							     Stock Balance = posisi kini tanpa periode -->
+							<div v-if="tab !== 'balance'" class="ffield">
+								<label>Time Range</label>
+								<select v-model="range" class="select" aria-label="Time range">
+									<option v-for="r in RANGES" :key="r" :value="r">{{ r }}</option>
+								</select>
+								<DateRangeField
+									v-if="range === 'Custom'"
+									v-model:from="customFrom"
+									v-model:to="customTo"
+									placeholder="Select date range"
+								/>
+							</div>
 							<div class="ffield">
 								<label>Item</label>
 								<input v-model="item" type="text" class="input" placeholder="Item code or name..." />
@@ -687,7 +698,6 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 .inv-exportpanel { width: 200px; }
 .inv-exportpanel .btn { justify-content: flex-start; width: 100%; }
 .inv-toolbar { margin-bottom: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.inv-daterange { width: 15rem; flex: none; }
 .ph-warehouse { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .ph-warehouse .inv-warehouse-select { min-width: 15rem; }
 
