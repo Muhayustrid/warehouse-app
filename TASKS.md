@@ -394,6 +394,16 @@ Atas permintaan user ("uji end to end, fokus picklist dan batch"). Tiga lapis bu
 - Inventaris final kata "Box" di SELURUH aset gudang ter-deploy: tinggal `viewBox` (atribut SVG) + `borderBoxSize` (ResizeObserver) = nol teks yang tampil.
 - **E2E Playwright 16/16 PASS** (read-only, tanpa fixture/dokumen uji): 8081 penuh — papan render "Handover Requests", "Boxes are shared" hilang dari body, tanpa label Box 1/2/3, **chunk BoardPage yang dimuat halaman memuat teks baru & bukan lama**, settings: "requested together." tampil / "shared boxes" hilang, serah terima render bersih, mobile 390 `scrollWidth=390` tanpa overflow, konsol tanpa pageerror baru; 8082 — papan + settings + serah terima sama, bebas teks lama. Screenshot `/tmp/w37_gudang_1440.png`, `/tmp/w37_settings_1440.png`, `/tmp/w37_serah_1440.png`, `/tmp/w37_settings_390.png`.
 
+## W46 — Requests: checkbox select-all pindah ke kiri (sejajar kolom) + proporsi kolom header↔baris — DONE (2026-10-10, deployed + diverifikasi)
+
+**Permintaan user** (2026-10-10): "ini masih bisa proposionalnya header dan kolomnya, trus kenapa checkpoint masih berada di sisi kanan? aku ingin dia berada di sisi kiri!"
+
+1. **Checkbox select-all dayhead → kiri**: `dcheck` dipindah jadi child pertama dayhead; dayhead kini `display: grid` dengan `grid-template-columns` IDENTIK baris (share selector dengan `.wo-thead, .wo-row`) → checkbox persis di kolom checkbox baris (x sejajar), label+tanggal+jumlah di kolom Batch+Item. Sebelumnya `margin-left: auto` menempelkan ke kanan.
+2. **Proporsi kolom**: `32px 56px minmax(200px,240px) 110px minmax(220px,1fr) 190px` — Item selebar konten (sebelumnya `1.6fr` = dead space besar), Work Order fleksibel, Status 190px (MR link tak lagi ter-ellipsis). Catatan: percobaan pertama pakai `auto` untuk Item SALAH — grid tiap container resolve `auto` sendiri (header "ITEM" ~40px vs baris 112px → header "QTY" geser 78px dari angka); diganti lebar tetap.
+3. **Qty header sejajar angka**: `.th-kanan { padding-right: 4px }` menyamai padding angka qty.
+
+**Bukti eksekusi** (Playwright 1440px, stub 2 baris): thead vs row bounding box IDENTIK tiap kolom (69-101, 121-177, 197-437, 457-567, 587-1161, 1181-1371); dcheck x=69-101 = kolom checkbox baris; teks checkpoint "TODAY 10 Oct 2026 1 batch". Screenshot /tmp/w46b_board.png. Deploy: pull clone (fetch+reset) + salin aset + clear-cache, ping 200.
+
 ## W45 — Requests: toolbar responsif ≤820px (tab status geser menyamping, cari baris penuh) — DONE (2026-10-10, deployed + diverifikasi Playwright 390×844)
 
 **Permintaan user** (2026-10-10): "tampilan handover request sekarang yang perlu diperbaiki. terlihat itu numpuk kan" (screenshot HP: toolbar menyusut, tab "Shipped" kepotong). Akar: media query mobile gudang.css memaksa `.toolbar { flex-wrap: nowrap }` → search + dseg + tombol semua menyusut; BoardPage tak punya override toolbar mobile (Inventory sudah diperbaiki serupa di W44).
