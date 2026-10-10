@@ -701,6 +701,29 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 .ph-warehouse { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .ph-warehouse .inv-warehouse-select { min-width: 15rem; }
 
+/* -- mobile ≤820px: kepala tumpuk, tab geser menyamping, paginator ringkas -- */
+@media (max-width: 820px) {
+  .inv-page .page-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .inv-page .ph-warehouse { width: 100%; }
+  .inv-page .ph-warehouse .inv-warehouse-select { flex: 1; min-width: 0; }
+  .inv-page .inv-toolbar { flex-wrap: wrap; gap: 8px; }
+  /* tab ledger: baris sendiri, geser menyamping sendiri — jangan potong label */
+  .inv-page .dseg { flex: 1 1 100%; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .inv-page .dseg::-webkit-scrollbar { display: none; }
+  .inv-page .dseg-btn { flex: none; }
+  .inv-page .inv-toolbar .searchbox { flex: 1 1 100%; max-width: none; min-width: 0; }
+  /* tabel ledger tetap geser menyamping di dalam kartu (sengaja) — sel dirapatkan */
+  .inv-page .pv-table .p-datatable-thead > tr > th,
+  .inv-page .pv-table .p-datatable-tbody > tr > td { padding: 0.5rem 0.6rem; }
+  .inv-page .p-paginator .p-paginator-current { display: none; }
+  /* popover mobile: sheet selebar kartu, di bawah toolbar (anchor toolbar —
+     jangan ke tombol: posisinya geser saat toolbar wrap; .panel berkaca
+     dengan backdrop-filter tak bisa jadi anchor fixed) */
+  .inv-page .inv-toolbar { position: relative; }
+  .inv-page .filterwrap { position: static; }
+  .inv-page .filterpanel { position: absolute; top: calc(100% + 6px); left: 0; right: 0; width: auto; min-width: 0; }
+}
+
 /* -- DataTable: header uppercase 10.5px muted, pemisah 1px var(--line),
    hover brand-softer, angka tabular-nums kanan -- */
 .pv-table .p-datatable-table {
