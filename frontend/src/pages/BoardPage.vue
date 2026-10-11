@@ -530,7 +530,7 @@ async function doCancel() {
 		<!-- bar aksi seleksi (mengapung) -->
 		<div v-if="nSelected" class="floatbar">
 			<button type="button" class="linkbtn fb-clear" @click="selectedNames = []">Clear</button>
-			<button type="button" class="btn fb-btn" @click="onPrimaryAction">
+			<button type="button" class="btn fb-btn btn-primary" @click="onPrimaryAction">
 				{{
 					groupSelection
 						? `Create Group Request (${nSelected})`
