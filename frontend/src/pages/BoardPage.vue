@@ -529,9 +529,8 @@ async function doCancel() {
 
 		<!-- bar aksi seleksi (mengapung) -->
 		<div v-if="nSelected" class="floatbar">
-			<span class="fb-count">{{ nSelected }} selected</span>
 			<button type="button" class="linkbtn fb-clear" @click="selectedNames = []">Clear</button>
-			<button type="button" class="btn btn-sm btn-primary" @click="onPrimaryAction">
+			<button type="button" class="btn fb-btn" @click="onPrimaryAction">
 				{{
 					groupSelection
 						? `Create Group Request (${nSelected})`
@@ -550,7 +549,7 @@ async function doCancel() {
 				}}
 			</span>
 			<button type="button" class="linkbtn fb-clear" @click="cancelPick = null">Clear</button>
-			<button type="button" class="btn btn-sm btn-danger" @click="askCancel()">
+			<button type="button" class="btn fb-btn btn-danger" @click="askCancel()">
 				{{ cancelPickRow.box_plan || cancelPickRow.group_size > 1 ? 'Cancel Group' : 'Cancel Request' }}
 			</button>
 		</div>
@@ -606,7 +605,7 @@ async function doCancel() {
   text-transform: uppercase;
   color: var(--muted, inherit);
 }
-.dayhead .dcheck { grid-column: 1; grid-row: 1; display: inline-flex; align-items: center; }
+.dayhead .dcheck { grid-column: 1; grid-row: 1; display: inline-flex; align-items: center; justify-content: center; }
 .dayhead .dlabel { grid-column: 2 / 4; grid-row: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .dayhead .dlabel, .dayhead .dcount { white-space: nowrap; }
 .dayhead .ddate {
@@ -696,6 +695,8 @@ async function doCancel() {
 }
 .fb-count { font-size: 12.5px; font-weight: 600; color: var(--ink, inherit); white-space: nowrap; }
 .fb-clear { font-size: 12.5px; color: var(--muted, inherit); }
+/* tombol aksi floatbar dibesarkan agar enak ditekan (HP) */
+.fb-btn { height: 40px; padding: 0 18px; font-size: 14px; }
 
 /* tombol merah (cancel) — production tak punya varian btn-danger */
 .btn-danger { background: var(--bad-bg, #f6e1dc); border-color: transparent; color: var(--bad-ink, #9c4736); }
