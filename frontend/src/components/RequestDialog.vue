@@ -52,7 +52,8 @@ async function submit() {
 }
 
 function close() {
-	dlg.value?.close()
+	// lewat model, bukan dlg.close() — kalau show tetap true, buka berikutnya tak memicu watch
+	show.value = false
 }
 
 // sinkron model → <dialog>; buka = reset fase + showModal, tutup = close

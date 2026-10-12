@@ -694,7 +694,7 @@ async function doCancel() {
   box-shadow: 0 18px 48px -16px rgba(36, 48, 58, 0.3);
 }
 .fb-count { font-size: 12.5px; font-weight: 600; color: var(--ink, inherit); white-space: nowrap; }
-.fb-clear { font-size: 12.5px; color: var(--muted, inherit); }
+.fb-clear { align-self: center; font-size: 12.5px; color: var(--muted, inherit); }
 /* tombol aksi floatbar dibesarkan agar enak ditekan (HP) */
 .fb-btn { height: 40px; padding: 0 18px; font-size: 14px; }
 

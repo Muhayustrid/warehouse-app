@@ -40,7 +40,8 @@ watch(show, (v) => {
 })
 
 function close() {
-	dlg.value?.close()
+	// lewat model, bukan dlg.close() — kalau show tetap true, buka berikutnya tak memicu watch
+	show.value = false
 }
 
 function onCancel() {
