@@ -33,6 +33,9 @@
 #  10. Draft di-reload lalu disimpan ulang: baris native tetap (qty tak
 #      menjadi 0) dan baris UOM rate-passthrough tetap (tak berevaluasi ke 0)
 #      — regresi zero-storage Float custom.
+#  11. Override get_items mengembalikan kolom UOM custom (custom_uom,
+#      custom_conversion_factor, custom_qty_before/after,
+#      custom_qty_difference_per_uom=0, custom_valuation_rate_per_uom).
 #
 # Fixture (prefix "ZZTEST-W23", TANPA user fixture): 1 Item run-unik
 # (item_code hash, site boleh menimpa via naming series — pakai doc.name
@@ -189,6 +192,7 @@ def _run_gate(check):
 			"invalid_uom_rejected",
 			"native_row_untouched",
 			"no_change_throws_native",
+			"fetch_items_enriched",
 		):
 			check(name, True, skip_reason)
 	else:
@@ -482,7 +486,9 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 			check("no_change_throws_native", True, "skipped: stok fixture 0")
 		else:
 			# after x 12 == bin qty, rate per UOM x 12 == bin rate (tanpa perubahan)
-			_make_sr(
+			# Blind-count override pos_next (2026-10-17) me-skip filter ini pada
+			# draft — uji perilaku submit lewat _action tanpa mengubah stok.
+			sr6 = _make_sr(
 				company,
 				[
 					{
@@ -495,12 +501,19 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 				],
 				expense_account=expense_account,
 			)
+			sr6._action = "submit"
+			sr6.remove_items_with_no_change()
 			check("no_change_throws_native", False, "SR tanpa perubahan TIDAK ditolak native!")
 	except frappe.ValidationError as e:
+		from erpnext.stock.doctype.stock_reconciliation.stock_reconciliation import (
+			EmptyStockReconciliationItemsError,
+		)
+
 		frappe.db.rollback()
+		# pos_next re-raises the same class with its own message — match the class, not the text
 		check(
 			"no_change_throws_native",
-			"change in quantity or value" in str(e),
+			isinstance(e, EmptyStockReconciliationItemsError),
 			f"EmptyStockReconciliationItemsError: {str(e)[:120]}",
 		)
 	except Exception as e:
@@ -580,6 +593,52 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 	except Exception as e:
 		check("reload_resave_native_safe", False, f"{type(e).__name__}: {str(e)[:200]}")
 		check("reload_resave_rate_safe", False, f"{type(e).__name__}: {str(e)[:200]}")
+
+	# --- Case 8: get_items override enriches custom UOM columns ---
+	# Ekspektasi dibaca dari ledger aktual (stok berkembang mengikuti case yang
+	# lolos), bukan angka mati — case tengah yang gagal tak boleh memerahkan
+	# case ini bila override-nya benar.
+	try:
+		from erpnext.stock.stock_ledger import get_previous_sle
+
+		from warehouse_app.warehouse_app.stock_reconciliation import get_items as sr_get_items
+
+		prev = (
+			get_previous_sle(
+				{
+					"item_code": item.name,
+					"warehouse": warehouse,
+					"posting_date": nowdate(),
+					"posting_time": nowtime(),
+				}
+			)
+			or {}
+		)
+		ledger_qty = flt(prev.get("qty_after_transaction"))
+		ledger_rate = flt(prev.get("valuation_rate"))
+		fetch_rows = sr_get_items(warehouse, nowdate(), nowtime(), company, item_code=item.name)
+		row = fetch_rows[0] if fetch_rows else {}
+		want_before = flt(ledger_qty / 12, 3)
+		want_rate = flt(ledger_rate * 12, 2) if ledger_rate > 0 else None
+		got_rate = row.get(SR_RATE_FIELD)
+		ok = bool(
+			fetch_rows
+			and row.get(SR_UOM_FIELD) == alt
+			and abs(flt(row.get(SR_FACTOR_FIELD)) - 12) < 0.0001
+			and abs(flt(row.get(SR_BEFORE_FIELD)) - want_before) < 0.0001
+			and abs(flt(row.get(SR_AFTER_FIELD)) - want_before) < 0.0001
+			and abs(flt(row.get(SR_DIFF_FIELD))) < 0.0001
+			and (abs(flt(got_rate) - want_rate) < 0.01 if want_rate else got_rate is None)
+			and abs(flt(row.get("qty")) - ledger_qty) < 0.0001
+		)
+		check(
+			"fetch_items_enriched",
+			ok,
+			f"item={item.name}, row={dict(row) if row else None}, "
+			f"want uom={alt}, factor=12, before={want_before}, rate={want_rate}",
+		)
+	except Exception as e:
+		check("fetch_items_enriched", False, f"{type(e).__name__}: {str(e)[:200]}")
 
 
 def _teardown(check):

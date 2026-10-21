@@ -245,9 +245,11 @@ doc_events = {
 # Overriding Methods
 # ------------------------------
 #
-# override_whitelisted_methods = {
-# 	"frappe.desk.doctype.event.event.get_events": "warehouse_app.event.get_events"
-# }
+override_whitelisted_methods = {
+	"erpnext.stock.doctype.stock_reconciliation.stock_reconciliation.get_items": (
+		"warehouse_app.warehouse_app.stock_reconciliation.get_items"
+	),
+}
 #
 # each overriding function accepts a `data` argument;
 # generated from the base implementation of the doctype dashboard,

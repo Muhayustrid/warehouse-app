@@ -527,6 +527,7 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 			frappe.model.set_value(cdt, cdn, "custom_qty_before", "");
 			frappe.model.set_value(cdt, cdn, "custom_qty_after", "");
 			frappe.model.set_value(cdt, cdn, "custom_qty_difference_per_uom", "");
+			frappe.model.set_value(cdt, cdn, "custom_valuation_rate_per_uom", "");
 			frappe.model.set_value(cdt, cdn, "qty", null);
 			frappe.model.set_value(cdt, cdn, "valuation_rate", null);
 			return;
@@ -560,7 +561,31 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 						// custom_qty_after handler drives the native qty
 						.then(() => frappe.model.set_value(cdt, cdn, "custom_qty_after", before))
 						// explicit sync: native qty remains the ledger's source of truth
-						.then(() => frappe.model.set_value(cdt, cdn, "qty", flt(cur.current_qty)));
+						.then(() => frappe.model.set_value(cdt, cdn, "qty", flt(cur.current_qty)))
+						.then(() => {
+							const r = locals[cdt][cdn];
+							if (!r) return;
+							const has_rate =
+								r.custom_valuation_rate_per_uom != null &&
+								r.custom_valuation_rate_per_uom !== "";
+							if (!has_rate && flt(r.current_valuation_rate)) {
+								// backfill: rate cell empty & system rate exists; fetch rows arrive pre-filled
+								frappe.model.set_value(
+									cdt,
+									cdn,
+									"custom_valuation_rate_per_uom",
+									flt(r.current_valuation_rate) * factor
+								);
+							} else if (has_rate) {
+								// pending-rate drive: rate typed before factor arrived; preserves explicit 0
+								frappe.model.set_value(
+									cdt,
+									cdn,
+									"valuation_rate",
+									flt(r.custom_valuation_rate_per_uom) / factor
+								);
+							}
+						});
 				});
 			});
 		});
