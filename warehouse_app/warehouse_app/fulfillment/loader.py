@@ -371,6 +371,7 @@ def _load_sales_order_items(so_names: list[str]) -> dict[str, list[dict]]:
 			"uom": row.uom,
 			"conversion_factor": row.conversion_factor,
 		}
+		item["outstanding"] = _outstanding(item)
 		items_by_so.setdefault(row.parent, []).append(item)
 	return items_by_so
 
@@ -384,7 +385,22 @@ def _item_group_map(item_codes: list[str]) -> dict[str, str]:
 		fields=["name", "item_group"],
 		limit_page_length=0,
 	)
-	return {row["name"]: row.get("item_group") for row in rows}
+	group_names = sorted({row.item_group for row in rows if row.item_group})
+	leaf_groups = set()
+	if group_names:
+		leaf_groups = {
+			row.name
+			for row in frappe.get_list(
+				"Item Group",
+				filters={"name": ("in", group_names), "is_group": 0},
+				fields=["name"],
+				limit_page_length=0,
+			)
+		}
+	return {
+		row.name: row.item_group if row.item_group in leaf_groups else None
+		for row in rows
+	}
 
 
 def _load_documents(so_names: list[str]) -> dict:
@@ -524,7 +540,13 @@ def _outstanding(item) -> float:
 
 
 def _deliverable_outstanding(item) -> float:
-	return flt(item.get("qty")) - flt(item.get("delivered_qty"))
+	qty = item.get("qty")
+	if qty is None:
+		qty = item.get("ordered")
+	delivered = item.get("delivered_qty")
+	if delivered is None:
+		delivered = item.get("delivered")
+	return flt(qty) - flt(delivered)
 
 
 def _doc_counts(docs: list[dict]) -> dict[str, int]:
@@ -538,7 +560,8 @@ def _doc_counts(docs: list[dict]) -> dict[str, int]:
 def _can_generate_for_so(so, items: list[dict], profile_ok: bool) -> tuple[bool, str | None]:
 	if not profile_ok:
 		return False, "PROFILE_INVALID"
-	if not set(frappe.get_roles()).intersection({"System Manager", "Stock Manager"}):
+	roles = set(frappe.get_roles())
+	if "System Manager" not in roles and not {"Stock Manager", "Stock User"}.issubset(roles):
 		return False, "GENERATE_PERMISSION"
 	if flt(so.get("docstatus")) != 1:
 		return False, "SO_NOT_ELIGIBLE"

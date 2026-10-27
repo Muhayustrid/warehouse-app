@@ -76,12 +76,20 @@ class TestBuildPlan(unittest.TestCase):
 			build_generation_plan([item("SOI-1", "A", "Dry")], set())
 		self.assertEqual(ctx.exception.code, "PROFILE_INVALID")
 
-	def test_native_pending_quantity_is_snapshotted(self):
+	def test_native_pending_quantity_is_converted_to_stock_uom(self):
 		plan = build_generation_plan(
 			[item("SOI-1", "A", "Dry", qty=10, picked=24, factor=12)],
 			{"Frozen"},
 		)
-		self.assertEqual(plan["items"][0]["required_stock_qty"], 8)
+		self.assertEqual(plan["items"][0]["pending_qty"], 8)
+		self.assertEqual(plan["items"][0]["required_stock_qty"], 96)
+
+	def test_fractional_conversion_is_converted_to_stock_uom(self):
+		plan = build_generation_plan(
+			[item("SOI-1", "A", "Dry", qty=10, factor=0.5)],
+			{"Frozen"},
+		)
+		self.assertEqual(plan["items"][0]["required_stock_qty"], 5)
 
 
 class TestSplitLocations(unittest.TestCase):

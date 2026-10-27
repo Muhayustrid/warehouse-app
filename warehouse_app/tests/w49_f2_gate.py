@@ -25,7 +25,7 @@ from warehouse_app.warehouse_app.fulfillment.generate import (
 	generate_fulfillment_run,
 )
 from warehouse_app.warehouse_app.fulfillment.idempotency import begin_request
-from warehouse_app.warehouse_app.fulfillment.loader import load_order_preview
+from warehouse_app.warehouse_app.fulfillment.loader import load_order_preview, load_order_queue
 
 RUN = "Warehouse Fulfillment Run"
 KEY = "Warehouse Fulfillment Request Key"
@@ -37,6 +37,7 @@ TEST_MARKERS = (
 	"ZZTEST-W49-F2-SHORT",
 	"ZZTEST-W49-F2-ROLLBACK",
 	"ZZTEST-W49-F2-PERM",
+	"ZZTEST-W49-F2-UOM",
 )
 TEMP_EMAIL = "zztest-w49-f2-stock@example.com"
 
@@ -68,6 +69,13 @@ def run_gate() -> None:
 		check("preview_can_generate", preview["can_generate"] is True, preview["can_generate_reason"])
 		check("preview_has_modified", bool(preview["modified"]), preview["modified"])
 		check("preview_has_no_run", preview["run"] is None, preview["run"])
+		queue = load_order_queue(company=COMPANY, stage="open", page_length=100)
+		queue_row = next((row for row in queue["rows"] if row["sales_order"] == so_open.name), None)
+		check(
+			"queue_can_generate",
+			bool(queue_row and queue_row.get("can_generate") is True),
+			queue_row and queue_row.get("can_generate_reason"),
+		)
 
 		before_stock = _stock()
 		key = "ZZTEST-W49-F2-KEY-OPEN"
@@ -90,6 +98,9 @@ def run_gate() -> None:
 		check("run_active", _run_for(so_open.name) == result["run"], _run_for(so_open.name))
 		check("run_items", _run_items(result["run"]) == 2, _run_items(result["run"]))
 		check("run_allocations", _run_allocations(result["run"]) > 0, _run_allocations(result["run"]))
+		check("run_item_required_stock", _run_required_stock(result["run"]) > 0, _run_required_stock(result["run"]))
+		check("post_save_pl_lineage", _pl_lineage(result) is True, _pl_lineage(result))
+		check("post_save_allocation_match", _allocation_match(result) is True, _allocation_match(result))
 
 		replay = generate_fulfillment_run(so_open.name, key, preview["modified"], actor="Administrator")
 		check("replay_same_run", replay["run"] == result["run"] and replay["reused"] is True, replay)
@@ -164,6 +175,20 @@ def run_gate() -> None:
 			check("shortage_rejected", exc.code == "STOCK_SHORTAGE", exc.code)
 		check("shortage_no_run", not _run_for(short_so.name), _run_for(short_so.name))
 
+		uom_so = _uom_shortage_so()
+		test_sos.append(uom_so.name)
+		try:
+			generate_fulfillment_run(
+				uom_so.name,
+				"ZZTEST-W49-F2-KEY-UOM",
+				str(uom_so.modified),
+				actor="Administrator",
+			)
+			check("factor_shortage_rejected", False, "generated")
+		except FulfillmentError as exc:
+			check("factor_shortage_rejected", exc.code == "STOCK_SHORTAGE", exc.code)
+		check("factor_shortage_no_run", not _run_for(uom_so.name), _run_for(uom_so.name))
+
 		rollback_so = _create_so(
 			"ZZTEST-W49-F2-ROLLBACK",
 			[(DRY_ITEM, 2, "Nos", 1), (FROZEN_ITEM, 2, "Nos", 1)],
@@ -210,6 +235,27 @@ def run_gate() -> None:
 			check("permission_rejected", True, "PermissionError")
 		finally:
 			frappe.set_user("Administrator")
+		manager = frappe.get_doc("User", user)
+		manager.add_roles("Stock Manager")
+		manager.save(ignore_permissions=True)
+		frappe.db.commit()
+		frappe.set_user(user)
+		try:
+			manager_result = generate_fulfillment_run(
+				perm_so.name,
+				"ZZTEST-W49-F2-KEY-PERM-MANAGER",
+				str(perm_so.modified),
+				actor=user,
+			)
+			check(
+				"manager_can_generate",
+				bool(manager_result.get("run")) and manager_result.get("reused") is False,
+				manager_result.get("run"),
+			)
+		except Exception as exc:
+			check("manager_can_generate", False, f"{type(exc).__name__}: {exc}")
+		finally:
+			frappe.set_user("Administrator")
 		_cleanup_user(user)
 
 		after_preview = load_order_preview(so_open.name)
@@ -228,6 +274,23 @@ def run_gate() -> None:
 		profile.enabled = 1
 		profile.save(ignore_permissions=True)
 		frappe.db.commit()
+		cleanup_sos = ([so_open.name] if "so_open" in locals() else []) + test_sos
+		if cleanup_sos:
+			check(
+				"teardown_runs",
+				frappe.db.count(RUN, {"sales_order": ("in", cleanup_sos)}) == 0,
+				frappe.db.count(RUN, {"sales_order": ("in", cleanup_sos)}),
+			)
+			check(
+				"teardown_keys",
+				frappe.db.count(KEY, {"sales_order": ("in", cleanup_sos)}) == 0,
+				frappe.db.count(KEY, {"sales_order": ("in", cleanup_sos)}),
+			)
+		check(
+			"teardown_test_sos",
+			all(not frappe.db.exists("Sales Order", name) for name in test_sos),
+			[ name for name in test_sos if frappe.db.exists("Sales Order", name)],
+		)
 
 	print("GATE_JSON:" + json.dumps({"ok": ok, "checks": checks}, ensure_ascii=False, default=str))
 
@@ -328,6 +391,68 @@ def _run_items(run: str) -> int:
 
 def _run_allocations(run: str) -> int:
 	return frappe.db.count("Warehouse Fulfillment Run Allocation", {"parent": run})
+
+
+def _run_required_stock(run: str) -> float:
+	return sum(
+		flt(row.required_stock_qty)
+		for row in frappe.get_all(
+			"Warehouse Fulfillment Run Item",
+			filters={"parent": run},
+			fields=["required_stock_qty"],
+		)
+	)
+
+
+def _pl_lineage(result: dict) -> bool:
+	run = frappe.get_doc(RUN, result["run"])
+	for group, key in (("Dry", "dry_pick_list"), ("Frozen", "frozen_pick_list")):
+		info = result.get(key)
+		if not info:
+			continue
+		pl = frappe.get_doc("Pick List", info["name"])
+		if (
+			pl.docstatus != 0
+			or not pl.pick_manually
+			or pl.custom_fulfillment_run != run.name
+			or pl.custom_fulfillment_group != group
+			or not pl.locations
+		):
+			return False
+		if any(
+			flt(row.picked_qty) or flt(getattr(row, "custom_picked_qty", 0))
+			for row in pl.locations
+		):
+			return False
+	return True
+
+
+def _allocation_match(result: dict) -> bool:
+	run = frappe.get_doc(RUN, result["run"])
+	required = sum(flt(row.required_stock_qty) for row in run.items)
+	allocated = sum(flt(row.allocated_stock_qty) for row in run.allocations)
+	return required > 0 and allocated > 0 and abs(required - allocated) < 0.0001
+
+
+def _uom_shortage_so():
+	item = frappe.get_doc("Item", DRY_ITEM)
+	original_uoms = [(row.uom, row.conversion_factor) for row in item.uoms]
+	try:
+		item.set("uoms", [])
+		for uom, factor in original_uoms:
+			item.append("uoms", {"uom": uom, "conversion_factor": factor})
+		if not any(uom == "Box" for uom, _factor in original_uoms):
+			item.append("uoms", {"uom": "Box", "conversion_factor": 12})
+		item.save(ignore_permissions=True)
+		frappe.db.commit()
+		return _create_so("ZZTEST-W49-F2-UOM", [(DRY_ITEM, 10, "Box", 12)])
+	finally:
+		item.reload()
+		item.set("uoms", [])
+		for uom, factor in original_uoms:
+			item.append("uoms", {"uom": uom, "conversion_factor": factor})
+		item.save(ignore_permissions=True)
+		frappe.db.commit()
 
 
 def _pl_count(sales_order: str) -> int:

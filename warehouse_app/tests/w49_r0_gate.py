@@ -69,6 +69,11 @@ def run_gate() -> None:
 		dry = _insert_group(template, split["dry"], "Dry", pick_manually=0)
 		frozen = _insert_group(template, split["frozen"], "Frozen", pick_manually=1)
 		check("saved_disjoint", _saved_disjoint(dry.name, frozen.name), (dry.name, frozen.name))
+		check(
+			"saved_union",
+			_saved_union(dry.name, frozen.name) == set(group_map),
+			{"saved": sorted(_saved_union(dry.name, frozen.name)), "planned": sorted(group_map)},
+		)
 
 		stock_before_pl = _stock()
 		_dry_full(dry)
@@ -135,13 +140,15 @@ def run_gate() -> None:
 		try:
 			cleanup = cleanup_r0()
 			checks["cleanup"] = cleanup
-			checks["teardown_stock"] = _stock()
-			checks["teardown_items"] = {
+			teardown_stock = _stock()
+			teardown_items = {
 				code: frappe.db.exists("Item", code) for code in (R0_DRY, R0_FROZEN, R0_BOX)
 			}
-			checks["teardown_stock_metadata"] = frappe.db.exists(
-				"Stock Entry", {"remarks": R0_STOCK_MARKER}
-			)
+			teardown_metadata = frappe.db.exists("Stock Entry", {"remarks": R0_STOCK_MARKER})
+			check("cleanup_dict", isinstance(cleanup, dict), cleanup)
+			check("teardown_stock_zero", all(flt(value) == 0 for value in teardown_stock.values()), teardown_stock)
+			check("teardown_items_absent", not any(teardown_items.values()), teardown_items)
+			check("teardown_stock_metadata_absent", not teardown_metadata, teardown_metadata)
 		except Exception as exc:
 			ok = False
 			checks["cleanup_exception"] = f"{type(exc).__name__}: {exc}"
@@ -223,6 +230,14 @@ def _saved_disjoint(dry: str, frozen: str) -> bool:
 	dry_rows = {row.sales_order_item for row in frappe.get_doc("Pick List", dry).locations}
 	frozen_rows = {row.sales_order_item for row in frappe.get_doc("Pick List", frozen).locations}
 	return not (dry_rows & frozen_rows) and bool(dry_rows) and bool(frozen_rows)
+
+
+def _saved_union(dry: str, frozen: str) -> set[str]:
+	return {
+		row.sales_order_item
+		for name in (dry, frozen)
+		for row in frappe.get_doc("Pick List", name).locations
+	}
 
 
 def _dry_full(pl) -> None:

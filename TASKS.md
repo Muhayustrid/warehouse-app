@@ -10,10 +10,10 @@ Planning fitur pertama: lihat `IMPLEMENTATION_PLAN.md` (keputusan user 2026-09-2
 
 - Settings: all PRD Profile fields are in the existing `/gudang/settings`; one Profile per Company; Frozen Item Group + optional children = Frozen, every other valid group = Dry. Writes are System Manager-only, revisioned, stale-write rejected. Display names feed the queue/drawer.
 - Data: `Warehouse Fulfillment Run` (+ Run Item, Allocation) and DB-unique `Warehouse Fulfillment Request Key`; optional Pick List lineage fields `custom_fulfillment_run` / `custom_fulfillment_group`; W31 untouched.
-- Generate: preflight, one native `create_pick_list` template split before save by SO Item, 0–1 Dry + 0–1 Frozen **draft** PL, active-Run reuse, request-key replay/rollback, no picked qty/stock movement. System Manager or Stock Manager only; Stock User read-only.
+- Generate: preflight, one native `create_pick_list` template split before save by SO Item, 0-1 Dry + 0-1 Frozen **draft** PL, active-Run reuse, request-key replay/rollback, no picked qty/stock movement. System Manager, or Stock Manager paired with Stock User; Stock User alone is read-only.
 - R0 evidence: split before save, short pick, one DN from two PLs, Packing Slip, DN submit/stock, teardown 0.
-- F2 evidence: Profile/Settings/Schema/F2 gates OK; F1 read-only gate OK (4 rows, stages preserved); W31 gate OK; 57/57 unit tests PASS; residue 0 after F2 cleanup.
-- Browser: generated `WFR-2026-00001` with Dry/Frozen draft PLs from `SO-OPEN`, queue moved to In Picking, Run/PL links work; no horizontal overflow at 1440/1024/390; Settings console errors 0 after guarding missing test-site handover fields. Bundle `index-D6DfeYxq.js`.
+- F2 evidence: Profile/Settings/Schema/R0/F2 gates OK; F1 read-only gate OK (4 rows, stages preserved); W31 gate OK; 58/58 unit tests PASS; no residual Run/Key/test SO after F2 cleanup.
+- Browser: generated `WFR-2026-00001` with Dry/Frozen draft PLs from `SO-OPEN`, queue moved to In Picking, Run/PL links work; layout audited at 1440/1280/1100/1024/900/768/560/430/390/360 with no horizontal overflow; Settings is 2-column at 1024, 1-column at tablet/mobile; console errors 0. Bundle `index-TF4xP0Tw.js`.
 - F2 known limits: draft PL only; no picking, PL submit, short-pick approval, DN, Packing, print, assignment. Partial/shortage execution and role matrix remain F3–F5. Final whole-branch F2 review pending.
 
 **Gate:** R0, profile, settings, schema, F2, W31, F1, and unit gates green on disposable `fulfillment.localhost`; teardown clean.

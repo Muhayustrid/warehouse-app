@@ -38,11 +38,19 @@ const ffLoading = ref(false)
 const ffSaving = ref(false)
 const ffCanEdit = ref(false)
 const ffError = ref('')
+const ffLoadedCompany = ref('')
 const ffItemGroupQuery = ref('')
 const ffItemGroupOptions = ref([])
 const ffPaperSizes = ['A4', 'A5', 'Letter', 'Thermal 80mm']
-const ffLocked = computed(() => !ffCanEdit.value || ffLoading.value)
+const ffLocked = computed(
+	() =>
+		!ffCanEdit.value ||
+		ffLoading.value ||
+		!ffCompany.value ||
+		ffLoadedCompany.value !== ffCompany.value,
+)
 let ffItemGroupTimer = null
+let ffLoadToken = 0
 
 function emptyProfile() {
 	return {
@@ -84,13 +92,25 @@ function normalizeProfile(profile, company) {
 }
 
 async function loadFulfillment(company = ffCompany.value) {
+	const token = ++ffLoadToken
+	// Clear before the request: a failed/slow company switch must never leave the
+	// previous company's profile editable or saveable.
 	ffLoading.value = true
 	ffError.value = ''
+	ffCanEdit.value = false
+	ffLoadedCompany.value = ''
+	ffProfile.value = emptyProfile()
+	ffOptions.value = { warehouses: [], roles: [], print_formats: [] }
+	ffItemGroupQuery.value = ''
+	ffItemGroupOptions.value = []
 	try {
 		const [settings, options] = await Promise.all([
 			fetchFulfillmentSettings(company || undefined),
 			fetchFulfillmentOptions(company || undefined),
 		])
+		if (token !== ffLoadToken) {
+			return
+		}
 		ffCompanies.value = settings.companies || []
 		ffCompany.value = settings.company || company || ''
 		ffCanEdit.value = Boolean(settings.can_edit)
@@ -101,11 +121,17 @@ async function loadFulfillment(company = ffCompany.value) {
 			print_formats: options?.print_formats || [],
 		}
 		ffItemGroupQuery.value = ffProfile.value.frozen_item_group || ''
+		ffLoadedCompany.value = ffCompany.value
 	} catch (e) {
+		if (token !== ffLoadToken) {
+			return
+		}
 		ffError.value = e.message
 		toast.error(e.message)
 	} finally {
-		ffLoading.value = false
+		if (token === ffLoadToken) {
+			ffLoading.value = false
+		}
 	}
 }
 
@@ -114,7 +140,7 @@ function onFulfillmentCompanyChange() {
 }
 
 async function saveFulfillment() {
-	if (!ffCanEdit.value || ffLoading.value || ffSaving.value) {
+	if (ffLocked.value || ffSaving.value) {
 		return
 	}
 	ffSaving.value = true
@@ -128,6 +154,7 @@ async function saveFulfillment() {
 		const result = await saveFulfillmentSettings(payload)
 		ffProfile.value = normalizeProfile(result.profile, result.company)
 		ffCompany.value = result.company
+		ffLoadedCompany.value = result.company
 		ffItemGroupQuery.value = ffProfile.value.frozen_item_group || ''
 		toast.success('Fulfillment settings saved')
 	} catch (e) {
@@ -142,8 +169,10 @@ function onItemGroupInput(event) {
 	clearTimeout(ffItemGroupTimer)
 	const q = String(event?.target?.value || '').trim()
 	ffItemGroupQuery.value = q
-	if (!q) {
+	if (q !== ffProfile.value.frozen_item_group) {
 		ffProfile.value.frozen_item_group = ''
+	}
+	if (!q) {
 		ffItemGroupOptions.value = []
 		return
 	}
@@ -339,7 +368,7 @@ async function save() {
 		<div class="panel-head">
 			<div class="ff-panel-title">
 				<span class="lead">Fulfillment settings</span>
-				<span class="hint">Frozen Item Group plus its children are Frozen; every other group is Dry.</span>
+				<span class="hint">Frozen Item Group; optionally include its children. Every other valid group is Dry.</span>
 			</div>
 			<div class="ff-status">
 				<span v-if="ffProfile.name" class="badge">{{ ffProfile.enabled ? 'Enabled' : 'Disabled' }}</span>
@@ -548,7 +577,15 @@ async function save() {
 </template>
 
 <style scoped>
-.st-panel { max-width: 760px; }
+.st-panel { max-width: 980px; }
+
+.form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px 18px;
+	align-items: start;
+}
+.form-grid .wide { grid-column: 1 / -1; }
 
 .st-chips {
 	display: flex;
@@ -642,14 +679,15 @@ async function save() {
 	display: flex;
 	align-items: baseline;
 	justify-content: space-between;
-	gap: 12px;
+	gap: 4px 12px;
+	flex-wrap: wrap;
 }
 .ff-section-head h2 {
 	margin: 0;
 	font-size: 13px;
 	font-weight: 750;
 }
-.ff-section-head .hint { margin: 0; text-align: right; }
+.ff-section-head .hint { margin: 0; flex: 1 1 240px; text-align: right; }
 .ff-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .ff-grid .wide { grid-column: 1 / -1; }
 .ff-check {
@@ -691,7 +729,7 @@ async function save() {
 @media (max-width: 820px) {
 	.ff-panel { margin-top: 14px; }
 	.ff-section-head { align-items: flex-start; flex-direction: column; gap: 3px; }
-	.ff-section-head .hint { text-align: left; }
+	.ff-section-head .hint { flex: 0 1 auto; text-align: left; }
 	.ff-grid,
 	.ff-checks { grid-template-columns: 1fr; }
 	.ff-shelf { grid-column: auto; max-width: none; }
@@ -703,5 +741,29 @@ async function save() {
 	.panel-body { padding: 14px; }
 	.panel-foot { padding-left: 14px; padding-right: 14px; }
 	.panel-foot .why { display: none; }
+}
+
+@media (max-width: 560px) {
+	.st-panel,
+	.ff-panel {
+		margin-left: 0;
+		margin-right: 0;
+	}
+
+	.ff-panel .panel-head {
+		gap: 8px;
+	}
+
+	.ff-status {
+		justify-content: flex-start;
+	}
+
+	.panel-foot .btn {
+		width: 100%;
+	}
+
+	.ff-checks {
+		gap: 2px;
+	}
 }
 </style>

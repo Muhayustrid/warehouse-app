@@ -106,8 +106,8 @@ This is a deliberate deviation from PRD “Required” markers for print formats
 
 - Read: `System Manager`, `Stock Manager`, `Stock User` (consistent with the Settings page and Profile read permission).
 - Write: `System Manager` only. The Settings panel returns `can_edit=false` for other roles and disables Save server-side and client-side.
-- Generate in F2: `System Manager` and `Stock Manager`. `role_order_coordinator` is stored for the F3 role matrix; a custom configured role does not bypass DocPerm checks in F2. A Stock User can view the queue but cannot generate.
-- Run, Run Item, Run Allocation, and Request Key DocPerm: create/read/write for `System Manager` and `Stock Manager`; read for `Stock User`. No `ignore_permissions` in the settings or generate endpoints.
+- Generate in F2: `System Manager`, or `Stock Manager` paired with `Stock User` (native ERPNext v16 grants Company/Sales Order/Warehouse read to Stock User, not Stock Manager; this app does not widen native DocPerms). `role_order_coordinator` is stored for the F3 role matrix; a custom configured role does not bypass DocPerm checks in F2. A Stock User alone can view the queue but cannot generate.
+- Run, Run Item, Run Allocation, and Request Key DocPerm: create/read/write for `System Manager` and `Stock Manager`; read for `Stock User`. The Stock Manager pairing is enforced by the Generate service and loader, not by adding native permissions. No `ignore_permissions` in the settings or generate endpoints.
 
 ## 5. Settings UI
 
@@ -322,7 +322,7 @@ F2 product code starts only after this gate is green. The gate fixture may move 
 ### Site gate
 
 - Settings save/read as System Manager; Stock User read-only; invalid role/warehouse/print format rejected.
-- Generate happy path: one Run, 0–1 PL per group, all draft, no stock mutation, custom fields set.
+- Generate happy path: one Run, 0-1 PL per group, all draft, no stock mutation, custom fields set; Stock Manager+Stock User succeeds, pure Stock User is denied.
 - Same key + same payload returns same Run/PL; same key + different payload 409; concurrent/duplicate scope rejected; active Run reuse.
 - Stale SO, reservation, non-stock/bundle, missing Item Group, stock shortage, rollback on second-PL failure.
 - Preview `can_generate` and Run link after generation.
@@ -361,5 +361,5 @@ F3 picking workspace and W31 quantities, PL submit/short-pick, batch/serial, F4 
 ## 15. Open deviations to confirm at review
 
 - Later-phase profile fields are optional until their phase, despite PRD “Required” markers.
-- `role_order_coordinator` is stored from F2 but Generate permission in F2 is System Manager/Stock Manager; custom role enforcement can be completed when the full role matrix arrives.
+- `role_order_coordinator` is stored from F2 but Generate permission in F2 is System Manager or Stock Manager+Stock User; custom role enforcement can be completed when the full role matrix arrives.
 - F2 blocks generation on any shortage rather than creating a partially allocated draft PL. Partial allocation is deferred to the controlled short-pick workflow.

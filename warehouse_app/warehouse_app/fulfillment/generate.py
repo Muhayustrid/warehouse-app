@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 
 import frappe
-from frappe import _
 from frappe.utils import flt
 
 from warehouse_app.warehouse_app.fulfillment.generation import (
@@ -23,12 +22,11 @@ from warehouse_app.warehouse_app.fulfillment.idempotency import (
 	fail_request,
 	request_hash,
 )
-from warehouse_app.warehouse_app.fulfillment.profile import get_profile, resolve_frozen
+from warehouse_app.warehouse_app.fulfillment.profile import resolve_frozen
 
 RUN = "Warehouse Fulfillment Run"
 PROFILE = "Warehouse Fulfillment Profile"
 REQUEST_TYPE = "GeneratePickLists"
-ROLES = {"System Manager", "Stock Manager"}
 
 
 class FulfillmentError(Exception):
@@ -112,7 +110,10 @@ def generate_fulfillment_run(
 
 
 def _require_roles() -> None:
-	if not set(frappe.get_roles()).intersection(ROLES):
+	roles = set(frappe.get_roles())
+	# Stock Manager needs Stock User because standard ERPNext grants Company/SO/Warehouse
+	# read to Stock User, not Stock Manager. Do not widen native DocPerms from this app.
+	if "System Manager" not in roles and not {"Stock Manager", "Stock User"}.issubset(roles):
 		raise frappe.PermissionError
 
 
@@ -164,6 +165,14 @@ def _preflight(so, profile, frozen: set[str]) -> dict:
 			raise FulfillmentError("ITEM_NOT_PICKABLE", f"Item {row.item_code} is disabled.")
 		if not item.item_group:
 			raise FulfillmentError("ITEM_GROUP_MISSING", f"Item {row.item_code} has no Item Group.")
+		group = frappe.db.get_value(
+			"Item Group", item.item_group, ["name", "is_group"], as_dict=True
+		)
+		if not group or group.is_group:
+			raise FulfillmentError(
+				"ITEM_GROUP_MISSING",
+				f"Item {row.item_code} has an invalid Item Group.",
+			)
 		if flt(row.stock_reserved_qty) > 0:
 			raise FulfillmentError("STOCK_RESERVED", "Sales Order has reserved stock.")
 		if row.get("delivered_by_supplier"):
@@ -245,6 +254,7 @@ def _materialize(so, profile, plan: dict, run, frozen: set[str]):
 			)
 
 	pick_lists = {}
+	saved_allocated: dict[str, float] = {}
 	for group in ("dry", "frozen"):
 		rows = split.get(group) or []
 		if not rows:
@@ -254,9 +264,25 @@ def _materialize(so, profile, plan: dict, run, frozen: set[str]):
 			run.dry_pick_list = pick_lists[group].name
 		else:
 			run.frozen_pick_list = pick_lists[group].name
+		for row in pick_lists[group].locations:
+			so_item = row.sales_order_item
+			expected = _by_item.get(so_item)
+			if not expected or expected["picking_group"] != group:
+				raise FulfillmentError(
+					"PL_MISMATCH",
+					f"Saved Pick List contains a row outside group {group}.",
+				)
+			saved_allocated[so_item] = saved_allocated.get(so_item, 0.0) + flt(row.stock_qty)
 
 	for item in plan["items"]:
-		item_allocated = flt(allocated.get(item["sales_order_item"], 0.0))
+		if saved_allocated.get(item["sales_order_item"], 0.0) + 0.0001 < flt(
+			item["required_stock_qty"]
+		):
+			raise FulfillmentError(
+				"STOCK_SHORTAGE",
+				f"Saved Pick List is short for {item['item_code']} / {item['sales_order_item']}.",
+			)
+		item_allocated = flt(saved_allocated.get(item["sales_order_item"], 0.0))
 		run.append(
 			"items",
 			{
@@ -307,10 +333,31 @@ def _insert_pick_list(template, rows, run, group: str):
 		for key in ("name", "doctype", "parent", "parentfield", "parenttype", "idx"):
 			values.pop(key, None)
 		pl.append("locations", values)
+	pl.pick_manually = 1
 	pl.scan_mode = 0
 	pl.custom_fulfillment_run = run.name
 	pl.custom_fulfillment_group = "Dry" if group == "dry" else "Frozen"
 	pl.insert()
+	pl.reload()
+
+	expected_items = {row["sales_order_item"] for row in rows}
+	actual_items = {row.sales_order_item for row in pl.locations}
+	if not actual_items or actual_items != expected_items:
+		raise FulfillmentError(
+			"PL_MISMATCH",
+			f"Saved {group} Pick List row set does not match the split plan.",
+		)
+	if pl.docstatus != 0 or flt(pl.scan_mode) != 0:
+		raise FulfillmentError("PL_MISMATCH", f"Saved {group} Pick List is not a clean draft.")
+	if pl.custom_fulfillment_run != run.name or pl.custom_fulfillment_group != (
+		"Dry" if group == "dry" else "Frozen"
+	):
+		raise FulfillmentError("PL_MISMATCH", f"Saved {group} Pick List lineage is missing.")
+	if any(
+		flt(row.picked_qty) or flt(getattr(row, "custom_picked_qty", 0))
+		for row in pl.locations
+	):
+		raise FulfillmentError("PL_MISMATCH", f"Saved {group} Pick List has picked quantity.")
 	return pl
 
 

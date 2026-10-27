@@ -169,11 +169,35 @@ async function generate() {
 				: 'Draft Dry/Frozen Pick Lists generated.',
 		)
 	} catch (e) {
-		generateError.value = e.message || 'Failed to generate Pick Lists.'
+		const message = e.message || 'Failed to generate Pick Lists.'
+		if (message.startsWith('SO_CHANGED')) {
+			// The old request key belongs to the previous SO hash; retrying it would
+			// only produce an idempotency mismatch.
+			idempotencyKey.value = newIdempotencyKey()
+			await load(props.salesOrder)
+			generateError.value = 'The Sales Order changed. Review the refreshed detail and try again.'
+		} else {
+			generateError.value = generateErrorMessage(message)
+		}
 		toast.error(generateError.value)
 	} finally {
 		generating.value = false
 	}
+}
+
+function generateErrorMessage(message) {
+	const code = String(message).split(':')[0]
+	const labels = {
+		STOCK_SHORTAGE: 'Stock is insufficient for this Sales Order.',
+		PROFILE_DISABLED: 'The Fulfillment profile is disabled.',
+		PROFILE_MISSING: 'The Fulfillment profile is not configured.',
+		PROFILE_INVALID: 'The Fulfillment profile is invalid.',
+		ITEM_GROUP_MISSING: 'An item has no valid Item Group.',
+		GENERATE_PERMISSION: 'You do not have permission to generate Pick Lists.',
+		STALE_SO: 'Reload the Sales Order before generating.',
+		IDEMPOTENCY_MISMATCH: 'This request was already used for different data. Reload and try again.',
+	}
+	return labels[code] || message
 }
 
 function newIdempotencyKey() {
@@ -280,11 +304,11 @@ function reasonText(reason) {
 
 							<div class="ff-summary">
 								<div class="ff-summary-item ff-summary-dry">
-									<span>Dry items</span>
+									<span>{{ dryLabel }} items</span>
 									<strong>{{ data.groups.dry.length }}</strong>
 								</div>
 								<div class="ff-summary-item ff-summary-frozen">
-									<span>Frozen items</span>
+									<span>{{ frozenLabel }} items</span>
 									<strong>{{ data.groups.frozen.length }}</strong>
 								</div>
 								<div class="ff-summary-item ff-summary-warn">
@@ -1050,6 +1074,10 @@ function reasonText(reason) {
 }
 
 @media (max-width: 560px) {
+	.ff-meta {
+		grid-template-columns: 1fr;
+	}
+
 	.ff-summary {
 		grid-template-columns: 1fr;
 	}

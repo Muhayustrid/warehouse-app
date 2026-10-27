@@ -42,13 +42,14 @@ def build_generation_plan(
 		if not item_group:
 			raise GenerationError("ITEM_GROUP_MISSING", raw)
 
-		required = pending_stock_qty(
+		conversion_factor = _flt(raw.get("conversion_factor")) or 1.0
+		pending_qty = pending_stock_qty(
 			raw.get("qty"),
 			raw.get("picked_qty"),
 			raw.get("delivered_qty"),
 			raw.get("conversion_factor"),
 		)
-		if required <= 0:
+		if pending_qty <= 0:
 			continue
 
 		picking_group = "frozen" if item_group in frozen else "dry"
@@ -58,10 +59,11 @@ def build_generation_plan(
 			"item_group": item_group,
 			"item_group_snapshot": item_group,
 			"picking_group": picking_group,
-			"required_stock_qty": required,
+			"pending_qty": pending_qty,
+			"required_stock_qty": pending_qty * conversion_factor,
 			"allocated_stock_qty": 0.0,
 			"stock_uom": raw.get("stock_uom"),
-			"conversion_factor": _flt(raw.get("conversion_factor")) or 1.0,
+			"conversion_factor": conversion_factor,
 			"warehouse": raw.get("warehouse"),
 		}
 		rows.append(row)
