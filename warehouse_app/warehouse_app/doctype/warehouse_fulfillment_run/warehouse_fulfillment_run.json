@@ -1,0 +1,171 @@
+{
+ "actions": [],
+ "autoname": "WFR-.YYYY.-.#####",
+ "creation": "2026-10-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "sales_order",
+  "customer",
+  "profile",
+  "profile_revision",
+  "frozen_item_group_snapshot",
+  "include_child_groups_snapshot",
+  "policy_snapshot",
+  "status",
+  "dry_pick_list",
+  "frozen_pick_list",
+  "active_so_key",
+  "request_key",
+  "run_revision",
+  "error_code",
+  "error_message",
+  "last_reconciled_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "sales_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Order",
+   "options": "Sales Order",
+   "reqd": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "profile",
+   "fieldtype": "Link",
+   "label": "Fulfillment Profile",
+   "options": "Warehouse Fulfillment Profile",
+   "reqd": 1
+  },
+  {
+   "fieldname": "profile_revision",
+   "fieldtype": "Int",
+   "label": "Profile Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "frozen_item_group_snapshot",
+   "fieldtype": "Data",
+   "label": "Frozen Item Group Snapshot",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "include_child_groups_snapshot",
+   "fieldtype": "Check",
+   "label": "Include Child Groups Snapshot",
+   "read_only": 1
+  },
+  {
+   "fieldname": "policy_snapshot",
+   "fieldtype": "Long Text",
+   "label": "Policy Snapshot",
+   "read_only": 1
+  },
+  {
+   "default": "PLANNING",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "PLANNING\nNEEDS_RECONCILIATION"
+  },
+  {
+   "fieldname": "dry_pick_list",
+   "fieldtype": "Link",
+   "label": "Dry Pick List",
+   "options": "Pick List"
+  },
+  {
+   "fieldname": "frozen_pick_list",
+   "fieldtype": "Link",
+   "label": "Frozen Pick List",
+   "options": "Pick List"
+  },
+  {
+   "fieldname": "active_so_key",
+   "fieldtype": "Data",
+   "label": "Active SO Key",
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "request_key",
+   "fieldtype": "Data",
+   "label": "Request Key",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "run_revision",
+   "fieldtype": "Int",
+   "label": "Run Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_code",
+   "fieldtype": "Data",
+   "label": "Error Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "error_message",
+   "fieldtype": "Small Text",
+   "label": "Error Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_reconciled_at",
+   "fieldtype": "Datetime",
+   "label": "Last Reconciled At",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Warehouse App",
+ "name": "Warehouse Fulfillment Run",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "Stock User"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Stock Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

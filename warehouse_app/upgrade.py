@@ -23,6 +23,7 @@ def apply():
     ensure_item_fields()
     ensure_sr_fields()
     ensure_pl_fields()
+    ensure_pl_fulfillment_fields()
     retire_client_scripts()
     ensure_client_scripts()
     migrate_legacy_uom_field()
@@ -932,6 +933,24 @@ PL_FIELD_SPEC = {
     "UOM Conversion Factor. Leave empty for rows that are not picked yet.",
 }
 
+PL_RUN_FIELD_SPEC = {
+    "dt": "Pick List",
+    "fieldname": "custom_fulfillment_run",
+    "label": "Fulfillment Run",
+    "fieldtype": "Link",
+    "options": "Warehouse Fulfillment Run",
+    "insert_after": "purpose",
+}
+
+PL_GROUP_FIELD_SPEC = {
+    "dt": "Pick List",
+    "fieldname": "custom_fulfillment_group",
+    "label": "Fulfillment Group",
+    "fieldtype": "Select",
+    "options": "Dry\nFrozen",
+    "insert_after": "custom_fulfillment_run",
+}
+
 # Installer patch SerialBatchPackageSelector — sama persis disematkan di script
 # Pick List DAN Stock Entry (dialog batch/serial dibuka dari kedua form);
 # flag proto.__w31 menjaga install tunggal walau kedua script dimuat bersama.
@@ -1466,6 +1485,22 @@ def ensure_pl_fields():
     if "created" in results or "updated" in results:
         frappe.db.commit()
     return "created" if "created" in results else ("updated" if "updated" in results else "unchanged")
+
+
+def ensure_pl_fulfillment_fields():
+    """F2: optional lineage fields on native Pick List (never required)."""
+    results = [
+        _ensure_custom_field(PL_RUN_FIELD_SPEC),
+        _ensure_custom_field(PL_GROUP_FIELD_SPEC),
+    ]
+    frappe.clear_cache(doctype="Pick List")
+    if "created" in results or "updated" in results:
+        frappe.db.commit()
+    if "created" in results:
+        return "created"
+    if "updated" in results:
+        return "updated"
+    return "unchanged"
 
 
 def _ensure_custom_field(spec):

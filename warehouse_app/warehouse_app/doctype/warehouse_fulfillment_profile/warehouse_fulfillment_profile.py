@@ -35,6 +35,14 @@ class WarehouseFulfillmentProfile(Document):
 		if not self.company:
 			frappe.throw(_("Company is required."))
 
+		if (
+			not self.is_new()
+			and self.has_value_changed("company")
+			and frappe.db.exists("DocType", "Warehouse Fulfillment Run")
+			and frappe.db.exists("Warehouse Fulfillment Run", {"profile": self.name})
+		):
+			frappe.throw(_("The Company cannot be changed after a fulfillment Run exists."))
+
 		duplicate = frappe.db.exists(
 			"Warehouse Fulfillment Profile",
 			{"company": self.company, "name": ("!=", self.name)},
