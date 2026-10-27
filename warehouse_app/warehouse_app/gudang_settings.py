@@ -39,8 +39,20 @@ def _clean_warehouse(value, label):
 	return value
 
 
+def _handover_fields_available() -> bool:
+	# Test/fresh sites may not install production_app, which owns this DocType.
+	if not frappe.db.table_exists("Manufacturing Settings"):
+		return False
+	return all(
+		frappe.db.has_column("Manufacturing Settings", fieldname)
+		for fieldname in SETTING_FIELDS.values()
+	)
+
+
 @frappe.whitelist()
 def get_handover_settings():
+	if not _handover_fields_available():
+		return {"source": "", "target": ""}
 	return {
 		"source": frappe.db.get_single_value("Manufacturing Settings", SETTING_FIELDS["source"])
 		or "",
@@ -65,6 +77,11 @@ def warehouse_options():
 @frappe.whitelist()
 def set_handover_warehouses(source=None, target=None):
 	_require_set_access()
+	if not _handover_fields_available():
+		frappe.throw(
+			frappe._("Handover settings fields are not installed on this site."),
+			frappe.ValidationError,
+		)
 	source = _clean_warehouse(source, "Source Warehouse")
 	target = _clean_warehouse(target, "Target Warehouse")
 	frappe.db.set_single_value("Manufacturing Settings", SETTING_FIELDS["source"], source)
