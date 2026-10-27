@@ -1,22 +1,23 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-10-27 — **W50 F2 DONE (Settings Profile + Fulfillment Run + Generate draft Dry/Frozen Pick Lists)**. Spec `1028181`, plan `2389066`. Test site `fulfillment.localhost`; `erp.localhost` and production stack untouched. No push. Fresh whole-branch F2 review pending.
+Head: 2026-10-27 — **W50 F2 follow-up committed (`00fd1f9`, `4b6bd45`); fresh whole-branch F2 review still pending**. Test site `fulfillment.localhost`; `erp.localhost` and production stack untouched. No push.
 
 ## Current
 
-- F2: all PRD Profile fields live in the existing `/gudang/settings`; one Profile per Company; System Manager write, Stock Manager/User read. Frozen Item Group + children = Frozen; all other valid groups = Dry.
-- Generate: one active Run per SO, DB-unique request keys, 0–1 native **draft** Dry PL and 0–1 **draft** Frozen PL. No picking, PL submit, DN, Packing, print, assignment, or stock movement.
-- Native split is done before first save by SO Item; stale SO, reservation, missing Item Group, shortage, and second-PL rollback fail closed.
+- F2: all PRD Profile fields live in the existing `/gudang/settings`; core F2 fields are visible, while Warehouses/Print/Policies/Roles are under an Advanced disclosure (closed by default) but still included in the save payload. One Profile per Company; System Manager write; revisioned. Frozen Item Group + optional children = Frozen; every other valid leaf group = Dry.
+- Generate: one active Run per SO, DB-unique request keys, 0-1 native **draft** Dry PL and 0-1 **draft** Frozen PL. No picking, PL submit, DN, Packing, print, assignment, or stock movement. Permission: System Manager, or Stock Manager paired with Stock User; Stock User alone is read-only.
+- Native split happens before first save by SO Item; stale SO, reservation, missing Item Group, shortage, and second-PL rollback fail closed. Post-save lineage and allocation are verified.
 - F1 remains the read-only queue/drawer over native PL/DN/Packing documents.
-- Test site no longer throws handover-field errors when `Manufacturing Settings` is absent; production path is unchanged when the fields exist.
+- Test-stack routing fix: `localhost:8080` now 308-redirects to `fulfillment.localhost:8080`; `erp.localhost` remains separate. The earlier red “DocType Warehouse Fulfillment Profile not found” was the erp site, not F2 data.
+- Queue filter follow-up: stage/search/date/Clear are grouped in one filter bar; stage/date apply immediately, search applies on Enter, Clear resets; active filter returns the expected rows.
 
 ## Evidence
 
-- Final gates green: R0 native gate, F2 Profile, Settings API, Schema, F2 Generate, W31, F1 read-only; 57/57 unit tests PASS; teardown residue 0.
-- R0: split-before-save, short pick, one DN from two PLs, Packing Slip, DN submit/stock, scan-mode rejection, clean teardown.
-- Browser: generated `WFR-2026-00001` with Dry/Frozen draft PLs from `SO-OPEN`; queue refreshed to In Picking; Run/PL links work. Responsive 1440/1024/390 with no horizontal overflow; Settings console errors 0. Bundle `index-D6DfeYxq.js`.
-- Commits: `48d9f1c` R0 gate, `3680252` profile, `96c309e` Settings API, `5684566` Settings UI, `c265193` Run/Key schema, `643228b` pure planning, `e0b7e1c` idempotency, `36665ee` native Generate, `0e1db2c` Run child tables, `a81dbe8` handover guard, Task 9 UI (next).
-- Visual check finds no overflow; drawer stacks at 560px; queue page head stacks at 820px; Settings fields stack at 820px.
+- Backend gates green at `c6a5a36`: R0 native gate, F2 Profile, Settings API, Schema, F2 Generate, W31, F1 read-only; 58/58 unit tests PASS; no residual Run/Key/test SO after F2 cleanup.
+- UI follow-up `00fd1f9` + filter follow-up: Settings shows 6 core fields (Advanced expands 21 fields / 6 sections); queue filter bar groups stage/search/date/Clear and works (In Picking 2 rows, Clear restores 4). No horizontal overflow at 1920/1440/1280/1100/1024/900/768/560/430/390/360; console errors 0. Bundle `index-Cg0nl-FS.js`.
+- Site routing verified: `localhost:8080/gudang/fulfillment` redirects to `http://fulfillment.localhost:8080/gudang/fulfillment`; fulfillment API ping 200; erp API ping 200.
+- Commits: `c6a5a36` UOM/role/layout F2 review fixes; `00fd1f9` Settings advanced disclosure; `4b6bd45` queue filter bar + rebuilt assets. Earlier F2 task commits remain on `main`; no push.
+- R0: split-before-save, short pick, one DN from two PLs, Packing Slip, DN submit/stock, scan-mode rejection, exact teardown.
 
 ## Next
 
@@ -35,4 +36,4 @@ Head: 2026-10-27 — **W50 F2 DONE (Settings Profile + Fulfillment Run + Generat
 - Do not edit core Frappe/ERPNext; do not force native documents through custom fields.
 - Product F2 creates draft PLs only; R0 test fixture is the only stock-moving path.
 - `fulfillment.localhost` is disposable; `erp.localhost`/`1oktober2026` are not mutation targets.
-- Commit locally only with user approval; push/merge is separate.
+- Commit locally only; push/merge is separate.
