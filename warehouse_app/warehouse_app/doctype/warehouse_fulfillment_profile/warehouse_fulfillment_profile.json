@@ -9,8 +9,37 @@
  "field_order": [
   "company",
   "enabled",
+  "config_revision",
+  "classification_section",
   "frozen_item_group",
-  "include_child_item_groups"
+  "include_child_item_groups",
+  "dry_display_name",
+  "frozen_display_name",
+  "warehouses_section",
+  "dry_parent_warehouse",
+  "frozen_parent_warehouse",
+  "print_section",
+  "dry_print_format",
+  "frozen_print_format",
+  "print_paper_size",
+  "dry_print_copies",
+  "frozen_print_copies",
+  "allow_draft_print",
+  "policies_section",
+  "allow_partial_delivery",
+  "short_pick_approval_required",
+  "require_all_packed",
+  "require_checker_approval",
+  "allow_cross_group_packing",
+  "barcode_mode_enabled",
+  "minimum_shelf_life_days",
+  "roles_section",
+  "role_order_coordinator",
+  "role_picker_dry",
+  "role_picker_frozen",
+  "role_packer",
+  "role_checker",
+  "role_dispatch"
  ],
  "fields": [
   {
@@ -30,6 +59,19 @@
    "label": "Enabled"
   },
   {
+   "default": "1",
+   "fieldname": "config_revision",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Config Revision",
+   "read_only": 1
+  },
+  {
+   "fieldname": "classification_section",
+   "fieldtype": "Section Break",
+   "label": "Classification"
+  },
+  {
    "fieldname": "frozen_item_group",
    "fieldtype": "Link",
    "label": "Frozen Item Group",
@@ -40,6 +82,165 @@
    "fieldname": "include_child_item_groups",
    "fieldtype": "Check",
    "label": "Include Child Item Groups"
+  },
+  {
+   "default": "Dry",
+   "fieldname": "dry_display_name",
+   "fieldtype": "Data",
+   "label": "Dry Display Name"
+  },
+  {
+   "default": "Frozen",
+   "fieldname": "frozen_display_name",
+   "fieldtype": "Data",
+   "label": "Frozen Display Name"
+  },
+  {
+   "fieldname": "warehouses_section",
+   "fieldtype": "Section Break",
+   "label": "Warehouses"
+  },
+  {
+   "fieldname": "dry_parent_warehouse",
+   "fieldtype": "Link",
+   "label": "Dry Parent Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "frozen_parent_warehouse",
+   "fieldtype": "Link",
+   "label": "Frozen Parent Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "print_section",
+   "fieldtype": "Section Break",
+   "label": "Print"
+  },
+  {
+   "fieldname": "dry_print_format",
+   "fieldtype": "Link",
+   "label": "Dry Print Format",
+   "options": "Print Format"
+  },
+  {
+   "fieldname": "frozen_print_format",
+   "fieldtype": "Link",
+   "label": "Frozen Print Format",
+   "options": "Print Format"
+  },
+  {
+   "default": "A4",
+   "fieldname": "print_paper_size",
+   "fieldtype": "Select",
+   "label": "Print Paper Size",
+   "options": "A4\nA5\nLetter\nThermal 80mm"
+  },
+  {
+   "default": "1",
+   "fieldname": "dry_print_copies",
+   "fieldtype": "Int",
+   "label": "Dry Print Copies"
+  },
+  {
+   "default": "1",
+   "fieldname": "frozen_print_copies",
+   "fieldtype": "Int",
+   "label": "Frozen Print Copies"
+  },
+  {
+   "default": "1",
+   "fieldname": "allow_draft_print",
+   "fieldtype": "Check",
+   "label": "Allow Draft Print"
+  },
+  {
+   "fieldname": "policies_section",
+   "fieldtype": "Section Break",
+   "label": "Policies"
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_partial_delivery",
+   "fieldtype": "Check",
+   "label": "Allow Partial Delivery"
+  },
+  {
+   "default": "1",
+   "fieldname": "short_pick_approval_required",
+   "fieldtype": "Check",
+   "label": "Short Pick Approval Required"
+  },
+  {
+   "default": "1",
+   "fieldname": "require_all_packed",
+   "fieldtype": "Check",
+   "label": "Require All Packed"
+  },
+  {
+   "default": "1",
+   "fieldname": "require_checker_approval",
+   "fieldtype": "Check",
+   "label": "Require Checker Approval"
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_cross_group_packing",
+   "fieldtype": "Check",
+   "label": "Allow Cross Group Packing"
+  },
+  {
+   "default": "0",
+   "fieldname": "barcode_mode_enabled",
+   "fieldtype": "Check",
+   "label": "Barcode Mode Enabled"
+  },
+  {
+   "default": "0",
+   "fieldname": "minimum_shelf_life_days",
+   "fieldtype": "Int",
+   "label": "Minimum Shelf Life Days"
+  },
+  {
+   "fieldname": "roles_section",
+   "fieldtype": "Section Break",
+   "label": "Roles"
+  },
+  {
+   "fieldname": "role_order_coordinator",
+   "fieldtype": "Link",
+   "label": "Role Order Coordinator",
+   "options": "Role"
+  },
+  {
+   "fieldname": "role_picker_dry",
+   "fieldtype": "Link",
+   "label": "Role Picker Dry",
+   "options": "Role"
+  },
+  {
+   "fieldname": "role_picker_frozen",
+   "fieldtype": "Link",
+   "label": "Role Picker Frozen",
+   "options": "Role"
+  },
+  {
+   "fieldname": "role_packer",
+   "fieldtype": "Link",
+   "label": "Role Packer",
+   "options": "Role"
+  },
+  {
+   "fieldname": "role_checker",
+   "fieldtype": "Link",
+   "label": "Role Checker",
+   "options": "Role"
+  },
+  {
+   "fieldname": "role_dispatch",
+   "fieldtype": "Link",
+   "label": "Role Dispatch",
+   "options": "Role"
   }
  ],
  "index_web_pages_for_search": 0,
