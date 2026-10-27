@@ -17,6 +17,8 @@
   "status",
   "dry_pick_list",
   "frozen_pick_list",
+  "items",
+  "allocations",
   "active_so_key",
   "request_key",
   "run_revision",
@@ -98,6 +100,18 @@
    "fieldtype": "Link",
    "label": "Frozen Pick List",
    "options": "Pick List"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Run Items",
+   "options": "Warehouse Fulfillment Run Item"
+  },
+  {
+   "fieldname": "allocations",
+   "fieldtype": "Table",
+   "label": "Run Allocations",
+   "options": "Warehouse Fulfillment Run Allocation"
   },
   {
    "fieldname": "active_so_key",

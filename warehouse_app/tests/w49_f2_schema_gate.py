@@ -49,6 +49,8 @@ def run_gate() -> None:
 			"status",
 			"dry_pick_list",
 			"frozen_pick_list",
+			"items",
+			"allocations",
 			"active_so_key",
 			"request_key",
 			"run_revision",
@@ -61,6 +63,15 @@ def run_gate() -> None:
 			sorted(required_run_fields - {df.fieldname for df in run_meta.fields}),
 		)
 		check("active_so_key_unique", bool(run_meta.get_field("active_so_key").unique), run_meta.get_field("active_so_key").unique)
+		check(
+			"run_child_tables",
+			run_meta.get_field("items").options == RUN_ITEM
+			and run_meta.get_field("allocations").options == ALLOCATION,
+			{
+				"items": run_meta.get_field("items").options,
+				"allocations": run_meta.get_field("allocations").options,
+			},
+		)
 
 		check("run_item_child", frappe.get_meta(RUN_ITEM).istable == 1, frappe.get_meta(RUN_ITEM).istable)
 		check("allocation_child", frappe.get_meta(ALLOCATION).istable == 1, frappe.get_meta(ALLOCATION).istable)
