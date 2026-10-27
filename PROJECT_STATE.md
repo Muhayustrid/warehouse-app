@@ -1,8 +1,11 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-10-27 — **W49 F1 DONE (Order Queue read-only + Dry/Frozen profile)**. Spec `22ff498`, plan `af9090a`. Test site `fulfillment.localhost` runs the same `warehouse_app` code on a separate database; `erp.localhost` and the production stack were not mutated. No push.
+Head: 2026-10-27 — **W50 F2 IN_PROGRESS (Settings profile + Fulfillment Run + Generate draft Dry/Frozen Pick Lists)**. F1 is DONE (`22ff498`..`f81c411`); test site `fulfillment.localhost` runs the same app on a separate database. F2 design approved; spec is being written. R0 runtime gate remains the blocking prerequisite before any write/stock-moving code. `erp.localhost` untouched; no push.
 
 ## Current
+
+- F2: all PRD Profile fields go into the existing `/gudang/settings`; Frozen Item Group + include children defines Frozen, everything else Dry. Generate creates one Run and 0–1 **draft** PL per group; no picking/submit/DN/packing.
+- F2 blockers: R0 runtime gate and spec/plan review.
 
 - F1 surface: `/gudang/fulfillment` (SPA queue + right drawer), profile form in Desk, native links to Pick List/Delivery Note/Packing Slip.
 - Data path: Sales Order is the queue unit; native documents remain the source of truth. No create/update/submit/cancel or stock movement in F1.
