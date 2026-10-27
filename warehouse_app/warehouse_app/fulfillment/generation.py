@@ -79,7 +79,9 @@ def split_locations(
 		group = group_by_so_item.get(sales_order_item)
 		if not sales_order_item or group not in groups:
 			raise GenerationError("SPLIT_MAPPING_MISSING", raw)
-		groups[group].append(dict(raw))
+		as_dict = getattr(raw, "as_dict", None)
+		row = as_dict() if callable(as_dict) else dict(raw)
+		groups[group].append(row)
 	return groups
 
 

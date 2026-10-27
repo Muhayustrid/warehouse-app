@@ -21,6 +21,8 @@ def get_profile(company: str):
 			"enabled",
 			"frozen_item_group",
 			"include_child_item_groups",
+			"dry_display_name",
+			"frozen_display_name",
 		],
 		limit_page_length=1,
 	)

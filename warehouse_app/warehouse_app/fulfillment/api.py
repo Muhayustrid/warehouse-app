@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import frappe
 
+from warehouse_app.warehouse_app.fulfillment.generate import (
+	FulfillmentError,
+	generate_fulfillment_run as _generate_fulfillment_run,
+)
 from warehouse_app.warehouse_app.fulfillment.loader import (
 	load_order_preview,
 	load_order_queue,
@@ -61,3 +65,15 @@ def save_fulfillment_settings(payload=None):
 @frappe.whitelist(methods=["GET"])
 def fulfillment_settings_options(company=None):
 	return _fulfillment_settings_options(company=company)
+
+
+@frappe.whitelist(methods=["POST"])
+def generate_fulfillment_run(sales_order, idempotency_key, expected_so_modified):
+	try:
+		return _generate_fulfillment_run(
+			sales_order=sales_order,
+			idempotency_key=idempotency_key,
+			expected_so_modified=expected_so_modified,
+		)
+	except FulfillmentError as exc:
+		frappe.throw(f"{exc.code}: {exc.message}", frappe.ValidationError)
