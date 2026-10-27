@@ -16,6 +16,7 @@ Planning fitur pertama: lihat `IMPLEMENTATION_PLAN.md` (keputusan user 2026-09-2
 - Key risk: splitting one native Pick List template into two disjoint PLs; short pick only works with `scan_mode=0` and explicit picked qty.
 - F1 implementation: Profile DocType `Warehouse Fulfillment Profile`; read-only endpoints `get_order_queue` + `get_order_preview`; SPA `/gudang/fulfillment` with SO queue, stage chips, search/date, drawer, native document links.
 - F1 commits: `49c61f1` fixture, `3799d24` profile, `9438d92` native chain, `ba03aa8` pure queue, `07b2202` API, `7148fd0` SPA.
+- Final review fix `4a466ea`: submitted PL + submitted DN + outstanding now resolves `partially_delivered` (not `packing`); added restricted Sales Order/User Permission gate coverage. Re-ran 39/39 unit tests + profile/read-only/W31 gates green.
 - F1 evidence: classification 17/17 + queue 21/21 PASS; profile gate OK; read-only gate OK (4 rows: open/picking/packing/ready; no writes; 403 no-role; disabled profile -> exception); W31 gate OK + teardown clean. Browser acceptance as temporary Stock User: 4 rows, drawer dry/frozen + 3 native doc links, stage/search/date/error/retry/empty states, bundle `index-Chf2Qo-T.js`, no horizontal overflow at 1440/1024/390, console errors 0 (after expected aborted-request test). Test user/session/activity residue 0.
 - F1 known limits: read-only only; no create PL/DN/Packing, no submit, no stock movement, no Run/idempotency/short-pick/batch/print/assignment. Next is F2 (Run + Generate Pick List) on the same test site, after R0 runtime gate.
 

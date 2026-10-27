@@ -8,7 +8,7 @@ Head: 2026-10-27 — **W49 F1 DONE (Order Queue read-only + Dry/Frozen profile)*
 - Data path: Sales Order is the queue unit; native documents remain the source of truth. No create/update/submit/cancel or stock movement in F1.
 - Test site: `fulfillment.localhost` (ERPNext + warehouse_app), synthetic `ZZTEST W49` company/items/stock and one SO per stage (open/picking/packing/ready).
 - Browser acceptance: temporary Stock User, 4 rows, drawer groups and all three native document links, stage/search/date/error/retry/empty states, no horizontal overflow at 1440/1024/390 px, console errors 0. Bundle `index-Chf2Qo-T.js`.
-- Evidence: 17/17 classification + 21/21 queue unit tests; profile gate OK; read-only gate OK (no writes, 403 no-role, disabled-profile exception path); W31 gate OK with clean teardown. Test user/session/activity residue 0.
+- Evidence: 17/17 classification + 22/22 queue unit tests; profile gate OK; read-only gate OK (no writes, 403 no-role, restricted Sales Order permission, disabled-profile exception path); W31 gate OK with clean teardown. Test user/session/activity residue 0. Final review fixed partial-delivery staging (`4a466ea`).
 - Local commits: `49c61f1` fixture, `3799d24` profile, `9438d92` native chain, `ba03aa8` pure queue, `07b2202` API, `7148fd0` SPA.
 
 ## Next
