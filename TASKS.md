@@ -4,6 +4,20 @@ Custom app untuk org gudang (finished-goods warehouse). Keputusan FU57 (producti
 
 Planning fitur pertama: lihat `IMPLEMENTATION_PLAN.md` (keputusan user 2026-09-20 + rulings advisor R1-R10). Eksekusi per entri di bawah; satu entri = satu commit; DONE butuh bukti eksekusi.
 
+## W49 — Fulfillment R0: native v16 + W31 discovery, decisions, plan — IN_PROGRESS (2026-10-26)
+
+**Scope:** static discovery only; no runtime code, no migration, no deploy. Fork `callmevan1120/warehouse-app`, base `a69511d`.
+
+- Docs: `FULFILLMENT_R0_DISCOVERY.md`, `IMPLEMENTATION_PLAN_FULFILLMENT.md`.
+- Native source audited: `sales_order.create_pick_list`, `pick_list.create_dn_for_pick_lists`, `delivery_note.make_packing_slip`, `packing_slip.py`, `pick_list_item.json`.
+- W31 audited: `inventory_uom.py` (`custom_picked_qty` conversion/backfill), `hooks.py`, `upgrade.py`, `w31_gate.py`.
+- Classification core: `warehouse_app/warehouse_app/fulfillment/classification.py` + `warehouse_app/tests/test_fulfillment_classification.py`; `py -m unittest warehouse_app.tests.test_fulfillment_classification -v` → 17/17 PASS (2026-10-26). Pure functions, no Frappe imports.
+- Key finding: native v16 supports multiple Pick Lists → one Delivery Note via `create_dn_for_pick_lists(source, target_doc)`. The custom merge can be a thin adapter.
+- Key risk: splitting one native Pick List template into two disjoint PLs; short pick only works with `scan_mode=0` and explicit picked qty.
+- Runtime gate pending: no Docker/bench/site on this host. Do not merge PL/DN mutation code before the gate runs.
+
+**Gate:** `warehouse_app.tests.w49_r0_gate.run_gate` (planned) + `w31_gate` green on a disposable v16 + W31 site.
+
 ## W1 — Scaffold + install di site frontend — DONE (2026-09-20)
 - `bench new-app warehouse_app` di container backend (title "Warehouse App", license mit), lalu `bench --site frontend install-app warehouse_app` (site yang sama dengan production_app).
 - Kode host = repo ini. Sinkron ke container via docker cp (folder `apps/` bukan bind mount) ke 6 container frappe: backend, frontend, queue-short, queue-long, scheduler, websocket + chown frappe:frappe.
