@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import frappe
+from frappe.utils import add_days, flt, today
 
 SITE = "fulfillment.localhost"
 COMPANY = "ZZTEST W49"
@@ -17,6 +18,13 @@ DRY_ITEM = "ZZTEST-W49-DRY"
 FROZEN_ITEM = "ZZTEST-W49-FROZEN"
 CUSTOMER = "ZZTEST-W49 Customer"
 WAREHOUSE = f"Stores - {COMPANY_ABBR}"
+PROFILE = "Warehouse Fulfillment Profile"
+SO_MARKERS = {
+	"open": "ZZTEST-W49-SO-OPEN",
+	"picking": "ZZTEST-W49-SO-PICKING",
+	"packing": "ZZTEST-W49-SO-PACKING",
+	"ready": "ZZTEST-W49-SO-READY",
+}
 
 
 def guard_site() -> None:
@@ -96,6 +104,278 @@ def bootstrap_base() -> dict[str, str]:
 		"frozen_item": FROZEN_ITEM,
 		"customer": customer,
 	}
+
+
+def seed() -> dict[str, list[str]]:
+	guard_site()
+	bootstrap_base()
+	cleanup_documents()
+	_ensure_profile()
+
+	sales_orders = {
+		state: _create_sales_order(marker) for state, marker in SO_MARKERS.items()
+	}
+
+	pick_lists = []
+	pick_lists.append(_create_pick_list(sales_orders["picking"], submit=False))
+	pick_lists.append(_create_pick_list(sales_orders["packing"], submit=True))
+	ready_pl = _create_pick_list(sales_orders["ready"], submit=True)
+	pick_lists.append(ready_pl)
+
+	delivery_notes = []
+	packing_slips = []
+	dn = _create_delivery_note(ready_pl)
+	delivery_notes.append(dn)
+	packing_slips.append(_create_packing_slip(dn))
+	frappe.db.commit()
+
+	return {
+		"sales_orders": list(sales_orders.values()),
+		"pick_lists": pick_lists,
+		"delivery_notes": delivery_notes,
+		"packing_slips": packing_slips,
+	}
+
+
+def cleanup_documents() -> dict[str, int]:
+	guard_site()
+	customer = frappe.db.get_value("Customer", {"customer_name": CUSTOMER}, "name")
+	if not customer:
+		return {"packing_slips": 0, "delivery_notes": 0, "pick_lists": 0, "sales_orders": 0}
+
+	so_names = frappe.get_all("Sales Order", filters={"customer": customer}, pluck="name")
+	pl_names = (
+		frappe.get_all(
+			"Pick List Item",
+			filters={"sales_order": ("in", so_names)},
+			pluck="parent",
+			distinct=True,
+		)
+		if so_names
+		else []
+	)
+	dn_names = (
+		frappe.get_all(
+			"Delivery Note Item",
+			filters={"against_sales_order": ("in", so_names)},
+			pluck="parent",
+			distinct=True,
+		)
+		if so_names
+		else []
+	)
+	ps_names = (
+		frappe.get_all(
+			"Packing Slip", filters={"delivery_note": ("in", dn_names)}, pluck="name"
+		)
+		if dn_names
+		else []
+	)
+
+	deleted = {
+		"packing_slips": _cancel_delete("Packing Slip", ps_names),
+		"delivery_notes": _cancel_delete("Delivery Note", dn_names),
+		"pick_lists": _cancel_delete("Pick List", pl_names),
+		"sales_orders": _cancel_delete("Sales Order", so_names),
+	}
+	frappe.db.commit()
+	return deleted
+
+
+def verify_seed() -> dict[str, object]:
+	guard_site()
+	customer = frappe.db.get_value("Customer", {"customer_name": CUSTOMER}, "name")
+	rows = frappe.get_all(
+		"Sales Order",
+		filters={"customer": customer},
+		fields=["name", "po_no", "docstatus"],
+	) if customer else []
+	states = {
+		marker: row.name
+		for row in rows
+		for marker in SO_MARKERS.values()
+		if row.po_no == marker
+	}
+	so_names = [row.name for row in rows]
+	pl_names = (
+		frappe.get_all(
+			"Pick List Item",
+			filters={"sales_order": ("in", so_names)},
+			pluck="parent",
+			distinct=True,
+		)
+		if so_names
+		else []
+	)
+	dn_names = (
+		frappe.get_all(
+			"Delivery Note Item",
+			filters={"against_sales_order": ("in", so_names)},
+			pluck="parent",
+			distinct=True,
+		)
+		if so_names
+		else []
+	)
+	ps_names = (
+		frappe.get_all(
+			"Packing Slip", filters={"delivery_note": ("in", dn_names)}, pluck="name"
+		)
+		if dn_names
+		else []
+	)
+	ready_so = states.get("ZZTEST-W49-SO-READY")
+	ready_dn = (
+		frappe.db.get_value("Delivery Note Item", {"against_sales_order": ready_so}, "parent")
+		if ready_so
+		else None
+	)
+	ready_dn_fully_packed = False
+	if ready_dn:
+		ready_dn_fully_packed = all(
+			flt(row.packed_qty) >= flt(row.qty)
+			for row in frappe.get_all(
+				"Delivery Note Item",
+				filters={"parent": ready_dn},
+				fields=["qty", "packed_qty"],
+			)
+		)
+	return {
+		"states": states,
+		"counts": {
+			"sales_orders": len(so_names),
+			"pick_lists": len(pl_names),
+			"delivery_notes": len(dn_names),
+			"packing_slips": len(ps_names),
+		},
+		"docstatuses": {
+			"pick_lists": {name: frappe.db.get_value("Pick List", name, "docstatus") for name in pl_names},
+			"delivery_notes": {
+				name: frappe.db.get_value("Delivery Note", name, "docstatus") for name in dn_names
+			},
+			"packing_slips": {
+				name: frappe.db.get_value("Packing Slip", name, "docstatus") for name in ps_names
+			},
+		},
+		"ready_dn_fully_packed": ready_dn_fully_packed,
+		"names": {
+			"sales_orders": so_names,
+			"pick_lists": pl_names,
+			"delivery_notes": dn_names,
+			"packing_slips": ps_names,
+		},
+	}
+
+
+def _ensure_profile() -> None:
+	existing = frappe.db.get_value(PROFILE, {"company": COMPANY}, "name")
+	profile = frappe.get_doc(PROFILE, existing) if existing else frappe.get_doc(
+		{"doctype": PROFILE, "company": COMPANY}
+	)
+	profile.enabled = 1
+	profile.frozen_item_group = FROZEN_PARENT
+	profile.include_child_item_groups = 1
+	profile.save(ignore_permissions=True) if existing else profile.insert(ignore_permissions=True)
+
+
+def _create_sales_order(marker: str) -> str:
+	customer = frappe.db.get_value("Customer", {"customer_name": CUSTOMER}, "name")
+	if not customer:
+		customer = _ensure_customer()
+	delivery_date = add_days(today(), 7)
+	so = frappe.get_doc(
+		{
+			"doctype": "Sales Order",
+			"customer": customer,
+			"company": COMPANY,
+			"transaction_date": today(),
+			"delivery_date": delivery_date,
+			"selling_price_list": "Standard Selling",
+			"currency": "IDR",
+			"conversion_rate": 1,
+			"plc_conversion_rate": 1,
+			"set_warehouse": WAREHOUSE,
+			"po_no": marker,
+			"items": [
+				{
+					"item_code": DRY_ITEM,
+					"qty": 5,
+					"rate": 100,
+					"price_list_rate": 100,
+					"uom": "Nos",
+					"conversion_factor": 1,
+					"warehouse": WAREHOUSE,
+					"delivery_date": delivery_date,
+				},
+				{
+					"item_code": FROZEN_ITEM,
+					"qty": 5,
+					"rate": 100,
+					"price_list_rate": 100,
+					"uom": "Nos",
+					"conversion_factor": 1,
+					"warehouse": WAREHOUSE,
+					"delivery_date": delivery_date,
+				},
+			],
+		}
+	)
+	so.insert(ignore_permissions=True)
+	so.submit()
+	return so.name
+
+
+def _create_pick_list(sales_order: str, submit: bool) -> str:
+	from erpnext.selling.doctype.sales_order.sales_order import create_pick_list
+
+	pick_list = create_pick_list(sales_order)
+	if not pick_list.locations:
+		raise RuntimeError(f"Native create_pick_list produced no locations for {sales_order}")
+	pick_list.scan_mode = 0
+	if submit:
+		pick_list.pick_manually = 1
+		for row in pick_list.locations:
+			row.picked_qty = flt(row.stock_qty)
+	pick_list.insert(ignore_permissions=True)
+	if submit:
+		pick_list.submit()
+	return pick_list.name
+
+
+def _create_delivery_note(pick_list: str) -> str:
+	from erpnext.stock.doctype.pick_list.pick_list import create_dn_for_pick_lists
+
+	delivery_note = create_dn_for_pick_lists(pick_list)
+	if not delivery_note:
+		raise RuntimeError(f"Native create_dn_for_pick_lists produced no DN for {pick_list}")
+	delivery_note.insert(ignore_permissions=True)
+	return delivery_note.name
+
+
+def _create_packing_slip(delivery_note: str) -> str:
+	from erpnext.stock.doctype.delivery_note.delivery_note import make_packing_slip
+
+	packing_slip = make_packing_slip(delivery_note)
+	if not packing_slip:
+		raise RuntimeError(f"Native make_packing_slip produced no Packing Slip for {delivery_note}")
+	packing_slip.from_case_no = 1
+	packing_slip.to_case_no = 1
+	packing_slip.insert(ignore_permissions=True)
+	packing_slip.submit()
+	return packing_slip.name
+
+
+def _cancel_delete(doctype: str, names: list[str]) -> int:
+	deleted = 0
+	for name in names:
+		if not frappe.db.exists(doctype, name):
+			continue
+		doc = frappe.get_doc(doctype, name)
+		if doc.docstatus == 1:
+			doc.cancel()
+		frappe.delete_doc(doctype, name, force=1, ignore_permissions=True, ignore_missing=True)
+		deleted += 1
+	return deleted
 
 
 def verify_base() -> dict[str, int]:
