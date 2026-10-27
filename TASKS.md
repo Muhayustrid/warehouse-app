@@ -4,6 +4,20 @@ Custom app untuk org gudang (finished-goods warehouse). Keputusan FU57 (producti
 
 Planning fitur pertama: lihat `IMPLEMENTATION_PLAN.md` (keputusan user 2026-09-20 + rulings advisor R1-R10). Eksekusi per entri di bawah; satu entri = satu commit; DONE butuh bukti eksekusi.
 
+## W50 — Fulfillment F2: Settings Profile + Run + Generate draft PL — DONE (2026-10-27)
+
+**Scope:** F2. Spec `1028181`, plan `2389066`; F1 base `f81c411`. Test site `fulfillment.localhost`; `erp.localhost` and production stack untouched. No push. R0 gate first; product writes are Run/Key + draft PL only.
+
+- Settings: all PRD Profile fields are in the existing `/gudang/settings`; one Profile per Company; Frozen Item Group + optional children = Frozen, every other valid group = Dry. Writes are System Manager-only, revisioned, stale-write rejected. Display names feed the queue/drawer.
+- Data: `Warehouse Fulfillment Run` (+ Run Item, Allocation) and DB-unique `Warehouse Fulfillment Request Key`; optional Pick List lineage fields `custom_fulfillment_run` / `custom_fulfillment_group`; W31 untouched.
+- Generate: preflight, one native `create_pick_list` template split before save by SO Item, 0–1 Dry + 0–1 Frozen **draft** PL, active-Run reuse, request-key replay/rollback, no picked qty/stock movement. System Manager or Stock Manager only; Stock User read-only.
+- R0 evidence: split before save, short pick, one DN from two PLs, Packing Slip, DN submit/stock, teardown 0.
+- F2 evidence: Profile/Settings/Schema/F2 gates OK; F1 read-only gate OK (4 rows, stages preserved); W31 gate OK; 57/57 unit tests PASS; residue 0 after F2 cleanup.
+- Browser: generated `WFR-2026-00001` with Dry/Frozen draft PLs from `SO-OPEN`, queue moved to In Picking, Run/PL links work; no horizontal overflow at 1440/1024/390; Settings console errors 0 after guarding missing test-site handover fields. Bundle `index-D6DfeYxq.js`.
+- F2 known limits: draft PL only; no picking, PL submit, short-pick approval, DN, Packing, print, assignment. Partial/shortage execution and role matrix remain F3–F5. Final whole-branch F2 review pending.
+
+**Gate:** R0, profile, settings, schema, F2, W31, F1, and unit gates green on disposable `fulfillment.localhost`; teardown clean.
+
 ## W49 — Fulfillment F1: Order Queue read-only + profile — DONE (2026-10-27)
 
 **Scope:** F1 only. Fork `callmevan1120/warehouse-app`, base `a69511d`. Spec `22ff498`, plan `af9090a`. Test site `fulfillment.localhost` (same app code; separate database). `erp.localhost` and production stack untouched. No stock-moving action; no push.

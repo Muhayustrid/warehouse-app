@@ -38,6 +38,8 @@ const selectedSO = ref(null)
 let loadToken = 0
 
 const hasProfile = computed(() => Boolean(profile.value?.configured && profile.value?.enabled))
+const dryLabel = computed(() => profile.value?.dry_display_name || 'Dry')
+const frozenLabel = computed(() => profile.value?.frozen_display_name || 'Frozen')
 const hasFilters = computed(
 	() => Boolean(search.value || fromDate.value || toDate.value || stage.value !== 'all'),
 )
@@ -46,9 +48,9 @@ const rangeStart = computed(() => (total.value ? (page.value - 1) * pageLength.v
 const rangeEnd = computed(() => Math.min(page.value * pageLength.value, total.value))
 const profileMessage = computed(() => {
 	if (!profile.value?.configured && profile.value?.enabled === false && profile.value?.frozen_item_group) {
-		return 'The Fulfillment profile is disabled. Configure it in Desk to enable Dry/Frozen classification.'
+		return `The Fulfillment profile is disabled. Enable it in Settings to use ${dryLabel.value}/${frozenLabel.value} classification.`
 	}
-	return 'No Fulfillment profile is configured for this company. Configure the Frozen Item Group in Desk.'
+	return 'No Fulfillment profile is configured for this company. Set the Frozen Item Group in Settings.'
 })
 
 onMounted(load)
@@ -202,7 +204,7 @@ function warningTitle(row) {
 				<strong>Fulfillment profile needs attention.</strong>
 				<span>{{ profileMessage }}</span>
 			</div>
-			<a class="btn btn-sm" href="/app/warehouse-fulfillment-profile" target="_blank" rel="noopener">
+			<a class="btn btn-sm" href="/gudang/settings">
 				Configure
 			</a>
 		</div>
@@ -262,7 +264,7 @@ function warningTitle(row) {
 			<div class="ff-thead">
 				<span>SO / Customer</span>
 				<span>Delivery</span>
-				<span>Dry / Frozen</span>
+				<span>{{ dryLabel }} / {{ frozenLabel }}</span>
 				<span>Pick Lists</span>
 				<span>DN Draft</span>
 				<span>Packing Slips</span>
@@ -297,7 +299,7 @@ function warningTitle(row) {
 			<div class="ff-thead" role="row">
 				<span>SO / Customer</span>
 				<span>Delivery</span>
-				<span>Dry / Frozen</span>
+				<span>{{ dryLabel }} / {{ frozenLabel }}</span>
 				<span>Pick Lists</span>
 				<span>DN Draft</span>
 				<span>Packing Slips</span>
@@ -317,9 +319,9 @@ function warningTitle(row) {
 					<span class="ff-customer">{{ row.customer_name || row.customer || '—' }}</span>
 				</span>
 				<span class="ff-cell" data-label="Delivery">{{ fmtDate(row.delivery_date) || '—' }}</span>
-				<span class="ff-cell" data-label="Dry / Frozen">
-					<span class="ff-pill ff-dry">{{ row.dry_count }} Dry</span>
-					<span class="ff-pill ff-frozen">{{ row.frozen_count }} Frozen</span>
+				<span class="ff-cell" :data-label="`${dryLabel} / ${frozenLabel}`">
+					<span class="ff-pill ff-dry">{{ row.dry_count }} {{ dryLabel }}</span>
+					<span class="ff-pill ff-frozen">{{ row.frozen_count }} {{ frozenLabel }}</span>
 					<span v-if="row.unclassified_count" class="ff-pill ff-warn">
 						{{ row.unclassified_count }} needs attention
 					</span>
@@ -387,6 +389,7 @@ function warningTitle(row) {
 			:open="Boolean(selectedSO)"
 			:sales-order="selectedSO"
 			@close="selectedSO = null"
+			@generated="load"
 		/>
 	</div>
 </template>
@@ -790,6 +793,16 @@ function warningTitle(row) {
 }
 
 @media (max-width: 820px) {
+	.ff-page > .page-head {
+		flex-wrap: wrap;
+		align-items: flex-start;
+	}
+
+	.ff-page > .page-head .ph-left {
+		flex: 1 1 100%;
+		min-width: 0;
+	}
+
 	.ff-head-actions {
 		width: 100%;
 		justify-content: space-between;
@@ -897,6 +910,7 @@ function warningTitle(row) {
 
 	.ff-pager {
 		width: 100%;
+		flex-wrap: wrap;
 		justify-content: space-between;
 	}
 

@@ -1,4 +1,4 @@
-import { callGet } from '@/lib/api'
+import { call, callGet } from '@/lib/api'
 
 export const STAGE_LABELS = {
 	open: 'Open',
@@ -20,5 +20,13 @@ export function fetchOrderQueue(params = {}) {
 export function fetchOrderPreview(salesOrder) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_order_preview', {
 		sales_order: salesOrder,
+	})
+}
+
+export function generateFulfillmentRun({ salesOrder, idempotencyKey, expectedSoModified }) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.generate_fulfillment_run', {
+		sales_order: salesOrder,
+		idempotency_key: idempotencyKey,
+		expected_so_modified: expectedSoModified,
 	})
 }

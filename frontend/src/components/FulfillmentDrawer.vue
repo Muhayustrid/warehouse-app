@@ -1,22 +1,37 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertTriangle, ExternalLink, RefreshCw, X } from 'lucide-vue-next'
-import { fetchOrderPreview, stageLabel } from '@/data/fulfillment'
+import { AlertTriangle, ExternalLink, LoaderCircle, RefreshCw, X } from 'lucide-vue-next'
+import { fetchOrderPreview, generateFulfillmentRun, stageLabel } from '@/data/fulfillment'
 import { fmtDate, fmtQty } from '@/lib/format'
+import { toast } from '@/lib/toast'
 
 const props = defineProps({
 	open: { type: Boolean, default: false },
 	salesOrder: { type: String, default: null },
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'generated'])
 
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
 const closeBtn = ref(null)
 const drawer = ref(null)
+const generating = ref(false)
+const generateError = ref('')
+const idempotencyKey = ref('')
 let loadToken = 0
 
+const REASON_LABELS = {
+	PROFILE_INVALID: 'Fulfillment profile is invalid.',
+	PROFILE_DISABLED: 'Fulfillment profile is disabled.',
+	PROFILE_MISSING: 'Fulfillment profile is not configured.',
+	GENERATE_PERMISSION: 'You do not have permission to generate Pick Lists.',
+	SO_NOT_ELIGIBLE: 'This Sales Order is not eligible for generation.',
+	NO_OUTSTANDING: 'There is no outstanding quantity to pick.',
+	STOCK_RESERVED: 'Stock is reserved; release it before generating.',
+	ITEM_GROUP_MISSING: 'An item has no valid Item Group.',
+	ITEM_NOT_PICKABLE: 'An item is not pickable.',
+}
 const GROUP_LABELS = {
 	dry: 'Dry',
 	frozen: 'Frozen',
@@ -39,12 +54,32 @@ const REASONS = {
 	item_group_missing: 'Item Group is missing or unknown.',
 }
 
+const dryLabel = computed(() => data.value?.profile?.dry_display_name || 'Dry')
+const frozenLabel = computed(() => data.value?.profile?.frozen_display_name || 'Frozen')
 const groups = computed(() =>
 	['dry', 'frozen', 'unclassified'].map((key) => ({
 		key,
-		label: GROUP_LABELS[key],
+		label:
+			key === 'dry'
+				? dryLabel.value
+				: key === 'frozen'
+					? frozenLabel.value
+					: GROUP_LABELS[key],
 		items: data.value?.groups?.[key] || [],
 	})),
+)
+const hasActiveRun = computed(() => Boolean(data.value?.run))
+const canGenerate = computed(
+	() =>
+		Boolean(data.value?.can_generate) &&
+		!generating.value &&
+		!hasActiveRun.value,
+)
+const generateDisabledReason = computed(
+	() =>
+		REASON_LABELS[data.value?.can_generate_reason] ||
+		data.value?.can_generate_reason ||
+		(hasActiveRun.value ? 'An active Fulfillment Run already exists.' : ''),
 )
 
 onMounted(() => {
@@ -63,11 +98,16 @@ watch(
 			loadToken += 1
 			data.value = null
 			error.value = ''
+			generateError.value = ''
+			generating.value = false
+			idempotencyKey.value = ''
 			loading.value = false
 			document.body.style.overflow = ''
 			return
 		}
 		document.body.style.overflow = 'hidden'
+		idempotencyKey.value = newIdempotencyKey()
+		generateError.value = ''
 		await load(salesOrder)
 		await nextTick()
 		closeBtn.value?.focus()
@@ -103,6 +143,44 @@ async function load(salesOrder = props.salesOrder) {
 
 function close() {
 	emit('close')
+}
+
+async function generate() {
+	if (!canGenerate.value || !props.salesOrder) {
+		return
+	}
+	if (!idempotencyKey.value) {
+		idempotencyKey.value = newIdempotencyKey()
+	}
+	generating.value = true
+	generateError.value = ''
+	try {
+		const result = await generateFulfillmentRun({
+			salesOrder: props.salesOrder,
+			idempotencyKey: idempotencyKey.value,
+			expectedSoModified:
+				data.value?.modified || data.value?.sales_order?.modified || '',
+		})
+		await load(props.salesOrder)
+		emit('generated', result)
+		toast.success(
+			result.reused
+				? 'Existing Fulfillment Run reused.'
+				: 'Draft Dry/Frozen Pick Lists generated.',
+		)
+	} catch (e) {
+		generateError.value = e.message || 'Failed to generate Pick Lists.'
+		toast.error(generateError.value)
+	} finally {
+		generating.value = false
+	}
+}
+
+function newIdempotencyKey() {
+	if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+		return crypto.randomUUID()
+	}
+	return `w49-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
 }
 
 function onKey(event) {
@@ -220,6 +298,72 @@ function reasonText(reason) {
 								<span v-for="warning in data.warnings" :key="warning">{{ reasonText(warning) }}</span>
 							</div>
 
+							<section class="ff-section ff-run-section">
+								<div class="ff-section-head">
+									<h3>Fulfillment Run</h3>
+									<span v-if="data.run" class="ff-run-status">{{ data.run.status }}</span>
+								</div>
+
+								<div v-if="data.run" class="ff-run-card">
+									<div class="ff-run-main">
+										<span>Active Run</span>
+										<a
+											class="ff-run-link"
+											:href="`/app/warehouse-fulfillment-run/${encodeURIComponent(data.run.name)}`"
+											target="_blank"
+											rel="noopener"
+										>
+											{{ data.run.name }}
+											<ExternalLink :size="13" :stroke-width="2" />
+										</a>
+									</div>
+									<div class="ff-run-pls">
+										<button
+											v-if="data.run.dry_pick_list"
+											type="button"
+											class="ff-pl-link"
+											@click="openNative('Pick List', data.run.dry_pick_list)"
+										>
+											{{ dryLabel }} · {{ data.run.dry_pick_list }}
+										</button>
+										<button
+											v-if="data.run.frozen_pick_list"
+											type="button"
+											class="ff-pl-link"
+											@click="openNative('Pick List', data.run.frozen_pick_list)"
+										>
+											{{ frozenLabel }} · {{ data.run.frozen_pick_list }}
+										</button>
+									</div>
+								</div>
+
+								<div v-else class="ff-generate-row">
+									<button
+										type="button"
+										class="btn btn-primary ff-generate-btn"
+										:disabled="!canGenerate"
+										@click="generate"
+									>
+										<LoaderCircle
+											v-if="generating"
+											:size="14"
+											:stroke-width="2"
+											class="spin"
+										/>
+										{{ generating ? 'Generating…' : 'Generate Pick Lists' }}
+									</button>
+									<p v-if="!canGenerate && !generating" class="ff-muted ff-generate-reason">
+										{{ generateDisabledReason || 'Generation is not available for this order.' }}
+									</p>
+									<p v-else class="ff-muted ff-generate-reason">
+										Draft only. Picking and submission stay in the next phase.
+									</p>
+								</div>
+								<p v-if="generateError" class="ff-generate-error" role="alert">
+									{{ generateError }}
+								</p>
+							</section>
+
 							<section v-for="group in groups" :key="group.key" class="ff-section">
 								<template v-if="group.items.length || group.key !== 'unclassified'">
 									<div class="ff-section-head">
@@ -277,7 +421,8 @@ function reasonText(reason) {
 							</section>
 
 							<p class="ff-readonly">
-								Read-only preview. Picking, packing, and delivery actions are not available in F1.
+								F2 generates Draft Pick Lists only. Picking, Pick List submit, delivery, and
+								packing actions remain unavailable until the next phases.
 							</p>
 						</template>
 					</div>
@@ -591,6 +736,118 @@ function reasonText(reason) {
 	font-size: 11.5px;
 }
 
+.ff-run-section {
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--brand-softer);
+}
+
+.ff-run-status {
+	padding: 2px 7px;
+	border-radius: 999px;
+	background: #eaf0ff;
+	color: #36519a;
+	font-size: 10.5px;
+	font-weight: 700;
+}
+
+.ff-run-card {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	flex-wrap: wrap;
+	padding: 9px 11px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--surface);
+}
+
+.ff-run-main,
+.ff-run-pls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.ff-run-main {
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 2px;
+}
+
+.ff-run-main > span {
+	color: var(--muted);
+	font-size: 10.5px;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.ff-run-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--brand);
+	font-size: 12.5px;
+	font-weight: 700;
+	text-decoration: none;
+}
+
+.ff-run-link:hover {
+	text-decoration: underline;
+}
+
+.ff-pl-link {
+	padding: 5px 8px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface);
+	color: var(--ink);
+	font: inherit;
+	font-size: 11.5px;
+	cursor: pointer;
+}
+
+.ff-pl-link:hover {
+	border-color: var(--brand-light);
+	background: var(--brand-soft);
+}
+
+.ff-generate-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.ff-generate-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	flex: none;
+}
+
+.ff-generate-reason {
+	margin: 0;
+	font-size: 11.5px;
+}
+
+.ff-generate-error {
+	padding: 8px 10px;
+	border: 1px solid #f0c7c0;
+	border-radius: 8px;
+	background: #fff6f4;
+	color: #9b2c1f;
+	font-size: 12px;
+}
+
+.spin {
+	animation: ff-spin 0.9s linear infinite;
+}
+
 .ff-drawer-loading {
 	display: flex;
 	flex-direction: column;
@@ -706,6 +963,12 @@ function reasonText(reason) {
 	}
 }
 
+@keyframes ff-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
 @media (max-width: 820px) {
 	.ff-drawer {
 		width: 100%;
@@ -783,6 +1046,31 @@ function reasonText(reason) {
 
 	.ff-readonly {
 		padding-bottom: 8px;
+	}
+}
+
+@media (max-width: 560px) {
+	.ff-summary {
+		grid-template-columns: 1fr;
+	}
+
+	.ff-summary-item {
+		flex-direction: row;
+		align-items: baseline;
+	}
+
+	.ff-run-card {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.ff-run-pls,
+	.ff-generate-btn {
+		width: 100%;
+	}
+
+	.ff-generate-btn {
+		justify-content: center;
 	}
 }
 </style>
