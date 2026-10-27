@@ -4,9 +4,9 @@ Custom app untuk org gudang (finished-goods warehouse). Keputusan FU57 (producti
 
 Planning fitur pertama: lihat `IMPLEMENTATION_PLAN.md` (keputusan user 2026-09-20 + rulings advisor R1-R10). Eksekusi per entri di bawah; satu entri = satu commit; DONE butuh bukti eksekusi.
 
-## W49 — Fulfillment R0: native v16 + W31 discovery, decisions, plan — IN_PROGRESS (2026-10-26)
+## W49 — Fulfillment F1: Order Queue read-only + profile — DONE (2026-10-27)
 
-**Scope:** static discovery only; no runtime code, no migration, no deploy. Fork `callmevan1120/warehouse-app`, base `a69511d`.
+**Scope:** F1 only. Fork `callmevan1120/warehouse-app`, base `a69511d`. Spec `22ff498`, plan `af9090a`. Test site `fulfillment.localhost` (same app code; separate database). `erp.localhost` and production stack untouched. No stock-moving action; no push.
 
 - Docs: `FULFILLMENT_R0_DISCOVERY.md`, `IMPLEMENTATION_PLAN_FULFILLMENT.md`.
 - Native source audited: `sales_order.create_pick_list`, `pick_list.create_dn_for_pick_lists`, `delivery_note.make_packing_slip`, `packing_slip.py`, `pick_list_item.json`.
@@ -14,9 +14,12 @@ Planning fitur pertama: lihat `IMPLEMENTATION_PLAN.md` (keputusan user 2026-09-2
 - Classification core: `warehouse_app/warehouse_app/fulfillment/classification.py` + `warehouse_app/tests/test_fulfillment_classification.py`; `py -m unittest warehouse_app.tests.test_fulfillment_classification -v` → 17/17 PASS (2026-10-26). Pure functions, no Frappe imports.
 - Key finding: native v16 supports multiple Pick Lists → one Delivery Note via `create_dn_for_pick_lists(source, target_doc)`. The custom merge can be a thin adapter.
 - Key risk: splitting one native Pick List template into two disjoint PLs; short pick only works with `scan_mode=0` and explicit picked qty.
-- Runtime gate pending: no Docker/bench/site on this host. Do not merge PL/DN mutation code before the gate runs.
+- F1 implementation: Profile DocType `Warehouse Fulfillment Profile`; read-only endpoints `get_order_queue` + `get_order_preview`; SPA `/gudang/fulfillment` with SO queue, stage chips, search/date, drawer, native document links.
+- F1 commits: `49c61f1` fixture, `3799d24` profile, `9438d92` native chain, `ba03aa8` pure queue, `07b2202` API, `7148fd0` SPA.
+- F1 evidence: classification 17/17 + queue 21/21 PASS; profile gate OK; read-only gate OK (4 rows: open/picking/packing/ready; no writes; 403 no-role; disabled profile -> exception); W31 gate OK + teardown clean. Browser acceptance as temporary Stock User: 4 rows, drawer dry/frozen + 3 native doc links, stage/search/date/error/retry/empty states, bundle `index-Chf2Qo-T.js`, no horizontal overflow at 1440/1024/390, console errors 0 (after expected aborted-request test). Test user/session/activity residue 0.
+- F1 known limits: read-only only; no create PL/DN/Packing, no submit, no stock movement, no Run/idempotency/short-pick/batch/print/assignment. Next is F2 (Run + Generate Pick List) on the same test site, after R0 runtime gate.
 
-**Gate:** `warehouse_app.tests.w49_r0_gate.run_gate` (planned) + `w31_gate` green on a disposable v16 + W31 site.
+**Gate:** F1 gates above green on disposable `fulfillment.localhost`; W49 R0 gate still required before any mutation/stock-moving phase.
 
 ## W1 — Scaffold + install di site frontend — DONE (2026-09-20)
 - `bench new-app warehouse_app` di container backend (title "Warehouse App", license mit), lalu `bench --site frontend install-app warehouse_app` (site yang sama dengan production_app).
