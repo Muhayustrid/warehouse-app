@@ -16,12 +16,14 @@ from warehouse_app.tests.w49_f1_fixture import (
 )
 
 TEMP_EMAIL = "zztest-w49-noperm@example.com"
+TEMP_RESTRICTED_EMAIL = "zztest-w49-restricted@example.com"
 
 
 def run_gate() -> None:
 	checks: dict[str, str] = {}
 	ok = True
 	user = None
+	restricted_user = None
 	profile = None
 
 	def check(name: str, passed: bool, evidence: object) -> None:
@@ -39,12 +41,24 @@ def run_gate() -> None:
 			if not profile.enabled:
 				profile.enabled = 1
 				profile.save(ignore_permissions=True)
-		if user and frappe.db.exists("User", user):
-			frappe.delete_doc("User", user, force=1, ignore_permissions=True, ignore_missing=True)
-			frappe.db.delete("Sessions", {"user": user})
-			frappe.db.delete("Activity Log", {"user": user})
+		for email in (user, restricted_user):
+			if not email or not frappe.db.exists("User", email):
+				continue
+			for permission in frappe.get_all(
+				"User Permission", filters={"user": email}, pluck="name"
+			):
+				frappe.delete_doc(
+					"User Permission",
+					permission,
+					force=1,
+					ignore_permissions=True,
+					ignore_missing=True,
+				)
+			frappe.delete_doc("User", email, force=1, ignore_permissions=True, ignore_missing=True)
+			frappe.db.delete("Sessions", {"user": email})
+			frappe.db.delete("Activity Log", {"user": email})
 			if frappe.db.has_column("Activity Log", "for_user"):
-				frappe.db.delete("Activity Log", {"for_user": user})
+				frappe.db.delete("Activity Log", {"for_user": email})
 		frappe.db.commit()
 
 	try:
@@ -146,6 +160,43 @@ def run_gate() -> None:
 			check("no_role_rejected", False, "queue succeeded")
 		except frappe.PermissionError:
 			check("no_role_rejected", True, "PermissionError")
+		finally:
+			frappe.set_user("Administrator")
+
+		restricted_user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": TEMP_RESTRICTED_EMAIL,
+				"first_name": "W49 Restricted",
+				"send_welcome_email": 0,
+			}
+		).insert(ignore_permissions=True).name
+		restricted_doc = frappe.get_doc("User", restricted_user)
+		restricted_doc.add_roles("Stock User")
+		restricted_doc.save(ignore_permissions=True)
+		frappe.get_doc(
+			{
+				"doctype": "User Permission",
+				"user": restricted_user,
+				"allow": "Sales Order",
+				"for_value": states["ZZTEST-W49-SO-OPEN"],
+				"apply_to_all_doctypes": 0,
+			}
+		).insert(ignore_permissions=True)
+		frappe.set_user(restricted_user)
+		try:
+			restricted_q = get_order_queue(search="ZZTEST-W49 Customer")
+			check(
+				"restricted_so_queue",
+				len(restricted_q["rows"]) == 1
+				and restricted_q["rows"][0]["sales_order"] == states["ZZTEST-W49-SO-OPEN"],
+				restricted_q["rows"],
+			)
+			try:
+				get_order_preview(states["ZZTEST-W49-SO-READY"])
+				check("restricted_preview_rejected", False, "preview succeeded")
+			except frappe.PermissionError:
+				check("restricted_preview_rejected", True, "PermissionError")
 		finally:
 			frappe.set_user("Administrator")
 	finally:

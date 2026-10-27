@@ -29,7 +29,7 @@ def derive_stage(
 		return "picking"
 	if has_draft_delivery_note:
 		return "ready" if dn_fully_packed else "packing"
-	if has_submitted_pick_list:
+	if has_submitted_pick_list and not has_submitted_delivery_note:
 		return "packing"
 	if has_submitted_delivery_note and has_outstanding:
 		return "partially_delivered"

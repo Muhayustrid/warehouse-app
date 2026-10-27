@@ -53,6 +53,12 @@ class TestDeriveStage(unittest.TestCase):
 			"partially_delivered",
 		)
 
+	def test_partial_delivery_with_submitted_pl_is_partially_delivered(self):
+		self.assertEqual(
+			derive_stage(True, False, False, False, False, True, True, True),
+			"partially_delivered",
+		)
+
 	def test_partial_delivery_with_draft_pl_is_picking(self):
 		self.assertEqual(
 			derive_stage(True, False, True, False, False, False, True, True), "picking"
