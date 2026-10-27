@@ -42,6 +42,7 @@ const ffLoadedCompany = ref('')
 const ffItemGroupQuery = ref('')
 const ffItemGroupOptions = ref([])
 const ffPaperSizes = ['A4', 'A5', 'Letter', 'Thermal 80mm']
+const ffShowAdvanced = ref(false)
 const ffLocked = computed(
 	() =>
 		!ffCanEdit.value ||
@@ -368,7 +369,7 @@ async function save() {
 		<div class="panel-head">
 			<div class="ff-panel-title">
 				<span class="lead">Fulfillment settings</span>
-				<span class="hint">Frozen Item Group; optionally include its children. Every other valid group is Dry.</span>
+				<span class="hint">Only the Frozen Item Group is required. Warehouses, printing, policies, and roles are optional.</span>
 			</div>
 			<div class="ff-status">
 				<span v-if="ffProfile.name" class="badge">{{ ffProfile.enabled ? 'Enabled' : 'Disabled' }}</span>
@@ -454,6 +455,23 @@ async function save() {
 				</div>
 			</div>
 
+			<div class="ff-advanced-toggle">
+				<div>
+					<strong>Advanced settings</strong>
+					<p class="hint">Warehouse scope, printing, policies, and roles. Optional for F2; defaults are safe.</p>
+				</div>
+				<button
+					type="button"
+					class="btn btn-sm"
+					aria-controls="ff-advanced"
+					:aria-expanded="ffShowAdvanced"
+					@click="ffShowAdvanced = !ffShowAdvanced"
+				>
+					{{ ffShowAdvanced ? 'Hide advanced' : 'Show advanced' }}
+				</button>
+			</div>
+
+			<div v-if="ffShowAdvanced" id="ff-advanced">
 			<div class="ff-section">
 				<div class="ff-section-head">
 					<h2>Warehouses</h2>
@@ -565,6 +583,7 @@ async function save() {
 					</div>
 				</div>
 			</div>
+			</div>
 		</div>
 		<div class="panel-foot">
 			<span class="why">Save profile changes separately from handover defaults. Changes apply to new Runs only.</span>
@@ -675,6 +694,17 @@ async function save() {
 	border-top: 1px solid var(--line, #e5e5e0);
 }
 .ff-section:first-of-type { padding-top: 0; border-top: 0; }
+.ff-advanced-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 14px 0;
+	border-top: 1px solid var(--line, #e5e5e0);
+}
+.ff-advanced-toggle strong { font-size: 13px; font-weight: 750; }
+.ff-advanced-toggle .hint { margin: 2px 0 0; }
+.ff-advanced-toggle .btn { flex: none; }
 .ff-section-head {
 	display: flex;
 	align-items: baseline;
@@ -748,6 +778,15 @@ async function save() {
 	.ff-panel {
 		margin-left: 0;
 		margin-right: 0;
+	}
+
+	.ff-advanced-toggle {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.ff-advanced-toggle .btn {
+		width: 100%;
 	}
 
 	.ff-panel .panel-head {

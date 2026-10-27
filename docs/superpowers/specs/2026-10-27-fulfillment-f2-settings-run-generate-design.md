@@ -122,7 +122,7 @@ The existing `SettingsPage.vue` gains one **Fulfillment** panel below the handov
 5. **Policies:** partial delivery, short-pick approval, require all packed, checker approval, cross-group packing, barcode mode, minimum shelf life.
 6. **Roles:** coordinator, dry picker, frozen picker, packer, checker, dispatch.
 
-Fields for later phases are visible but marked “Used from F3/F4/F5” in help text. Link inputs use native link search or server-filtered options. The panel saves with one Save button and one transaction. The page must not use the existing `Promise.all` save pattern for the profile; handover and profile can be separate save actions or one orchestrated action with independent error reporting.
+Fields for later phases are grouped under an **Advanced** disclosure, closed by default, and marked "Used from F3/F4/F5" in help text. The disclosure never removes fields from the save payload. Link inputs use native link search or server-filtered options. The panel saves with one Save button and one transaction. The page must not use the existing `Promise.all` save pattern for the profile; handover and profile can be separate save actions or one orchestrated action with independent error reporting.
 
 If the selected Company has no profile, the panel shows an empty form with `enabled=0` and a Create/Save action. If the profile is disabled or invalid, the Fulfillment Queue banner links to `/gudang/settings` instead of the Desk form.
 
@@ -275,7 +275,7 @@ Errors are structured safe codes: `PROFILE_MISSING`, `PROFILE_DISABLED`, `PROFIL
 
 - Add the Fulfillment panel with sections and help text for later-phase fields.
 - Company selector loads readable companies; changing Company loads that profile.
-- All PRD fields are visible. Frozen group is a link search; include-child is a checkbox; warehouses/roles/print formats use filtered options.
+- Core F2 fields are visible. Later-phase groups live under an Advanced disclosure, closed by default. All PRD fields remain available and saved. Frozen group is a link search; include-child is a checkbox; warehouses/roles/print formats use filtered options.
 - `config_revision` is read-only. Save shows a success toast and the new revision.
 - Non-admin users see the profile read-only and no Save button.
 - Disabled/invalid profile shows the same actionable banner used by the queue, but links to `/gudang/settings`.
@@ -330,7 +330,7 @@ F2 product code starts only after this gate is green. The gate fixture may move 
 
 ### Browser
 
-- Settings panel loads all sections, saves all fields, read-only for non-admin, company switch.
+- Settings panel loads all sections (Advanced expands the later-phase fields), saves all fields, read-only for non-admin, company switch.
 - Queue drawer disabled/enabled Generate states; successful generation shows Run and PL links; replay state; error state.
 - No horizontal overflow at 1440/1024/390; no console errors.
 
@@ -345,7 +345,7 @@ F2 product code starts only after this gate is green. The gate fixture may move 
 ## 13. Acceptance criteria
 
 - [ ] R0 runtime gate green on `fulfillment.localhost`, W31 green, teardown residue 0.
-- [ ] All PRD Profile fields are visible in the existing Settings page; writes are System Manager-only and revisioned.
+- [ ] All PRD Profile fields are available in the existing Settings page (later-phase fields under Advanced); writes are System Manager-only and revisioned.
 - [ ] Frozen Item Group + child rule classifies correctly; missing/invalid data blocks Generate.
 - [ ] Generate creates one Run and only non-empty native Draft PLs, one per group; no stock movement and no picked quantities.
 - [ ] Same request key replays the same result; mismatch and duplicate active Run are safe.
