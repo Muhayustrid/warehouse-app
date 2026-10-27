@@ -1,6 +1,6 @@
 <script setup>
 import { useRoute } from 'vue-router'
-import { ClipboardList, Layers, Settings } from 'lucide-vue-next'
+import { ClipboardList, Layers, ListChecks, Settings } from 'lucide-vue-next'
 
 // seksi Handover + Stock; Settings di dasar. counts via props (opsional).
 defineProps({
@@ -13,6 +13,10 @@ const sections = [
 	{
 		title: 'Handover',
 		items: [{ to: '/', label: 'Requests', icon: ClipboardList, count: 'requests' }],
+	},
+	{
+		title: 'Fulfillment',
+		items: [{ to: '/fulfillment', label: 'Order Queue', icon: ListChecks }],
 	},
 	{
 		title: 'Stock',

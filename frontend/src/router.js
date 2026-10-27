@@ -9,6 +9,12 @@ export default createRouter({
 			component: () => import('@/pages/BoardPage.vue'),
 		},
 		{
+			path: '/fulfillment',
+			name: 'fulfillment',
+			component: () => import('@/pages/FulfillmentPage.vue'),
+			meta: { wide: true },
+		},
+		{
 			path: '/inventory',
 			name: 'inventory',
 			component: () => import('@/pages/InventoryPage.vue'),
