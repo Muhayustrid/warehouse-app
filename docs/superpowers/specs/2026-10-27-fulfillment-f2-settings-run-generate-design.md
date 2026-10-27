@@ -283,6 +283,7 @@ Errors are structured safe codes: `PROFILE_MISSING`, `PROFILE_DISABLED`, `PROFIL
 
 ### Queue/drawer
 
+- Queue stage/search/date/Clear controls are grouped in one filter bar; stage and date apply immediately, search applies on Enter, and Clear resets all filters.
 - The drawer gets a `Generate Pick Lists` button only when `can_generate` and the profile is enabled.
 - Generate uses a client-generated idempotency key, sends `expected_so_modified`, disables while in flight, and on success reloads the preview and shows links to the Run and both draft PLs. The key is retained for the current attempt and reused on a network retry until a definitive success/error or page refresh, so a timeout cannot create a second Run.
 - `reused=true` shows “Existing Run reused” rather than a duplicate success.

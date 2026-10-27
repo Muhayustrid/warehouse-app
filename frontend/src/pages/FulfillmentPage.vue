@@ -209,46 +209,54 @@ function warningTitle(row) {
 			</a>
 		</div>
 
-		<div class="ff-stages" role="tablist" aria-label="Fulfillment stage">
-			<button
-				v-for="item in STAGE_FILTERS"
-				:key="item.value"
-				type="button"
-				role="tab"
-				class="ff-chip"
-				:class="{ on: stage === item.value }"
-				:aria-selected="stage === item.value"
-				@click="setStage(item.value)"
-			>
-				<span>{{ item.label }}</span>
-				<span class="ff-chip-count">{{ counts[item.value] || 0 }}</span>
-			</button>
-		</div>
-
-		<div class="toolbar ff-toolbar">
-			<div class="searchbox">
-				<Search :size="15" :stroke-width="2" class="search-ico" />
-				<input
-					v-model="search"
-					class="input"
-					type="search"
-					placeholder="Search sales order or customer"
-					aria-label="Search sales order or customer"
-					@keydown.enter="applyFilters"
-				/>
+		<div class="ff-filters">
+			<div class="ff-stages" role="tablist" aria-label="Fulfillment stage">
+				<button
+					v-for="item in STAGE_FILTERS"
+					:key="item.value"
+					type="button"
+					role="tab"
+					class="ff-chip"
+					:class="{ on: stage === item.value }"
+					:aria-selected="stage === item.value"
+					@click="setStage(item.value)"
+				>
+					<span>{{ item.label }}</span>
+					<span class="ff-chip-count">{{ counts[item.value] || 0 }}</span>
+				</button>
 			</div>
-			<label class="ff-date">
-				<span>From</span>
-				<input v-model="fromDate" class="input" type="date" aria-label="From SO date" @change="applyFilters" />
-			</label>
-			<label class="ff-date">
-				<span>To</span>
-				<input v-model="toDate" class="input" type="date" aria-label="To SO date" @change="applyFilters" />
-			</label>
-			<button v-if="hasFilters" type="button" class="linkbtn ff-clear" @click="clearFilters">
-				<X :size="14" :stroke-width="2" />
-				Clear
-			</button>
+
+			<div class="toolbar ff-toolbar">
+				<div class="searchbox">
+					<Search :size="15" :stroke-width="2" class="search-ico" />
+					<input
+						v-model="search"
+						class="input"
+						type="search"
+						placeholder="Search sales order or customer"
+						aria-label="Search sales order or customer"
+						@keydown.enter="applyFilters"
+					/>
+				</div>
+				<label class="ff-date">
+					<span>From</span>
+					<input v-model="fromDate" class="input" type="date" aria-label="From SO date" @change="applyFilters" />
+				</label>
+				<label class="ff-date">
+					<span>To</span>
+					<input v-model="toDate" class="input" type="date" aria-label="To SO date" @change="applyFilters" />
+				</label>
+				<button v-if="hasFilters" type="button" class="btn ff-clear" @click="clearFilters">
+					<X :size="14" :stroke-width="2" />
+					Clear filters
+				</button>
+			</div>
+			<div class="ff-filter-meta">
+				<p class="ff-filter-hint">
+					Choose a stage, press Enter to search, or narrow by SO date. Click a row to open its detail.
+				</p>
+				<span class="ff-filter-count">{{ total }} {{ total === 1 ? 'order' : 'orders' }}</span>
+			</div>
 		</div>
 
 		<div v-if="error" class="ff-state ff-error" role="alert">
@@ -451,6 +459,16 @@ function warningTitle(row) {
 	color: #5f4000;
 }
 
+.ff-filters {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: 14px;
+	background: rgba(255, 255, 255, 0.55);
+}
+
 .ff-stages {
 	gap: 8px;
 	flex-wrap: wrap;
@@ -460,6 +478,7 @@ function warningTitle(row) {
 	display: inline-flex;
 	align-items: center;
 	gap: 7px;
+	min-height: 34px;
 	padding: 7px 10px;
 	border: 1px solid var(--line);
 	border-radius: 999px;
@@ -500,10 +519,33 @@ function warningTitle(row) {
 .ff-toolbar {
 	gap: 8px;
 	align-items: center;
+	margin-bottom: 0;
 }
 
 .ff-toolbar .searchbox {
 	flex: 1 1 260px;
+	max-width: 420px;
+}
+
+.ff-filter-meta {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.ff-filter-hint {
+	margin: 0;
+	color: var(--muted);
+	font-size: 11.5px;
+	line-height: 1.35;
+}
+
+.ff-filter-count {
+	color: var(--muted);
+	font-size: 11.5px;
+	font-weight: 600;
 }
 
 .ff-date {
@@ -520,7 +562,10 @@ function warningTitle(row) {
 .ff-clear {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
+	gap: 5px;
+	flex: none;
+	padding: 0 10px;
+	font-size: 12.5px;
 }
 
 .ff-table {
