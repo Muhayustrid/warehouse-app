@@ -17,18 +17,36 @@ export async function fetchFilterFields() {
 	return callGet('warehouse_app.warehouse_app.gudang_request.filter_fields')
 }
 
-export function createRequest(workOrder) {
-	return call('production_app.api.handover.create_request', { work_order: workOrder })
+export function previewHandoverRequest(workOrders) {
+	return call('production_app.api.handover.preview_handover_request', {
+		work_orders: JSON.stringify(workOrders),
+	})
+}
+
+export function createRequest(workOrder, requestedQty = null, previewFingerprint = null) {
+	const args = { work_order: workOrder }
+	if (requestedQty != null) {
+		args.requested_qty = requestedQty
+	}
+	if (previewFingerprint != null) {
+		args.preview_fingerprint = previewFingerprint
+	}
+	return call('production_app.api.handover.create_request', args)
 }
 
 export function cancelRequest(materialRequest) {
 	return call('production_app.api.handover.cancel_request', { material_request: materialRequest })
 }
 
-export function createGroupRequest(workOrders) {
-	return call('production_app.api.handover.create_group_request', {
-		work_orders: JSON.stringify(workOrders),
-	})
+export function createGroupRequest(workOrders, allocations = null, previewFingerprint = null) {
+	const args = { work_orders: JSON.stringify(workOrders) }
+	if (allocations != null) {
+		args.allocations = JSON.stringify(allocations)
+	}
+	if (previewFingerprint != null) {
+		args.preview_fingerprint = previewFingerprint
+	}
+	return call('production_app.api.handover.create_group_request', args)
 }
 
 export function cancelGroupRequest(boxPlan) {

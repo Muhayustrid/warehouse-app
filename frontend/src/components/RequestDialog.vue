@@ -5,7 +5,7 @@
 // Bahasa visual production_workspace: <dialog class="dialog"> + .dlg-*.
 import { ref, computed, watch, nextTick } from 'vue'
 import { ClipboardCheck, CircleAlert } from 'lucide-vue-next'
-import { createRequest } from '@/data/board'
+import { createRequest, createGroupRequest, previewHandoverRequest } from '@/data/board'
 import { fmtNum } from '@/lib/format'
 
 const props = defineProps({
@@ -17,8 +17,16 @@ const show = defineModel({ type: Boolean, default: false })
 const dlg = ref(null)
 const phase = ref('confirm') // confirm | result
 const submitting = ref(false)
+const previewLoading = ref(false)
+const preview = ref(null)
+const previewError = ref('')
 const okList = ref([])
 const failList = ref([])
+
+const externalReservations = computed(() => {
+	if (!preview.value || !preview.value.groups) return []
+	return preview.value.groups.flatMap((g) => g.external_reservations || [])
+})
 
 const title = computed(() =>
 	phase.value === 'result'
@@ -29,21 +37,67 @@ const title = computed(() =>
 )
 
 function rowQty(r) {
+	if (r.unsupported_conversion) {
+		return `${fmtNum(r.produced_qty || 0)} ${r.stock_uom || ''} (konversi tidak didukung)`
+	}
+	const alloc = preview.value?.allocations?.find((a) => a.work_order === r.name)
+	if (alloc) {
+		const qty = alloc.allocated_qty
+		const rem = alloc.unrequested_remainder
+		const uom = r.stock_uom || ''
+		return rem > 0
+			? `${fmtNum(qty)} ${uom} (sisa ${fmtNum(rem)})`
+			: `${fmtNum(qty)} ${uom}`
+	}
 	const qty = r.expected_units != null ? r.expected_units : Math.round(Number(r.produced_qty || 0))
 	return `${fmtNum(qty)} ${r.display_uom || r.stock_uom || ''}`
 }
 
 async function submit() {
+	if (submitting.value || previewLoading.value || !preview.value || previewError.value) return
 	submitting.value = true
 	okList.value = []
 	failList.value = []
-	for (const r of props.rows) {
+
+	// Route multi selection through one group call when same item and company (>= 2 rows)
+	const items = new Set(props.rows.map((r) => r.production_item))
+	const companies = new Set(props.rows.map((r) => r.company))
+	const canGroup = props.rows.length >= 2 && items.size === 1 && companies.size <= 1
+
+	if (canGroup) {
 		try {
-			const res = await createRequest(r.name)
-			// frappeRequest mengembalikan message endpoint langsung
-			okList.value.push(`${res.material_request} (${r.name})`)
+			const allocMap = {}
+			if (preview.value && preview.value.allocations) {
+				for (const a of preview.value.allocations) {
+					allocMap[a.work_order] = a.allocated_qty
+				}
+			}
+			const res = await createGroupRequest(
+				props.rows.map((r) => r.name),
+				Object.keys(allocMap).length ? allocMap : null,
+				preview.value?.fingerprint,
+			)
+			const mr = (res && res.material_request) || ''
+			okList.value.push(`${mr} (Group: ${props.rows.length} Work Orders)`)
 		} catch (e) {
-			failList.value.push({ wo: r.name, error: e.message })
+			failList.value.push({ wo: 'Group', error: e.message })
+		}
+	} else {
+		// Individual loop: single selection OR mixed-item/mixed-company bulk
+		for (const r of props.rows) {
+			try {
+				const alloc = preview.value?.allocations?.find((a) => a.work_order === r.name)
+				const qtyToRequest = alloc ? alloc.allocated_qty : null
+				if (qtyToRequest !== null && qtyToRequest <= 0) {
+					failList.value.push({ wo: r.name, error: 'Alokasi stok 0 (stok habis atau tereservasi)' })
+					continue
+				}
+				const fp = alloc?.fingerprint || preview.value?.fingerprint || null
+				const res = await createRequest(r.name, qtyToRequest, fp)
+				okList.value.push(`${res.material_request} (${r.name})`)
+			} catch (e) {
+				failList.value.push({ wo: r.name, error: e.message })
+			}
 		}
 	}
 	submitting.value = false
@@ -52,15 +106,24 @@ async function submit() {
 }
 
 function close() {
-	// lewat model, bukan dlg.close() — kalau show tetap true, buka berikutnya tak memicu watch
 	show.value = false
 }
 
-// sinkron model → <dialog>; buka = reset fase + showModal, tutup = close
-watch(show, (v) => {
+watch(show, async (v) => {
 	if (v) {
 		phase.value = 'confirm'
+		preview.value = null
+		previewError.value = ''
+		previewLoading.value = true
 		nextTick(() => dlg.value?.showModal())
+		try {
+			const res = await previewHandoverRequest(props.rows.map((r) => r.name))
+			preview.value = res
+		} catch (e) {
+			previewError.value = e.message || 'Gagal memuat preview serah terima'
+		} finally {
+			previewLoading.value = false
+		}
 	} else {
 		dlg.value?.close()
 	}
@@ -86,8 +149,30 @@ function onCancel() {
 				</div>
 			</header>
 			<template v-if="phase === 'confirm'">
+				<div
+					v-if="previewError"
+					class="failrow"
+					style="margin-bottom: 12px;"
+					role="alert"
+				>
+					<CircleAlert :size="15" :stroke-width="2" class="fico" />
+					<span>{{ previewError }}</span>
+				</div>
+				<div
+					v-if="externalReservations.length"
+					class="dlg-warn"
+					style="margin-bottom: 12px; padding: 8px 12px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; font-size: 13px; color: #92400e;"
+				>
+					Terdapat reservasi eksternal aktif (cth. R&D) di gudang asal. Kuantitas alokasi disesuaikan dengan stok tersedia.
+				</div>
+				<div v-for="g in preview?.groups || []" :key="`unresolved:${g.item_code}:${g.source_warehouse}`" class="dlg-note">
+					<div v-for="(r, i) in g.unresolved_reservations || []" :key="i" role="alert">
+						Gudang asal belum diketahui: {{ r.material_request }} → {{ r.target_warehouse }},
+						{{ fmtNum(r.quantity) }} {{ g.stock_uom }}; tidak dialokasikan ke pool tertentu.
+					</div>
+				</div>
 				<p class="dlg-note">
-					Request qty equals the full produced output of each Work Order.
+					Request qty equals the allocated output of each Work Order.
 				</p>
 				<div class="wo-body dlg-table">
 					<div class="wo-thead hrow">
@@ -122,7 +207,7 @@ function onCancel() {
 			<div class="dlg-actions">
 				<template v-if="phase === 'confirm'">
 					<button type="button" class="btn" @click="close">Cancel</button>
-					<button type="button" class="btn btn-primary" :disabled="submitting" @click="submit">
+					<button type="button" class="btn btn-primary" :disabled="submitting || previewLoading || !preview || !!previewError" @click="submit">
 						{{ submitting ? 'Creating…' : 'Create Request' }}
 					</button>
 				</template>

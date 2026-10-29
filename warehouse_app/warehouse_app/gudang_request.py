@@ -22,6 +22,8 @@
 # production_app yang belum ter-migrate (site baru) -> flag netral.
 
 import json
+import math
+from collections import defaultdict
 
 import frappe
 from frappe.utils import cint, flt, get_datetime
@@ -146,6 +148,7 @@ def requestable_work_orders(search=None, filters=None, limit_start=0, limit_page
 			"creation",
 			"custom_adonan_ke",
 			"production_item",
+			"company",
 			"produced_qty",
 			"stock_uom",
 			"status",
@@ -170,17 +173,69 @@ def requestable_work_orders(search=None, filters=None, limit_start=0, limit_page
 	plan_info = _group_plan_map(sorted({p for p in mr_plan.values() if p}))
 	bulk_size = _bulk_size_map(sorted({m for m in mr_info if not mr_plan.get(m)}))
 
+	wo_names = [r.name for r in rows]
+	transferred_by_wo = {}
+	active_req_by_wo = defaultdict(float)
+	if wo_names:
+		target_wh = (
+			frappe.db.get_single_value("Manufacturing Settings", "custom_default_handover_warehouse")
+			or None
+		)
+		if not target_wh:
+			transferred_by_wo = {}
+		else:
+			transferred_by_wo = dict(
+				frappe.db.sql(
+					"""select mri.custom_work_order, coalesce(sum(sed.transfer_qty), 0)
+					     from `tabStock Entry Detail` sed
+					     join `tabMaterial Request Item` mri on mri.name = sed.material_request_item
+					    where mri.custom_work_order in %s
+					      and sed.docstatus = 1
+					      and coalesce(sed.t_warehouse, '') = %s
+					    group by mri.custom_work_order""",
+					(tuple(wo_names), target_wh),
+					as_list=True,
+				)
+			)
+		active_mrs = frappe.db.sql(
+			"""select mri.custom_work_order,
+			          greatest(0.0, mri.stock_qty - coalesce((
+			              select sum(sed.transfer_qty)
+			                from `tabStock Entry Detail` sed
+			               where sed.material_request = mr.name
+			                 and sed.material_request_item = mri.name
+			                 and sed.docstatus = 1
+			          ), 0.0)) as outstanding_qty
+			     from `tabMaterial Request Item` mri
+			     join `tabMaterial Request` mr on mr.name = mri.parent
+			    where mri.custom_work_order in %s
+			      and mr.docstatus = 1
+			      and mr.status not in ('Stopped', 'Transferred', 'Issued')
+			      and mr.material_request_type = 'Material Transfer'""",
+			(tuple(wo_names),),
+			as_dict=True,
+		)
+		for row in active_mrs:
+			active_req_by_wo[row["custom_work_order"]] += flt(row["outstanding_qty"])
+
 	for r in rows:
 		r.item_name = item_names.get(r.production_item) or r.production_item
 		mr = r.custom_handover_material_request
 		docstatus, status = mr_info.get(mr, (None, None))
-		r.request_active = bool(
-			mr and docstatus == 1 and status != "Stopped" and mr not in mr_dikirim
-		)
-		# MR sudah terpenuhi SE submitted — tanpa ini baris tampil seperti WO
-		# yang belum pernah diminta (operator kebingungan); UI kasih pill
-		# "Shipped" + baris non-selectable.
-		r.request_shipped = bool(mr and docstatus == 1 and mr in mr_dikirim)
+
+		produced = flt(r.produced_qty)
+		transferred = flt(transferred_by_wo.get(r.name, 0.0))
+		active_req = flt(active_req_by_wo.get(r.name, 0.0))
+		remaining = max(0.0, produced - transferred)
+		unrequested = max(0.0, produced - transferred - active_req)
+
+		r.transferred_qty = transferred
+		r.remaining_qty = remaining
+		r.unrequested_qty = unrequested
+		r.request_active = active_req > 0
+		r.request_shipped = bool(transferred > 0 and remaining <= 0)
+		r.request_partial = bool(transferred > 0 and remaining > 0)
+
 		# W19: info grup box bersama (tanpa grup -> None/[]/0).
 		r.box_plan = mr_plan.get(mr) if mr else None
 		info = plan_info.get(r.box_plan) or {}
@@ -202,10 +257,29 @@ def requestable_work_orders(search=None, filters=None, limit_start=0, limit_page
 			r.display_conversion_factor = 1
 	for r in rows:
 		factor = flt(r.get("display_conversion_factor") or 1)
-		if factor <= 0:
-			factor = 1
-		r.expected_units = int(round(flt(r.produced_qty) / factor))
-		r.display_uom = r.get("display_uom") or r.stock_uom
+		if not math.isfinite(factor) or factor <= 0:
+			factor = 1.0
+		unit = r.get("display_uom") or r.stock_uom
+		if r.request_active:
+			qty_to_convert = flt(active_req_by_wo.get(r.name, 0.0)) or flt(r.produced_qty)
+		elif r.request_partial and flt(r.unrequested_qty) > 0:
+			qty_to_convert = flt(r.unrequested_qty)
+		else:
+			qty_to_convert = flt(r.produced_qty)
+
+		if unit == r.stock_uom:
+			r.expected_units = int(round(qty_to_convert)) if abs(qty_to_convert - round(qty_to_convert)) < 1e-4 else qty_to_convert
+			r.unsupported_conversion = False
+		else:
+			raw = qty_to_convert / factor
+			expected = round(raw)
+			if abs(raw - expected) < 1e-4:
+				r.expected_units = int(expected)
+				r.unsupported_conversion = False
+			else:
+				r.expected_units = None
+				r.unsupported_conversion = True
+		r.display_uom = unit
 
 	# Default (paginated=0) = list polos — kontrak LAMA utuh, semua pemanggil
 	# lama (gate w9/w16/w19 memanggil fungsi langsung) tak perlu diubah.

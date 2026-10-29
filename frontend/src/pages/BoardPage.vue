@@ -64,6 +64,9 @@ function isDisplayUom(r, uom) {
 
 function qtyValue(r) {
 	if (isDisplayUom(r, qtyUom.value)) {
+		if (r.unsupported_conversion) {
+			return { n: fmtNum(r.produced_qty || 0), uom: `${r.stock_uom} (konversi tidak didukung)` }
+		}
 		return { n: fmtNum(r.expected_units != null ? r.expected_units : 0), uom: r.display_uom }
 	}
 	return { n: fmtNum(r.produced_qty || 0), uom: r.stock_uom }
@@ -101,7 +104,7 @@ const dayLabel = (d) => {
 	if (x.isSame(dayjs().subtract(1, 'day'), 'day')) return 'Yesterday'
 	return x.format('dddd')
 }
-const isSelectable = (r) => !r.request_active && !r.request_shipped
+const isSelectable = (r) => !r.request_active && (!r.request_shipped || (r.remaining_qty && r.remaining_qty > 0))
 function dayState(day) {
 	const sel = day.rows.filter(isSelectable)
 	const n = sel.filter((r) => selectedNames.value.includes(r.name)).length
@@ -141,7 +144,7 @@ const groupSelection = computed(() => {
 })
 
 function toggleRow(r) {
-	if (r.request_shipped) {
+	if (r.request_shipped && !(r.remaining_qty > 0)) {
 		return
 	}
 	if (r.request_active) {
@@ -477,6 +480,7 @@ async function doCancel() {
 						<span v-if="stateOf(r) === 'ready'" class="badge b-run">Ready</span>
 						<span v-else-if="stateOf(r) === 'requested'" class="chip chip-warn">Requested</span>
 						<span v-else class="badge b-done">Shipped</span>
+						<span v-if="r.request_partial" class="badge" style="margin-left: 4px; background: #fef3c7; color: #92400e; border: 1px solid #fde68a;">Partial ({{ r.remaining_qty }} left)</span>
 						<span v-if="r.custom_handover_material_request" class="mrline">
 							<a
 								:href="`/app/material-request/${encodeURIComponent(r.custom_handover_material_request)}`"
