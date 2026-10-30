@@ -469,13 +469,15 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 
 	// Default UOM = the item's Default Inventory UOM (W21). Seeding the field
 	// only — the custom_uom handler resolves factor/qty from there.
-	function apply_default_uom(frm, cdt, cdn) {
+	// fallback_stock: new rows only — on refresh it would re-seed old native draft rows and overwrite their qty
+	function apply_default_uom(frm, cdt, cdn, fallback_stock) {
 		const row = locals[cdt][cdn];
 		if (!row || !row.item_code || row.custom_uom || skip_row(row)) return;
 		frappe.db
-			.get_value("Item", row.item_code, "custom_default_inventory_unit_of_measure")
+			.get_value("Item", row.item_code, ["custom_default_inventory_unit_of_measure", "stock_uom"])
 			.then((r) => {
-				const target = r.message && r.message.custom_default_inventory_unit_of_measure;
+				const m = r.message || {};
+				const target = m.custom_default_inventory_unit_of_measure || (fallback_stock && m.stock_uom);
 				const live = locals[cdt][cdn];
 				// re-guard: refresh may fire several promises in parallel
 				if (!target || !live || live.custom_uom || skip_row(live)) return;
@@ -594,7 +596,7 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 	frappe.ui.form.on("Stock Reconciliation Item", {
 		item_code(frm, cdt, cdn) {
 			if (!enabled()) return;
-			frappe.after_ajax(() => apply_default_uom(frm, cdt, cdn));
+			frappe.after_ajax(() => apply_default_uom(frm, cdt, cdn, true));
 		},
 		custom_uom(frm, cdt, cdn) {
 			if (!enabled()) return;
