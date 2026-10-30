@@ -697,7 +697,17 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 .pop-right { left: auto; right: 0; transform-origin: top right; }
 .inv-exportpanel { width: 200px; }
 .inv-exportpanel .btn { justify-content: flex-start; width: 100%; }
+.inv-page .panel {
+	background: #fff;
+	border-radius: 8px;
+	box-shadow: none;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
 .inv-toolbar { margin-bottom: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.inv-page .dseg { border-radius: 6px; background: #f3f4f6; }
+.inv-page .dseg-btn.on { background: #fff; color: #111827; box-shadow: 0 1px 2px rgba(36, 48, 58, 0.12); }
+.inv-page .pv-table .p-datatable-tbody > tr:hover > td { background: #f9fafb; }
 .ph-warehouse { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .ph-warehouse .inv-warehouse-select { min-width: 15rem; }
 

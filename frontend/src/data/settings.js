@@ -10,24 +10,16 @@ export function fetchFulfillmentSettings(company) {
 	})
 }
 
-export function fetchFulfillmentOptions(company) {
-	return callGet('warehouse_app.warehouse_app.fulfillment.api.fulfillment_settings_options', {
-		company: company || undefined,
-	})
-}
-
 export function saveFulfillmentSettings(payload) {
 	return call('warehouse_app.warehouse_app.fulfillment.api.save_fulfillment_settings', {
 		payload: JSON.stringify(payload),
 	})
 }
 
-export async function searchLink(doctype, txt) {
-	const res = await callGet('frappe.desk.search.search_link', { txt, doctype })
-	return (res || []).map((row) => ({
-		label: row.description || row.value,
-		value: row.value,
-	}))
+export function fetchFulfillmentOptions(company) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.fulfillment_settings_options', {
+		company: company || undefined,
+	})
 }
 
 export async function fetchHandoverSettings() {

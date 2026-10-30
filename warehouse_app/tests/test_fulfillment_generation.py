@@ -123,6 +123,7 @@ class TestPolicySnapshot(unittest.TestCase):
 			"allow_partial_delivery": 0,
 			"short_pick_approval_required": 1,
 			"require_all_packed": 1,
+			"enable_packing_slip": 1,
 			"require_checker_approval": 1,
 			"allow_cross_group_packing": 0,
 			"dry_parent_warehouse": "Stores - W49",
@@ -131,6 +132,7 @@ class TestPolicySnapshot(unittest.TestCase):
 		snapshot = profile_policy_snapshot(profile)
 		self.assertEqual(snapshot["profile_revision"], 7)
 		self.assertEqual(snapshot["frozen_item_group"], "Frozen")
+		self.assertEqual(snapshot["enable_packing_slip"], 1)
 		self.assertEqual(snapshot["dry_parent_warehouse"], "Stores - W49")
 		self.assertEqual(snapshot["allow_partial_delivery"], 0)
 

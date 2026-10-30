@@ -13,6 +13,7 @@
   "classification_section",
   "frozen_item_group",
   "include_child_item_groups",
+  "dry_item_exceptions",
   "dry_display_name",
   "frozen_display_name",
   "warehouses_section",
@@ -26,6 +27,7 @@
   "frozen_print_copies",
   "allow_draft_print",
   "policies_section",
+  "enable_packing_slip",
   "allow_partial_delivery",
   "short_pick_approval_required",
   "require_all_packed",
@@ -82,6 +84,12 @@
    "fieldname": "include_child_item_groups",
    "fieldtype": "Check",
    "label": "Include Child Item Groups"
+  },
+  {
+   "description": "Item codes separated by commas or newlines that are treated as Dry despite matching the Frozen Item Group.",
+   "fieldname": "dry_item_exceptions",
+   "fieldtype": "Small Text",
+   "label": "Dry Item Exceptions"
   },
   {
    "default": "Dry",
@@ -158,6 +166,12 @@
    "fieldname": "policies_section",
    "fieldtype": "Section Break",
    "label": "Policies"
+  },
+  {
+   "default": "1",
+   "fieldname": "enable_packing_slip",
+   "fieldtype": "Check",
+   "label": "Enable Packing Slip"
   },
   {
    "default": "0",

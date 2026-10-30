@@ -345,58 +345,60 @@ async function doCancel() {
 			</div>
 		</div>
 
-		<!-- toolbar: search + tab status segmented + filter + display + uom + refresh -->
-		<div class="toolbar">
-			<div class="searchbox">
-				<Search :size="15" :stroke-width="2" class="search-ico" />
-				<input
-					v-model="search"
-					class="input"
-					type="search"
-					placeholder="Search batch, item, or work order"
-					aria-label="Search batch, item, or work order"
-					@keydown.enter="refresh"
-				/>
-			</div>
-			<div class="dseg" role="tablist" aria-label="Status">
+		<!-- kartu: tab status, toolbar, daftar per hari, pagination -->
+		<div class="board-card">
+			<div class="board-tabs" role="tablist" aria-label="Status">
 				<button
 					v-for="v in VIEWS"
 					:key="v.key"
 					type="button"
 					role="tab"
-					class="dseg-btn"
+					class="board-tab"
 					:class="{ on: view === v.key }"
 					:aria-selected="view === v.key"
 					@click="view = v.key; selectedNames = []; cancelPick = null"
 				>
 					{{ v.label }}
-					<span class="dseg-count">{{ counts[v.key] }}</span>
+					<span class="board-tab-count">{{ counts[v.key] }}</span>
 				</button>
 			</div>
-			<FilterBuilder v-model="filters" :meta="fieldMeta" @change="onFilterChange" />
-			<select
-				v-if="uomOptions.length > 1"
-				class="select uom-select"
-				:value="qtyUom"
-				aria-label="Qty unit"
-				@change="setUom($event.target.value)"
-			>
-				<option v-for="o in uomOptions" :key="o" :value="o">{{ o }}</option>
-			</select>
-			<button
-				type="button"
-				class="btn iconbtn"
-				:disabled="loading"
-				aria-label="Refresh"
-				title="Refresh"
-				@click="refresh()"
-			>
-				<RefreshCw :size="14" :stroke-width="2" />
-			</button>
-		</div>
 
-		<!-- daftar per hari produksi -->
-		<div class="wo-body" :class="{ 'is-loading': loading }">
+			<div class="toolbar board-toolbar">
+				<div class="searchbox">
+					<Search :size="15" :stroke-width="2" class="search-ico" />
+					<input
+						v-model="search"
+						class="input"
+						type="search"
+						placeholder="Search batch, item, or work order"
+						aria-label="Search batch, item, or work order"
+						@keydown.enter="refresh"
+					/>
+				</div>
+				<FilterBuilder v-model="filters" :meta="fieldMeta" @change="onFilterChange" />
+				<select
+					v-if="uomOptions.length > 1"
+					class="select uom-select"
+					:value="qtyUom"
+					aria-label="Qty unit"
+					@change="setUom($event.target.value)"
+				>
+					<option v-for="o in uomOptions" :key="o" :value="o">{{ o }}</option>
+				</select>
+				<button
+					type="button"
+					class="btn iconbtn"
+					:disabled="loading"
+					aria-label="Refresh"
+					title="Refresh"
+					@click="refresh()"
+				>
+					<RefreshCw :size="14" :stroke-width="2" />
+				</button>
+			</div>
+
+			<!-- daftar per hari produksi -->
+			<div class="wo-body" :class="{ 'is-loading': loading }">
 			<div v-if="days.length" class="wo-thead">
 				<span></span>
 				<span>Batch</span>
@@ -504,26 +506,27 @@ async function doCancel() {
 			</div>
 		</div>
 
-		<!-- pagination server-side: ukuran halaman 20/50/100/250 -->
-		<div v-if="total" class="pagination-bar pagination-footer cold-pagination">
-			<span>
-				Showing {{ fmtNum((page - 1) * pageSize + 1) }}–{{ fmtNum(Math.min(page * pageSize, total)) }}
-				of {{ fmtNum(total) }}
-			</span>
-			<label class="page-size-control">
-				<span>Per page</span>
-				<select class="select" :value="pageSize" aria-label="Rows per page" @change="setPageSize(Number($event.target.value))">
-					<option v-for="n in PAGE_SIZES" :key="n" :value="n">{{ n }}</option>
-				</select>
-			</label>
-			<div class="pagination-buttons">
-				<button type="button" class="btn btn-sm" :disabled="loading || page <= 1" @click="goPage(page - 1)">
-					‹ Prev
-				</button>
-				<span class="pg-num">{{ page }} / {{ totalPages }}</span>
-				<button type="button" class="btn btn-sm" :disabled="loading || page >= totalPages" @click="goPage(page + 1)">
-					Next ›
-				</button>
+			<!-- pagination server-side: ukuran halaman 20/50/100/250 -->
+			<div v-if="total" class="pagination-bar board-pagination">
+				<span>
+					Showing {{ fmtNum((page - 1) * pageSize + 1) }}–{{ fmtNum(Math.min(page * pageSize, total)) }}
+					of {{ fmtNum(total) }}
+				</span>
+				<label class="page-size-control">
+					<span>Per page</span>
+					<select class="select" :value="pageSize" aria-label="Rows per page" @change="setPageSize(Number($event.target.value))">
+						<option v-for="n in PAGE_SIZES" :key="n" :value="n">{{ n }}</option>
+					</select>
+				</label>
+				<div class="pagination-buttons">
+					<button type="button" class="btn btn-sm" :disabled="loading || page <= 1" @click="goPage(page - 1)">
+						‹ Prev
+					</button>
+					<span class="pg-num">{{ page }} / {{ totalPages }}</span>
+					<button type="button" class="btn btn-sm" :disabled="loading || page >= totalPages" @click="goPage(page + 1)">
+						Next ›
+					</button>
+				</div>
 			</div>
 		</div>
 
@@ -562,6 +565,70 @@ async function doCancel() {
 </template>
 
 <style scoped>
+.board { max-width: 1152px; margin: 0 auto; }
+
+/* kartu pra-W41: putih solid, tab status di dalam kepala kartu */
+.board-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.board-tabs {
+  display: flex;
+  gap: 26px;
+  padding: 0 18px;
+  overflow-x: auto;
+  border-bottom: 1px solid #e5e7eb;
+  scrollbar-width: none;
+}
+.board-tabs::-webkit-scrollbar { display: none; }
+.board-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 44px;
+  padding: 0 1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: #6b7280;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.board-tab:hover { color: #111827; }
+.board-tab.on { border-bottom-color: #111827; color: #111827; font-weight: 600; }
+.board-tab-count {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.board-tab.on .board-tab-count { background: #111827; color: #fff; }
+.board-toolbar {
+  margin: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+.board-toolbar .searchbox { flex: 1 1 280px; max-width: none; }
+.board-card .wo-body {
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.board-card .wo-thead { background: #fff; }
+.board-pagination { border-top: 1px solid #e5e7eb; background: #fff; }
+
 /* ---- grid kolom (desktop), satu bentuk tetap: header & baris SELALU sejajar.
    [sel][batch][item — lebar fleksibel][qty — rata kanan][work order][status]
    Qty diberi lebar cukup + gap besar sebelum Work Order supaya angka tak
@@ -576,19 +643,6 @@ async function doCancel() {
 .th-kanan { text-align: right; padding-right: 4px; }
 .uom-select { width: auto; min-width: 96px; }
 .iconbtn { width: 34px; padding: 0; display: grid; place-items: center; }
-.dseg-count {
-  min-width: 17px;
-  height: 17px;
-  border-radius: 9px;
-  background: var(--grey-bg, rgba(0, 0, 0, 0.06));
-  color: var(--muted, inherit);
-  font-size: 10.5px;
-  font-weight: 700;
-  display: inline-grid;
-  place-items: center;
-  padding: 0 4px;
-}
-.dseg-btn.on .dseg-count { background: var(--brand-soft, rgba(102, 163, 191, 0.18)); color: var(--brand-strong, inherit); }
 
 /* kepala grup hari — grid SEJALAR kolom baris (rule di atas): checkbox
    select-all di kolom pertama (kiri, atas checkbox baris), label + tanggal +
@@ -640,12 +694,13 @@ async function doCancel() {
 }
 .bdash { color: var(--faint, inherit); padding-left: 12px; }
 
-/* warna baris per status — samakan dgn pill tab (info/warn/ok) */
-.wo-row.st-ready { background: var(--info-bg, #e5eaf3); }
-.wo-row.st-requested { background: var(--warn-bg, #f7ecd2); }
-.wo-row.st-shipped { background: var(--ok-soft, #e3ede4); }
-.wo-row.st-requested:hover { background: var(--warn-bg, #f7ecd2); box-shadow: inset 2.5px 0 0 var(--warn-ink, inherit); }
-.wo-row.st-shipped:hover { background: var(--ok-soft, #e3ede4); box-shadow: none; }
+/* status pra-W41: baris putih + strip kiri, bukan blok warna penuh */
+.wo-row.st-ready { background: #fff; box-shadow: inset 3px 0 0 #60a5fa; }
+.wo-row.st-requested { background: #fff; box-shadow: inset 3px 0 0 #f59e0b; }
+.wo-row.st-shipped { background: #fff; box-shadow: inset 3px 0 0 #34d399; }
+.wo-row.st-ready:hover { background: #f9fafb; box-shadow: inset 3px 0 0 #60a5fa; }
+.wo-row.st-requested:hover { background: #f9fafb; box-shadow: inset 3px 0 0 #f59e0b; }
+.wo-row.st-shipped:hover { background: #f9fafb; box-shadow: inset 3px 0 0 #34d399; }
 
 /* state baris */
 .wo-row.is-selected, .wo-row.is-selected:hover { background: var(--brand-soft, rgba(102, 163, 191, 0.14)); box-shadow: inset 2.5px 0 0 var(--brand, currentColor); }
@@ -660,13 +715,12 @@ async function doCancel() {
   /* bar mengapung di atas bottom-nav HP */
   .floatbar { bottom: calc(76px + env(safe-area-inset-bottom)); }
   .wo-thead { display: none; }
-  /* toolbar rapi: tumpuk — tab status geser menyamping (jangan potong
-     "Shipped"), cari selebar penuh; filter + uom + refresh di baris bawah */
-  .toolbar { flex-wrap: wrap; }
-  .toolbar .dseg { flex: 1 1 100%; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .toolbar .dseg::-webkit-scrollbar { display: none; }
-  .toolbar .dseg-btn { flex: none; }
-  .toolbar .searchbox { flex: 1 1 100%; max-width: none; min-width: 0; }
+  /* tab status tetap satu baris, search selebar kartu */
+  .board-tabs { gap: 12px; padding: 0 12px; }
+  .board-tab { gap: 5px; font-size: 13px; }
+  .board-tab-count { min-width: 18px; padding: 0 4px; }
+  .board-toolbar { padding: 10px 14px; }
+  .board-toolbar .searchbox { flex: 1 1 100%; max-width: none; min-width: 0; }
   .wo-row { grid-template-columns: auto 1fr auto; gap: 3px 12px; padding: 12px 14px; }
   .c-batch, .c-item, .c-wo, .c-qty { grid-column: 1 / -1; }
   .c-status { grid-column: 3; grid-row: 1; align-items: flex-end; }
@@ -688,9 +742,7 @@ async function doCancel() {
   padding: 6px 6px 6px 16px;
   border: 1px solid var(--line, rgba(0, 0, 0, 0.08));
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  backdrop-filter: blur(20px) saturate(160%);
+  background: #fff;
   box-shadow: 0 18px 48px -16px rgba(36, 48, 58, 0.3);
 }
 .fb-count { font-size: 12.5px; font-weight: 600; color: var(--ink, inherit); white-space: nowrap; }

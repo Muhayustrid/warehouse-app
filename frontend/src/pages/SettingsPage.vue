@@ -14,9 +14,8 @@ import {
 	searchItems,
 	fetchItemName,
 	fetchFulfillmentSettings,
-	fetchFulfillmentOptions,
 	saveFulfillmentSettings,
-	searchLink,
+	fetchFulfillmentOptions,
 } from '@/data/settings'
 
 const warehouses = ref([])
@@ -33,16 +32,12 @@ const input = ref(null) // template ref: kolom Add an item
 const ffCompany = ref('')
 const ffCompanies = ref([])
 const ffProfile = ref(emptyProfile())
-const ffOptions = ref({ warehouses: [], roles: [], print_formats: [] })
 const ffLoading = ref(false)
 const ffSaving = ref(false)
 const ffCanEdit = ref(false)
 const ffError = ref('')
 const ffLoadedCompany = ref('')
-const ffItemGroupQuery = ref('')
-const ffItemGroupOptions = ref([])
-const ffPaperSizes = ['A4', 'A5', 'Letter', 'Thermal 80mm']
-const ffShowAdvanced = ref(false)
+const ffItemGroups = ref([])
 const ffLocked = computed(
 	() =>
 		!ffCanEdit.value ||
@@ -50,7 +45,6 @@ const ffLocked = computed(
 		!ffCompany.value ||
 		ffLoadedCompany.value !== ffCompany.value,
 )
-let ffItemGroupTimer = null
 let ffLoadToken = 0
 
 function emptyProfile() {
@@ -72,6 +66,7 @@ function emptyProfile() {
 		dry_print_copies: 1,
 		frozen_print_copies: 1,
 		allow_partial_delivery: 0,
+		enable_packing_slip: 1,
 		short_pick_approval_required: 1,
 		require_all_packed: 1,
 		require_checker_approval: 1,
@@ -89,7 +84,14 @@ function emptyProfile() {
 }
 
 function normalizeProfile(profile, company) {
-	return { ...emptyProfile(), ...(profile || {}), company: company || profile?.company || '' }
+	const p = { ...emptyProfile(), ...(profile || {}), company: company || profile?.company || '' }
+	if (p.short_pick_approval_required !== undefined) {
+		p.short_pick_approval_required = p.short_pick_approval_required ? 1 : 0
+	}
+	if (p.enable_packing_slip !== undefined) {
+		p.enable_packing_slip = p.enable_packing_slip ? 1 : 0
+	}
+	return p
 }
 
 async function loadFulfillment(company = ffCompany.value) {
@@ -101,9 +103,7 @@ async function loadFulfillment(company = ffCompany.value) {
 	ffCanEdit.value = false
 	ffLoadedCompany.value = ''
 	ffProfile.value = emptyProfile()
-	ffOptions.value = { warehouses: [], roles: [], print_formats: [] }
-	ffItemGroupQuery.value = ''
-	ffItemGroupOptions.value = []
+	ffItemGroups.value = []
 	try {
 		const [settings, options] = await Promise.all([
 			fetchFulfillmentSettings(company || undefined),
@@ -116,12 +116,7 @@ async function loadFulfillment(company = ffCompany.value) {
 		ffCompany.value = settings.company || company || ''
 		ffCanEdit.value = Boolean(settings.can_edit)
 		ffProfile.value = normalizeProfile(settings.profile, settings.company)
-		ffOptions.value = {
-			warehouses: options?.warehouses || [],
-			roles: options?.roles || [],
-			print_formats: options?.print_formats || [],
-		}
-		ffItemGroupQuery.value = ffProfile.value.frozen_item_group || ''
+		ffItemGroups.value = options?.item_groups || []
 		ffLoadedCompany.value = ffCompany.value
 	} catch (e) {
 		if (token !== ffLoadToken) {
@@ -141,14 +136,19 @@ function onFulfillmentCompanyChange() {
 }
 
 async function saveFulfillment() {
-	if (ffLocked.value || ffSaving.value) {
+	if (ffLocked.value || ffSaving.value || !ffProfile.value.frozen_item_group) {
 		return
 	}
 	ffSaving.value = true
 	ffError.value = ''
 	try {
 		const { name, config_revision, modified, ...editable } = ffProfile.value
-		const payload = { ...editable, company: ffCompany.value }
+		const payload = {
+			...editable,
+			company: ffCompany.value,
+			enabled: 1,
+			include_child_item_groups: 1,
+		}
 		if (name && modified) {
 			payload.expected_modified = modified
 		}
@@ -156,40 +156,13 @@ async function saveFulfillment() {
 		ffProfile.value = normalizeProfile(result.profile, result.company)
 		ffCompany.value = result.company
 		ffLoadedCompany.value = result.company
-		ffItemGroupQuery.value = ffProfile.value.frozen_item_group || ''
-		toast.success('Fulfillment settings saved')
+		toast.success('Order Queue classification saved')
 	} catch (e) {
 		ffError.value = e.message
 		toast.error(e.message)
 	} finally {
 		ffSaving.value = false
 	}
-}
-
-function onItemGroupInput(event) {
-	clearTimeout(ffItemGroupTimer)
-	const q = String(event?.target?.value || '').trim()
-	ffItemGroupQuery.value = q
-	if (q !== ffProfile.value.frozen_item_group) {
-		ffProfile.value.frozen_item_group = ''
-	}
-	if (!q) {
-		ffItemGroupOptions.value = []
-		return
-	}
-	ffItemGroupTimer = setTimeout(async () => {
-		try {
-			ffItemGroupOptions.value = await searchLink('Item Group', q)
-		} catch {
-			ffItemGroupOptions.value = []
-		}
-	}, 250)
-}
-
-function pickItemGroup(option) {
-	ffProfile.value.frozen_item_group = option.value
-	ffItemGroupQuery.value = option.value
-	ffItemGroupOptions.value = []
 }
 
 onMounted(loadFulfillment)
@@ -286,14 +259,11 @@ async function save() {
 	<div class="page-head">
 		<div class="ph-left">
 			<h1>Settings</h1>
-			<p class="sub">Handover defaults and the per-Company fulfillment profile used by the warehouse workspace.</p>
+			<p class="sub">Handover defaults and the Frozen Item Group used by the Order Queue.</p>
 		</div>
 	</div>
 
 	<div class="st-panel panel">
-		<div class="panel-head">
-			<span class="lead">Handover defaults</span>
-		</div>
 		<div class="panel-body">
 			<div class="form-grid">
 				<div class="field">
@@ -357,7 +327,6 @@ async function save() {
 			</div>
 		</div>
 		<div class="panel-foot">
-			<span class="why">Saved together — warehouses and group items go in one pass.</span>
 			<span class="spacer" />
 			<button class="btn btn-primary" :disabled="saving || loading" @click="save">
 				{{ saving ? 'Saving…' : 'Save' }}
@@ -368,8 +337,8 @@ async function save() {
 	<div class="panel ff-panel">
 		<div class="panel-head">
 			<div class="ff-panel-title">
-				<span class="lead">Fulfillment settings</span>
-				<span class="hint">Only the Frozen Item Group is required. Warehouses, printing, policies, and roles are optional.</span>
+				<span class="lead">Order Queue classification</span>
+				<span class="hint">Choose the Frozen Item Group for Dry/Frozen classification.</span>
 			</div>
 			<div class="ff-status">
 				<span v-if="ffProfile.name" class="badge">{{ ffProfile.enabled ? 'Enabled' : 'Disabled' }}</span>
@@ -380,231 +349,116 @@ async function save() {
 		</div>
 		<div class="panel-body">
 			<div v-if="ffError" class="ff-error" role="alert">{{ ffError }}</div>
-			<div v-if="ffLoading" class="hint">Loading fulfillment profile…</div>
+			<div v-if="ffLoading" class="hint">Loading classification…</div>
 
-			<div class="ff-section">
-				<div class="ff-section-head">
-					<h2>Company</h2>
-					<span class="hint">One profile per Company; changes apply to new Runs only.</span>
-				</div>
-				<div class="form-grid ff-grid">
-					<div class="field">
-						<label for="ff-company">Company</label>
-						<select
-							id="ff-company"
-							v-model="ffCompany"
-							class="select"
-							:disabled="ffLoading || ffCompanies.length < 2"
-							@change="onFulfillmentCompanyChange"
-						>
-							<option v-for="c in ffCompanies" :key="c.name" :value="c.name">{{ c.name }}</option>
-						</select>
-					</div>
-					<div class="field">
-						<label for="ff-enabled">Status</label>
-						<label class="ff-check">
-							<input id="ff-enabled" v-model="ffProfile.enabled" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" />
-							<span>Profile enabled</span>
-						</label>
-						<p class="hint">Disable to block new Fulfillment Runs without changing history.</p>
-					</div>
-				</div>
-			</div>
-
-			<div class="ff-section">
-				<div class="ff-section-head"><h2>Classification</h2></div>
-				<div class="form-grid ff-grid">
-					<div class="field wide">
-						<label for="ff-frozen-group">Frozen Item Group <span class="req">*</span></label>
-						<div class="st-addwrap ff-linkwrap">
-							<input
-								id="ff-frozen-group"
-								v-model="ffItemGroupQuery"
-								class="input"
-								type="text"
-								placeholder="Search Item Group…"
-								:disabled="ffLocked"
-								autocomplete="off"
-								@input="onItemGroupInput"
-							/>
-							<ul v-if="ffItemGroupOptions.length" class="st-opts" role="listbox">
-								<li v-for="option in ffItemGroupOptions" :key="option.value">
-									<button type="button" role="option" :aria-selected="false" @mousedown.prevent="pickItemGroup(option)">
-										{{ option.label }}
-									</button>
-								</li>
-							</ul>
-						</div>
-						<p class="hint">A parent group with children requires “Include child groups”.</p>
-					</div>
-					<div class="field">
-						<label>Child groups</label>
-						<label class="ff-check">
-							<input v-model="ffProfile.include_child_item_groups" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" />
-							<span>Include child Item Groups</span>
-						</label>
-					</div>
-					<div class="field">
-						<label for="ff-dry-name">Dry display name</label>
-						<input id="ff-dry-name" v-model="ffProfile.dry_display_name" class="input" :disabled="ffLocked" />
-					</div>
-					<div class="field">
-						<label for="ff-frozen-name">Frozen display name</label>
-						<input id="ff-frozen-name" v-model="ffProfile.frozen_display_name" class="input" :disabled="ffLocked" />
-					</div>
-				</div>
-			</div>
-
-			<div class="ff-advanced-toggle">
-				<div>
-					<strong>Advanced settings</strong>
-					<p class="hint">Warehouse scope, printing, policies, and roles. Optional for F2; defaults are safe.</p>
-				</div>
-				<button
-					type="button"
-					class="btn btn-sm"
-					aria-controls="ff-advanced"
-					:aria-expanded="ffShowAdvanced"
-					@click="ffShowAdvanced = !ffShowAdvanced"
+			<div v-if="ffCompanies.length > 1" class="ff-company">
+				<label for="ff-company">Company</label>
+				<select
+					id="ff-company"
+					v-model="ffCompany"
+					class="select"
+					:disabled="ffLoading"
+					@change="onFulfillmentCompanyChange"
 				>
-					{{ ffShowAdvanced ? 'Hide advanced' : 'Show advanced' }}
-				</button>
+					<option v-for="c in ffCompanies" :key="c.name" :value="c.name">{{ c.name }}</option>
+				</select>
+			</div>
+			<div v-else-if="ffCompany" class="ff-company-label">
+				<span>Company</span>
+				<strong>{{ ffCompany }}</strong>
 			</div>
 
-			<div v-if="ffShowAdvanced" id="ff-advanced">
-			<div class="ff-section">
-				<div class="ff-section-head">
-					<h2>Warehouses</h2>
-					<span class="hint">Optional scope for picking locations; used from F3.</span>
-				</div>
-				<div class="form-grid ff-grid">
-					<div class="field">
-						<label for="ff-dry-warehouse">Dry parent warehouse</label>
-						<select id="ff-dry-warehouse" v-model="ffProfile.dry_parent_warehouse" class="select" :disabled="ffLocked">
-							<option value="">—</option>
-							<option v-for="w in ffOptions.warehouses" :key="w.name" :value="w.name">
-								{{ w.name }}{{ w.is_group ? ' (group)' : '' }}
-							</option>
-						</select>
-					</div>
-					<div class="field">
-						<label for="ff-frozen-warehouse">Frozen parent warehouse</label>
-						<select id="ff-frozen-warehouse" v-model="ffProfile.frozen_parent_warehouse" class="select" :disabled="ffLocked">
-							<option value="">—</option>
-							<option v-for="w in ffOptions.warehouses" :key="w.name" :value="w.name">
-								{{ w.name }}{{ w.is_group ? ' (group)' : '' }}
-							</option>
-						</select>
-					</div>
-				</div>
+			<div class="field ff-frozen-field">
+				<label for="ff-frozen-group">Frozen Item Group <span class="req">*</span></label>
+				<select
+					id="ff-frozen-group"
+					v-model="ffProfile.frozen_item_group"
+					class="select"
+					:disabled="ffLocked"
+				>
+					<option value="">Select Item Group</option>
+					<option v-for="group in ffItemGroups" :key="group" :value="group">{{ group }}</option>
+				</select>
+				<p class="hint">
+					Items in this group and its child groups are Frozen. Every other valid Item Group is Dry.
+					Saving enables the profile for this Company.
+				</p>
 			</div>
 
-			<div class="ff-section">
-				<div class="ff-section-head">
-					<h2>Print</h2>
-					<span class="hint">Used from F5.</span>
-				</div>
-				<div class="form-grid ff-grid">
-					<div class="field">
-						<label for="ff-dry-format">Dry print format</label>
-						<select id="ff-dry-format" v-model="ffProfile.dry_print_format" class="select" :disabled="ffLocked">
-							<option value="">—</option>
-							<option v-for="format in ffOptions.print_formats" :key="format.name" :value="format.name">{{ format.name }}</option>
-						</select>
-					</div>
-					<div class="field">
-						<label for="ff-frozen-format">Frozen print format</label>
-						<select id="ff-frozen-format" v-model="ffProfile.frozen_print_format" class="select" :disabled="ffLocked">
-							<option value="">—</option>
-							<option v-for="format in ffOptions.print_formats" :key="format.name" :value="format.name">{{ format.name }}</option>
-						</select>
-					</div>
-					<div class="field">
-						<label for="ff-paper">Paper size</label>
-						<select id="ff-paper" v-model="ffProfile.print_paper_size" class="select" :disabled="ffLocked">
-							<option v-for="size in ffPaperSizes" :key="size" :value="size">{{ size }}</option>
-						</select>
-					</div>
-					<div class="field">
-						<label for="ff-dry-copies">Dry copies</label>
-						<input id="ff-dry-copies" v-model.number="ffProfile.dry_print_copies" class="input" type="number" min="1" :disabled="ffLocked" />
-					</div>
-					<div class="field">
-						<label for="ff-frozen-copies">Frozen copies</label>
-						<input id="ff-frozen-copies" v-model.number="ffProfile.frozen_print_copies" class="input" type="number" min="1" :disabled="ffLocked" />
-					</div>
-					<div class="field">
-						<label class="ff-check">
-							<input v-model="ffProfile.allow_draft_print" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" />
-							<span>Allow draft print</span>
-						</label>
-					</div>
-				</div>
+			<div class="field ff-policy-field">
+				<label class="ff-check">
+					<input
+						id="ff-enable-packing-slip"
+						v-model="ffProfile.enable_packing_slip"
+						type="checkbox"
+						:true-value="1"
+						:false-value="0"
+						:disabled="ffLocked || !ffCanEdit"
+					/>
+					<span>Gunakan Tahapan Packing Slip (Koli)</span>
+				</label>
+				<p class="hint">
+					Aktif menggunakan pembagian koli Packing Slip. Jika dinonaktifkan, alur langsung dari Pick List ke pembuatan Surat Jalan & Kirim (tanpa Packing Slip).
+				</p>
 			</div>
 
-			<div class="ff-section">
-				<div class="ff-section-head">
-					<h2>Policies</h2>
-					<span class="hint">Snapshotted on every Run.</span>
-				</div>
-				<div class="ff-checks">
-					<label class="ff-check"><input v-model="ffProfile.allow_partial_delivery" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" /><span>Allow partial delivery</span></label>
-					<label class="ff-check"><input v-model="ffProfile.short_pick_approval_required" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" /><span>Short-pick approval required</span></label>
-					<label class="ff-check"><input v-model="ffProfile.require_all_packed" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" /><span>Require all packed</span></label>
-					<label class="ff-check"><input v-model="ffProfile.require_checker_approval" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" /><span>Require checker approval</span></label>
-					<label class="ff-check"><input v-model="ffProfile.allow_cross_group_packing" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" /><span>Allow cross-group packing</span></label>
-					<label class="ff-check"><input v-model="ffProfile.barcode_mode_enabled" type="checkbox" :true-value="1" :false-value="0" :disabled="ffLocked" /><span>Barcode mode enabled</span></label>
-					<div class="field ff-shelf">
-						<label for="ff-shelf-life">Minimum shelf life (days)</label>
-						<input id="ff-shelf-life" v-model.number="ffProfile.minimum_shelf_life_days" class="input" type="number" min="0" :disabled="ffLocked" />
-					</div>
-				</div>
-			</div>
-
-			<div class="ff-section">
-				<div class="ff-section-head">
-					<h2>Roles</h2>
-					<span class="hint">Stored for the later role matrix.</span>
-				</div>
-				<div class="form-grid ff-grid">
-					<div v-for="roleField in [
-						['role_order_coordinator', 'Order coordinator'],
-						['role_picker_dry', 'Dry picker'],
-						['role_picker_frozen', 'Frozen picker'],
-						['role_packer', 'Packer'],
-						['role_checker', 'Checker'],
-						['role_dispatch', 'Dispatch'],
-					]" :key="roleField[0]" class="field">
-						<label :for="`ff-${roleField[0]}`">{{ roleField[1] }}</label>
-						<select :id="`ff-${roleField[0]}`" v-model="ffProfile[roleField[0]]" class="select" :disabled="ffLocked">
-							<option value="">—</option>
-							<option v-for="role in ffOptions.roles" :key="role.name" :value="role.name">{{ role.name }}</option>
-						</select>
-					</div>
-				</div>
-			</div>
+			<div class="field ff-policy-field">
+				<label class="ff-check">
+					<input
+						id="ff-short-pick-approval"
+						v-model="ffProfile.short_pick_approval_required"
+						type="checkbox"
+						:true-value="1"
+						:false-value="0"
+						:disabled="ffLocked || !ffCanEdit"
+					/>
+					<span>Require approval for short picks</span>
+				</label>
+				<p class="hint">
+					Off blocks short picks. On requires an approver before Finish picking.
+				</p>
 			</div>
 		</div>
 		<div class="panel-foot">
-			<span class="why">Save profile changes separately from handover defaults. Changes apply to new Runs only.</span>
+			<span class="why">Frozen Item Group and short-pick policy are configured here.</span>
 			<span class="spacer" />
-			<button class="btn btn-primary" :disabled="ffLocked || ffSaving" @click="saveFulfillment">
-				{{ ffSaving ? 'Saving…' : 'Save fulfillment' }}
+			<button
+				v-if="ffCanEdit"
+				class="btn btn-primary"
+				:disabled="ffLocked || ffSaving || !ffProfile.frozen_item_group"
+				@click="saveFulfillment"
+			>
+				{{ ffSaving ? 'Saving…' : 'Save classification' }}
 			</button>
 		</div>
 	</div>
+
 </template>
 
 <style scoped>
-.st-panel { max-width: 980px; }
+.page-head {
+	max-width: 672px;
+	margin: 0 auto 18px;
+}
+.st-panel,
+.ff-panel {
+	max-width: 672px;
+	margin-left: auto;
+	margin-right: auto;
+	background: #fff;
+	border-radius: 8px;
+	box-shadow: none;
+	-webkit-backdrop-filter: none;
+	backdrop-filter: none;
+}
 
 .form-grid {
 	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 14px 18px;
+	grid-template-columns: 1fr;
+	gap: 18px;
 	align-items: start;
 }
-.form-grid .wide { grid-column: 1 / -1; }
+.form-grid .wide { grid-column: auto; }
 
 .st-chips {
 	display: flex;
@@ -631,6 +485,7 @@ async function save() {
 
 /* autocomplete add: wrapper relatif agar dropdown menempel di bawah input */
 .st-addwrap { position: relative; max-width: 420px; margin-top: 6px; }
+.st-panel .st-addwrap { max-width: none; }
 .st-opts {
 	position: absolute;
 	z-index: 20;
@@ -663,7 +518,6 @@ async function save() {
 .st-opts button:hover { background: var(--grey-bg, #f1f1ec); }
 
 .ff-panel {
-	max-width: 980px;
 	margin-top: 18px;
 }
 .ff-panel-title {
@@ -686,62 +540,64 @@ async function save() {
 	color: var(--muted, #64707c);
 	font-size: 11px;
 }
-.ff-section {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-	padding: 16px 0;
-	border-top: 1px solid var(--line, #e5e5e0);
-}
-.ff-section:first-of-type { padding-top: 0; border-top: 0; }
-.ff-advanced-toggle {
+.ff-company {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	padding: 14px 0;
-	border-top: 1px solid var(--line, #e5e5e0);
+	gap: 10px;
+	margin-bottom: 14px;
 }
-.ff-advanced-toggle strong { font-size: 13px; font-weight: 750; }
-.ff-advanced-toggle .hint { margin: 2px 0 0; }
-.ff-advanced-toggle .btn { flex: none; }
-.ff-section-head {
+.ff-company label {
+	flex: none;
+	font-size: 13px;
+	font-weight: 650;
+}
+.ff-company .select {
+	width: auto;
+	min-width: 220px;
+	max-width: 100%;
+}
+.ff-company-label {
 	display: flex;
 	align-items: baseline;
-	justify-content: space-between;
-	gap: 4px 12px;
-	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 14px;
+	color: var(--muted, #64707c);
+	font-size: 12px;
 }
-.ff-section-head h2 {
-	margin: 0;
+.ff-company-label strong {
+	color: var(--ink, #1f2937);
 	font-size: 13px;
-	font-weight: 750;
 }
-.ff-section-head .hint { margin: 0; flex: 1 1 240px; text-align: right; }
-.ff-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.ff-grid .wide { grid-column: 1 / -1; }
+.ff-frozen-field { max-width: 460px; }
+.ff-frozen-field .select { width: 100%; }
+.ff-policy-field {
+	margin-top: 16px;
+	max-width: 460px;
+}
+.ff-policy-field .hint {
+	margin-top: 4px;
+}
 .ff-check {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
 	gap: 8px;
-	min-height: 30px;
+	min-height: 24px;
 	font-size: 13px;
+	font-weight: 600;
 	color: var(--ink, #1f2937);
 	cursor: pointer;
+	user-select: none;
 }
-.ff-check input { accent-color: var(--brand, #2f6f8f); }
-.ff-checks {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 6px 18px;
+.ff-check input {
+	margin: 0;
+	accent-color: var(--brand, #3368a0);
 }
-.ff-shelf {
-	grid-column: 1 / -1;
-	max-width: 260px;
+.ff-check input:disabled {
+	cursor: not-allowed;
 }
-.ff-linkwrap {
-	max-width: none;
-	margin-top: 0;
+.ff-check:has(input:disabled) {
+	cursor: not-allowed;
+	color: var(--muted, #64707c);
 }
 .ff-error {
 	padding: 10px 12px;
@@ -758,12 +614,9 @@ async function save() {
 
 @media (max-width: 820px) {
 	.ff-panel { margin-top: 14px; }
-	.ff-section-head { align-items: flex-start; flex-direction: column; gap: 3px; }
-	.ff-section-head .hint { flex: 0 1 auto; text-align: left; }
-	.ff-grid,
-	.ff-checks { grid-template-columns: 1fr; }
-	.ff-shelf { grid-column: auto; max-width: none; }
 	.ff-status { width: 100%; justify-content: space-between; }
+	.ff-frozen-field,
+	.ff-policy-field { max-width: none; }
 }
 
 @media (max-width: 820px) {
@@ -780,12 +633,13 @@ async function save() {
 		margin-right: 0;
 	}
 
-	.ff-advanced-toggle {
+	.ff-company {
 		align-items: flex-start;
 		flex-direction: column;
+		gap: 4px;
 	}
 
-	.ff-advanced-toggle .btn {
+	.ff-company .select {
 		width: 100%;
 	}
 
@@ -799,10 +653,6 @@ async function save() {
 
 	.panel-foot .btn {
 		width: 100%;
-	}
-
-	.ff-checks {
-		gap: 2px;
 	}
 }
 </style>

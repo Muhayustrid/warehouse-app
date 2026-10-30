@@ -4,16 +4,38 @@ Custom app untuk org gudang (finished-goods warehouse). Keputusan FU57 (producti
 
 Planning fitur pertama: lihat `IMPLEMENTATION_PLAN.md` (keputusan user 2026-09-20 + rulings advisor R1-R10). Eksekusi per entri di bawah; satu entri = satu commit; DONE butuh bukti eksekusi.
 
+## W52 — Frozen Item Group dropdown + open-SO demo seed — DONE locally (2026-10-27)
+
+**Scope:** Order Queue only: Frozen Item Group is a server-backed dropdown, not typed/hard-coded. Seed demo open SOs and stock on `fulfillment.localhost` for a native Desk trial. No F3/F4 SPA write flow; existing Handover/Inventory/Settings handover do not use Dry/Frozen.
+
+- Settings: `Frozen Item Group` is a native `<select>` from `fulfillment_settings_options.item_groups` (8 item groups, root excluded); saved profile revision 16→17, child-group flag stays 1; hidden Profile fields unchanged.
+- Demo seed (test site only): items `ZZTEST-W52-DRY-A/B` + `ZZTEST-W52-FROZEN-A/B`, stock 500 Nos each in `Stores - W49`; customers Outlet Solo/Klaten/Yogya; SOs `SAL-ORD-2026-00073/74/75` open.
+- Runs: SO73 → WFR-2026-00002 with draft PL `STO-PICK-2026-00006` (Dry) + `STO-PICK-2026-00007` (Frozen); SO74 → WFR-2026-00003 with draft PL `STO-PICK-2026-00008` (Dry); SO75 remains open for Generate.
+- Native Desk: set `Installed Application` setup flags for frappe/erpnext and `desktop:home_page=Workspaces` on `fulfillment.localhost` only; `/app/...` now loads PL/SO forms. `erp.localhost` untouched.
+- Evidence: queue 7 rows; browser dropdown 9 options including placeholder; save toast OK; native PL/SO deep links load; console errors 0; build PASS; bundle `index-Cn6ipOJ2.js`.
+- Limit: native UI creates one DN per submitted PL. One DN from two PLs remains F4; use SO74 for one-DN end-to-end native trial.
+
+## W51 — UI restore + Fulfillment filter layout — DONE locally (2026-10-27)
+
+**Scope:** UI only; no API/backend change. Pre-W41 plain-card visual language for Handover Requests, Inventory Report, and Settings handover; keep W42-W48 behavior and the compact F2 classification panel.
+
+- Handover Requests: status tabs moved back inside the white card, toolbar below tabs, pagination in card footer. Grouping, selection, dialogs, W45-W48 responsive behavior kept. Mock-data audit: 3 rows, status stripes, no overflow.
+- Inventory Report: solid white card, neutral tab control, plain table hover/footer; filter popover, export, pagination, W42/W44 behavior kept.
+- Settings: centered 672px card, single-column handover form, Save footer; handover header removed. Order Queue classification panel remains. Save revision 15→16; enabled and include-children stay 1; all hidden Profile fields unchanged; queue 4 rows.
+- Fulfillment filter: two rows on desktop (stage chips + order count, then search + dates + Clear); hint row removed; search fills available width; stage chips scroll on narrow screens; Clear becomes full-width under 430px.
+- Evidence: `npm run build` PASS; browser at 1440/1024/768/390/360, no horizontal overflow, console errors 0; bundle `index-BV_JWS1n.js`. Test site only; no push/commit.
+- Next: F2 whole-branch review remains pending; F3a picking workspace spec/plan next.
+
 ## W50 — Fulfillment F2: Settings Profile + Run + Generate draft PL — DONE (2026-10-27)
 
 **Scope:** F2. Spec `1028181`, plan `2389066`; F1 base `f81c411`. Test site `fulfillment.localhost`; `erp.localhost` and production stack untouched. No push. R0 gate first; product writes are Run/Key + draft PL only.
 
-- Settings: all PRD Profile fields are in the existing `/gudang/settings`; one Profile per Company; Frozen Item Group + optional children = Frozen, every other valid group = Dry. Core F2 fields are visible; warehouses/print/policies/roles live under an Advanced disclosure (closed by default) but remain in the save payload. Writes are System Manager-only, revisioned, stale-write rejected. Display names feed the queue/drawer.
+- Settings: the existing `/gudang/settings` handover panel is unchanged. One compact Order Queue classification panel exposes only the Frozen Item Group; child groups are included and saving enables the profile. Other Profile fields stay in the schema/API, hidden and preserved on save. Writes are System Manager-only, revisioned, stale-write rejected. Display names feed the queue/drawer.
 - Data: `Warehouse Fulfillment Run` (+ Run Item, Allocation) and DB-unique `Warehouse Fulfillment Request Key`; optional Pick List lineage fields `custom_fulfillment_run` / `custom_fulfillment_group`; W31 untouched.
 - Generate: preflight, one native `create_pick_list` template split before save by SO Item, 0-1 Dry + 0-1 Frozen **draft** PL, active-Run reuse, request-key replay/rollback, no picked qty/stock movement. System Manager, or Stock Manager paired with Stock User; Stock User alone is read-only.
 - R0 evidence: split before save, short pick, one DN from two PLs, Packing Slip, DN submit/stock, teardown 0.
 - F2 evidence: Profile/Settings/Schema/R0/F2 gates OK; F1 read-only gate OK (4 rows, stages preserved); W31 gate OK; 58/58 unit tests PASS; no residual Run/Key/test SO after F2 cleanup.
-- Browser: generated `WFR-2026-00001` with Dry/Frozen draft PLs from `SO-OPEN`, queue moved to In Picking, Run/PL links work; layout audited at 1920/1440/1280/1100/1024/900/768/560/430/390/360 with no horizontal overflow; Settings core is 6 fields, Advanced expands to 21/6 sections; queue filters are grouped in one bar (stage/search/date/Clear); In Picking returns 2 rows and Clear restores 4; console errors 0. On the disposable stack, `localhost:8080` redirects to `fulfillment.localhost:8080`; `erp.localhost` remains separate. Bundle `index-Cg0nl-FS.js`.
+- Browser: generated `WFR-2026-00001` with Dry/Frozen draft PLs from `SO-OPEN`, queue moved to In Picking, Run/PL links work; layout audited at 1920/1440/1280/1100/1024/900/768/560/430/390/360 with no horizontal overflow; Settings shows the untouched handover form plus one Frozen Item Group input, save revision 14→15, hidden Profile fields unchanged, queue still 4 rows; queue filters are grouped in one bar (stage/search/date/Clear); In Picking returns 2 rows and Clear restores 4; console errors 0. On the disposable stack, `localhost:8080` redirects to `fulfillment.localhost:8080`; `erp.localhost` remains separate. Bundle `index-BRnDE1aT.js`.
 - F2 known limits: draft PL only; no picking, PL submit, short-pick approval, DN, Packing, print, assignment. Partial/shortage execution and role matrix remain F3–F5. Final whole-branch F2 review pending.
 
 **Gate:** R0, profile, settings, schema, F2, W31, F1, and unit gates green on disposable `fulfillment.localhost`; teardown clean.

@@ -52,6 +52,30 @@ class TestClassify(unittest.TestCase):
 		self.assertIn(classify("Produk Jadi Pabrik", frozen), {"dry", "frozen"})
 		self.assertIn(classify("Bahan Baku", frozen), {"dry", "frozen"})
 
+	def test_dry_exception_overrides_frozen_group(self):
+		frozen = {"Produk Jadi Pabrik"}
+		# When item is in dry_exceptions, it classifies as dry despite being in frozen item group
+		self.assertEqual(
+			classify("Produk Jadi Pabrik", frozen, item_code="PJ260009", dry_exceptions={"PJ260009"}),
+			"dry",
+		)
+		# Other items in the same frozen group remain frozen
+		self.assertEqual(
+			classify("Produk Jadi Pabrik", frozen, item_code="PJ260012", dry_exceptions={"PJ260009"}),
+			"frozen",
+		)
+
+	def test_item_override_category(self):
+		frozen = {"Produk Jadi Pabrik"}
+		self.assertEqual(
+			classify("Produk Jadi Pabrik", frozen, item_code="PJ260009", item_override="Dry"),
+			"dry",
+		)
+		self.assertEqual(
+			classify("Perlengkapan", frozen, item_code="SPECIAL-COLD", item_override="Frozen"),
+			"frozen",
+		)
+
 
 class TestValidateProfileConfig(unittest.TestCase):
 	def test_leaf_group_is_valid(self):

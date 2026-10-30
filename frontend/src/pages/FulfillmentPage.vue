@@ -1,66 +1,94 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
 	AlertTriangle,
 	ChevronLeft,
 	ChevronRight,
+	Filter,
 	Inbox,
 	RefreshCw,
 	Search,
 	X,
 } from 'lucide-vue-next'
-import { fetchOrderQueue, STAGE_LABELS, stageLabel } from '@/data/fulfillment'
+import { fetchOrderQueue } from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
-import FulfillmentDrawer from '@/components/FulfillmentDrawer.vue'
+
+const router = useRouter()
 
 const STAGE_FILTERS = [
-	{ value: 'all', label: 'All' },
-	...Object.entries(STAGE_LABELS).map(([value, label]) => ({ value, label })),
+	{ label: 'Semua', value: 'all' },
+	{ label: 'Open', value: 'open' },
+	{ label: 'Picking', value: 'picking' },
+	{ label: 'Packing', value: 'packing' },
+	{ label: 'Ready', value: 'ready' },
+	{ label: 'Completed', value: 'completed' },
 ]
-const PAGE_SIZES = [20, 50, 100]
+
+const PAGE_SIZES = [10, 25, 50]
 
 const company = ref('')
 const companies = ref([])
-const profile = ref({ configured: false, enabled: false })
+const profile = ref(null)
 const counts = ref({ all: 0 })
 const rows = ref([])
 const total = ref(0)
 const page = ref(1)
-const pageLength = ref(20)
-const stage = ref('all')
+const pageLength = ref(10)
 const search = ref('')
+const stage = ref('all')
 const fromDate = ref('')
 const toDate = ref('')
 const loading = ref(false)
 const error = ref('')
-const selectedSO = ref(null)
+const filterOpen = ref(false)
+const filterPopoverRef = ref(null)
 
 let loadToken = 0
 
-const hasProfile = computed(() => Boolean(profile.value?.configured && profile.value?.enabled))
 const dryLabel = computed(() => profile.value?.dry_display_name || 'Dry')
 const frozenLabel = computed(() => profile.value?.frozen_display_name || 'Frozen')
-const hasFilters = computed(
-	() => Boolean(search.value || fromDate.value || toDate.value || stage.value !== 'all'),
-)
+const activeFilterCount = computed(() => {
+	let c = 0
+	if (fromDate.value || toDate.value) c++
+	if (search.value) c++
+	return c
+})
+
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageLength.value)))
 const rangeStart = computed(() => (total.value ? (page.value - 1) * pageLength.value + 1 : 0))
 const rangeEnd = computed(() => Math.min(page.value * pageLength.value, total.value))
-const profileMessage = computed(() => {
-	if (!profile.value?.configured && profile.value?.enabled === false && profile.value?.frozen_item_group) {
-		return `The Fulfillment profile is disabled. Enable it in Settings to use ${dryLabel.value}/${frozenLabel.value} classification.`
-	}
-	return 'No Fulfillment profile is configured for this company. Set the Frozen Item Group in Settings.'
+
+const todayFormatted = computed(() => {
+	return new Date().toLocaleDateString('id-ID', {
+		weekday: 'long',
+		day: 'numeric',
+		month: 'long',
+		year: 'numeric',
+	})
 })
 
-onMounted(load)
+function onDocClick(e) {
+	if (filterPopoverRef.value && !filterPopoverRef.value.contains(e.target)) {
+		filterOpen.value = false
+	}
+}
+
+onMounted(() => {
+	window.addEventListener('click', onDocClick)
+	load()
+})
+
+onBeforeUnmount(() => {
+	window.removeEventListener('click', onDocClick)
+})
 
 async function load() {
 	const token = ++loadToken
 	loading.value = true
 	error.value = ''
 	try {
-		const data = await fetchOrderQueue({
+		const res = await fetchOrderQueue({
 			company: company.value || undefined,
 			search: search.value.trim() || undefined,
 			stage: stage.value,
@@ -69,24 +97,19 @@ async function load() {
 			page: page.value,
 			page_length: pageLength.value,
 		})
-		if (token !== loadToken) {
-			return
-		}
-		companies.value = data.companies || []
-		if (!company.value && data.company) {
-			company.value = data.company
-		}
-		profile.value = data.profile || { configured: false, enabled: false }
-		counts.value = { all: 0, ...(data.counts || {}) }
-		rows.value = data.rows || []
-		total.value = data.total || 0
+		if (token !== loadToken) return
+		company.value = res.company || company.value
+		companies.value = res.companies || []
+		profile.value = res.profile || null
+		counts.value = res.counts || { all: 0 }
+		rows.value = res.rows || []
+		total.value = res.total || 0
+		page.value = res.page || page.value
+		pageLength.value = res.page_length || pageLength.value
 	} catch (e) {
-		if (token !== loadToken) {
-			return
+		if (token === loadToken) {
+			error.value = e.message || 'Gagal memuat daftar order.'
 		}
-		rows.value = []
-		total.value = 0
-		error.value = e.message || 'Failed to load the fulfillment queue.'
 	} finally {
 		if (token === loadToken) {
 			loading.value = false
@@ -100,29 +123,22 @@ function applyFilters() {
 }
 
 function setStage(value) {
-	if (stage.value === value) {
-		return
-	}
+	if (stage.value === value) return
 	stage.value = value
 	page.value = 1
 	load()
 }
 
-function onCompanyChange() {
-	page.value = 1
-	load()
-}
-
-function onPageLength() {
+function setPageSize(n) {
+	if (pageLength.value === n) return
+	pageLength.value = n
 	page.value = 1
 	load()
 }
 
 function goPage(next) {
 	const target = Math.min(Math.max(1, next), pageCount.value)
-	if (target === page.value) {
-		return
-	}
+	if (target === page.value) return
 	page.value = target
 	load()
 }
@@ -131,919 +147,711 @@ function clearFilters() {
 	search.value = ''
 	fromDate.value = ''
 	toDate.value = ''
-	stage.value = 'all'
 	page.value = 1
 	load()
 }
 
-function openRow(row) {
-	selectedSO.value = row.sales_order
+function openOrder(row) {
+	router.push({ name: 'fulfillment-workspace', params: { id: row.sales_order } })
 }
 
-function docMain(doc) {
-	return doc?.total ? doc.total : '—'
+function statusBadgeClass(row) {
+	if (row.stage === 'completed' || row.stage === 'ready' || row.run?.status === 'DISPATCHED') return 'b-done'
+	if (row.stage === 'picking' || row.stage === 'packing') return 'b-run'
+	return 'b-draft'
 }
 
-function docSub(doc) {
-	if (!doc?.total) {
-		return ''
-	}
-	if (doc.draft) {
-		return `${doc.draft} draft`
-	}
-	if (doc.submitted) {
-		return `${doc.submitted} submitted`
-	}
-	return ''
-}
-
-function warningTitle(row) {
-	return (row.warnings || []).join(', ')
+function statusLabel(row) {
+	if (row.stage === 'completed' || row.run?.status === 'DISPATCHED') return 'Completed'
+	if (row.stage === 'ready') return 'Ready'
+	if (row.stage === 'packing') return 'In Packing'
+	if (row.stage === 'picking') return 'In Picking'
+	if (row.stage === 'partially_delivered') return 'Partially Delivered'
+	if (row.stage === 'exception') return 'Exceptions'
+	return 'Open'
 }
 </script>
 
 <template>
-	<div class="ff-page">
+	<div class="ff-page-container">
+		<!-- Header matching Hand Request style -->
 		<div class="page-head">
 			<div class="ph-left">
-				<h1>Fulfillment</h1>
+				<h1>Order Queue</h1>
 				<p class="sub">
-					Open sales orders across Dry and Frozen fulfillment, with their native Pick Lists,
-					Delivery Notes, and Packing Slips.
+					Siapkan material, jalankan fulfillment dari picking hingga submit delivery.
 				</p>
 			</div>
-			<div class="ff-head-actions">
-				<label class="ff-company">
-					<span>Company</span>
-					<select
-						v-model="company"
-						class="select"
-						:disabled="companies.length < 2"
-						aria-label="Company"
-						@change="onCompanyChange"
-					>
-						<option v-for="c in companies" :key="c.name" :value="c.name">{{ c.name }}</option>
-					</select>
-				</label>
-				<button
-					type="button"
-					class="btn iconbtn"
-					:disabled="loading"
-					title="Refresh"
-					aria-label="Refresh"
-					@click="load"
-				>
-					<RefreshCw :size="14" :stroke-width="2" :class="{ spin: loading }" />
-				</button>
+			<div class="ff-date-badge">
+				<span>{{ todayFormatted }}</span>
 			</div>
 		</div>
 
-		<div v-if="!hasProfile" class="ff-banner" role="status">
-			<AlertTriangle :size="18" :stroke-width="1.9" />
-			<div>
-				<strong>Fulfillment profile needs attention.</strong>
-				<span>{{ profileMessage }}</span>
-			</div>
-			<a class="btn btn-sm" href="/gudang/settings">
-				Configure
-			</a>
-		</div>
-
-		<div class="ff-filters">
-			<div class="ff-stages" role="tablist" aria-label="Fulfillment stage">
+		<!-- Card: Tab Status, Toolbar, Table, Pagination -->
+		<div class="board-card">
+			<!-- Tab Status di kepala kartu persis Hand Request -->
+			<div class="board-tabs" role="tablist" aria-label="Status">
 				<button
 					v-for="item in STAGE_FILTERS"
 					:key="item.value"
 					type="button"
 					role="tab"
-					class="ff-chip"
+					class="board-tab"
 					:class="{ on: stage === item.value }"
 					:aria-selected="stage === item.value"
 					@click="setStage(item.value)"
 				>
-					<span>{{ item.label }}</span>
-					<span class="ff-chip-count">{{ counts[item.value] || 0 }}</span>
+					{{ item.label }}
+					<span v-if="counts[item.value] !== undefined" class="board-tab-count">{{ counts[item.value] }}</span>
 				</button>
 			</div>
 
-			<div class="toolbar ff-toolbar">
+			<!-- Toolbar persis Hand Request -->
+			<div class="toolbar board-toolbar">
 				<div class="searchbox">
 					<Search :size="15" :stroke-width="2" class="search-ico" />
 					<input
 						v-model="search"
 						class="input"
 						type="search"
-						placeholder="Search sales order or customer"
-						aria-label="Search sales order or customer"
+						placeholder="Cari No. SO atau customer..."
+						aria-label="Cari No. SO atau customer"
 						@keydown.enter="applyFilters"
 					/>
+					<button v-if="search" type="button" class="search-clear-btn" @click="search = ''; applyFilters()">
+						<X :size="13" :stroke-width="2" />
+					</button>
 				</div>
-				<label class="ff-date">
-					<span>From</span>
-					<input v-model="fromDate" class="input" type="date" aria-label="From SO date" @change="applyFilters" />
+
+				<div class="ff-toolbar-actions">
+					<!-- Filter Dropdown Popover Anchor -->
+					<div ref="filterPopoverRef" class="ff-filter-popover-wrap">
+						<button
+							type="button"
+							class="btn ff-filter-btn"
+							:class="{ 'has-filters': activeFilterCount > 0, 'is-open': filterOpen }"
+							@click.stop="filterOpen = !filterOpen"
+						>
+							<Filter :size="14" :stroke-width="2" />
+							<span>Filter</span>
+							<span v-if="activeFilterCount" class="ff-filter-badge">{{ activeFilterCount }}</span>
+						</button>
+
+						<!-- Floating Filter Popover -->
+						<div v-if="filterOpen" class="ff-floating-popover" role="dialog" aria-label="Filter antrean">
+							<div class="popover-head">
+								<span class="popover-title">Filter Lanjutan</span>
+								<button v-if="activeFilterCount" type="button" class="popover-reset-btn" @click="clearFilters">
+									Reset
+								</button>
+							</div>
+
+							<div class="popover-body">
+								<div class="popover-field">
+									<label class="popover-label">Rentang Tanggal Pengiriman</label>
+									<div class="popover-date-grid">
+										<div class="date-input-wrap">
+											<span class="date-hint">Dari:</span>
+											<input v-model="fromDate" class="input input-sm" type="date" @change="applyFilters" />
+										</div>
+										<div class="date-input-wrap">
+											<span class="date-hint">Sampai:</span>
+											<input v-model="toDate" class="input input-sm" type="date" @change="applyFilters" />
+										</div>
+									</div>
+								</div>
+							</div>
+
+							<div class="popover-foot">
+								<button type="button" class="btn btn-primary btn-sm w-full" @click="filterOpen = false">
+									Terapkan Filter
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<button
+						type="button"
+						class="btn iconbtn"
+						:disabled="loading"
+						aria-label="Refresh"
+						title="Refresh"
+						@click="load()"
+					>
+						<RefreshCw :size="14" :stroke-width="2" :class="{ spin: loading }" />
+					</button>
+				</div>
+			</div>
+
+			<!-- Error State -->
+			<div v-if="error" class="ff-state ff-error" role="alert">
+				<AlertTriangle :size="22" :stroke-width="1.8" />
+				<div>
+					<strong>Gagal memuat daftar order</strong>
+					<p>{{ error }}</p>
+				</div>
+				<button type="button" class="btn btn-sm" @click="load">Coba lagi</button>
+			</div>
+
+			<!-- Loading Skeletons -->
+			<div v-else-if="loading && !rows.length" class="ff-body is-loading">
+				<div class="ff-thead">
+					<span>NO. SO</span>
+					<span>CUSTOMER / OUTLET</span>
+					<span>JADWAL</span>
+					<span>STATUS</span>
+					<span>DRY / FROZEN</span>
+					<span></span>
+				</div>
+				<div v-for="n in 5" :key="n" class="ff-trow ff-skel-row">
+					<span class="skel-box w-25"></span>
+					<span class="skel-box w-50"></span>
+					<span class="skel-box w-20"></span>
+					<span class="skel-box w-15"></span>
+					<span class="skel-box w-20"></span>
+					<span></span>
+				</div>
+			</div>
+
+			<!-- Empty State -->
+			<div v-else-if="!rows.length" class="ff-state ff-empty">
+				<Inbox :size="32" :stroke-width="1.5" />
+				<div>
+					<strong>Tidak ada Sales Order dalam antrean</strong>
+					<p v-if="activeFilterCount">Coba bersihkan kata kunci pencarian atau filter tanggal.</p>
+					<p v-else>Order baru yang membutuhkan pengiriman akan otomatis muncul di sini.</p>
+				</div>
+				<button v-if="activeFilterCount" type="button" class="btn btn-sm" @click="clearFilters">
+					Hapus filter
+				</button>
+			</div>
+
+			<!-- Table Body (Kolom TAHAP dihapus, cukup STATUS) -->
+			<div v-else class="ff-body">
+				<div class="ff-thead">
+					<span>NO. SO</span>
+					<span>CUSTOMER / OUTLET</span>
+					<span>JADWAL</span>
+					<span>STATUS</span>
+					<span>DRY / FROZEN</span>
+					<span></span>
+				</div>
+
+				<div class="ff-tbody">
+					<div
+						v-for="row in rows"
+						:key="row.sales_order"
+						class="ff-trow"
+						role="button"
+						tabindex="0"
+						@click="openOrder(row)"
+						@keydown.enter="openOrder(row)"
+					>
+						<!-- NO. SO -->
+						<div class="ff-cell ff-cell-so">
+							<strong class="mono">{{ row.sales_order }}</strong>
+						</div>
+
+						<!-- Customer / Outlet -->
+						<div class="ff-cell ff-cell-customer">
+							<span class="customer-name">{{ row.customer_name || row.customer }}</span>
+							<small v-if="row.customer && row.customer_name && row.customer !== row.customer_name" class="customer-code mono">
+								{{ row.customer }}
+							</small>
+						</div>
+
+						<!-- Jadwal Pengiriman -->
+						<div class="ff-cell ff-cell-date">
+							<span>{{ fmtDate(row.delivery_date) || '—' }}</span>
+						</div>
+
+						<!-- Status (Mewakili tahap & progres secara visual) -->
+						<div class="ff-cell">
+							<span class="badge" :class="statusBadgeClass(row)">
+								{{ statusLabel(row) }}
+							</span>
+						</div>
+
+						<!-- Dry / Frozen -->
+						<div class="ff-cell ff-cell-groups">
+							<span class="group-pill pill-dry">{{ row.dry_count }} {{ dryLabel }}</span>
+							<span class="group-pill pill-frozen">{{ row.frozen_count }} {{ frozenLabel }}</span>
+						</div>
+
+						<!-- Chevron Arrow -->
+						<div class="ff-cell ff-cell-arrow">
+							<ChevronRight :size="16" :stroke-width="2" />
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- Pagination persis Hand Request -->
+			<div v-if="!error && total" class="pagination-bar board-pagination">
+				<span>
+					Menampilkan {{ rangeStart }}–{{ rangeEnd }} dari {{ total }} Sales Order
+				</span>
+				<label class="page-size-control">
+					<span>Per halaman</span>
+					<select
+						class="select"
+						:value="pageLength"
+						aria-label="Baris per halaman"
+						@change="setPageSize(Number($event.target.value))"
+					>
+						<option v-for="n in PAGE_SIZES" :key="n" :value="n">{{ n }}</option>
+					</select>
 				</label>
-				<label class="ff-date">
-					<span>To</span>
-					<input v-model="toDate" class="input" type="date" aria-label="To SO date" @change="applyFilters" />
-				</label>
-				<button v-if="hasFilters" type="button" class="btn ff-clear" @click="clearFilters">
-					<X :size="14" :stroke-width="2" />
-					Clear filters
-				</button>
-			</div>
-			<div class="ff-filter-meta">
-				<p class="ff-filter-hint">
-					Choose a stage, press Enter to search, or narrow by SO date. Click a row to open its detail.
-				</p>
-				<span class="ff-filter-count">{{ total }} {{ total === 1 ? 'order' : 'orders' }}</span>
-			</div>
-		</div>
-
-		<div v-if="error" class="ff-state ff-error" role="alert">
-			<AlertTriangle :size="22" :stroke-width="1.8" />
-			<div>
-				<strong>Could not load the queue</strong>
-				<p>{{ error }}</p>
-			</div>
-			<button type="button" class="btn btn-sm" @click="load">Retry</button>
-		</div>
-
-		<div v-else-if="loading && !rows.length" class="ff-table ff-skeleton" aria-label="Loading queue">
-			<div class="ff-thead">
-				<span>SO / Customer</span>
-				<span>Delivery</span>
-				<span>{{ dryLabel }} / {{ frozenLabel }}</span>
-				<span>Pick Lists</span>
-				<span>DN Draft</span>
-				<span>Packing Slips</span>
-				<span>Stage</span>
-				<span></span>
-			</div>
-			<div v-for="n in 5" :key="n" class="ff-row ff-skeleton-row">
-				<span class="ff-skel ff-skel-wide"></span>
-				<span class="ff-skel"></span>
-				<span class="ff-skel"></span>
-				<span class="ff-skel"></span>
-				<span class="ff-skel"></span>
-				<span class="ff-skel"></span>
-				<span class="ff-skel"></span>
-				<span></span>
+				<div class="pagination-buttons">
+					<button
+						type="button"
+						class="btn btn-sm"
+						:disabled="loading || page <= 1"
+						aria-label="Halaman sebelumnya"
+						@click="goPage(page - 1)"
+					>
+						‹ Prev
+					</button>
+					<span class="pg-num">{{ page }} / {{ pageCount }}</span>
+					<button
+						type="button"
+						class="btn btn-sm"
+						:disabled="loading || page >= pageCount"
+						aria-label="Halaman berikutnya"
+						@click="goPage(page + 1)"
+					>
+						Next ›
+					</button>
+				</div>
 			</div>
 		</div>
-
-		<div v-else-if="!rows.length" class="ff-state ff-empty">
-			<Inbox :size="30" :stroke-width="1.5" />
-			<div>
-				<strong>No sales orders in this view</strong>
-				<p v-if="hasFilters">Try clearing the search, date range, or stage filter.</p>
-				<p v-else>Open sales orders will appear here once they are available.</p>
-			</div>
-			<button v-if="hasFilters" type="button" class="btn btn-sm" @click="clearFilters">
-				Clear filters
-			</button>
-		</div>
-
-		<div v-else class="ff-table" :class="{ 'is-loading': loading }">
-			<div class="ff-thead" role="row">
-				<span>SO / Customer</span>
-				<span>Delivery</span>
-				<span>{{ dryLabel }} / {{ frozenLabel }}</span>
-				<span>Pick Lists</span>
-				<span>DN Draft</span>
-				<span>Packing Slips</span>
-				<span>Stage</span>
-				<span></span>
-			</div>
-			<button
-				v-for="row in rows"
-				:key="row.sales_order"
-				type="button"
-				class="ff-row"
-				:aria-label="`Open ${row.sales_order}`"
-				@click="openRow(row)"
-			>
-				<span class="ff-cell ff-so">
-					<span class="ff-soname">{{ row.sales_order }}</span>
-					<span class="ff-customer">{{ row.customer_name || row.customer || '—' }}</span>
-				</span>
-				<span class="ff-cell" data-label="Delivery">{{ fmtDate(row.delivery_date) || '—' }}</span>
-				<span class="ff-cell" :data-label="`${dryLabel} / ${frozenLabel}`">
-					<span class="ff-pill ff-dry">{{ row.dry_count }} {{ dryLabel }}</span>
-					<span class="ff-pill ff-frozen">{{ row.frozen_count }} {{ frozenLabel }}</span>
-					<span v-if="row.unclassified_count" class="ff-pill ff-warn">
-						{{ row.unclassified_count }} needs attention
-					</span>
-				</span>
-				<span class="ff-cell" data-label="Pick Lists">
-					<span class="ff-doc">{{ docMain(row.pick_lists) }}</span>
-					<small>{{ docSub(row.pick_lists) }}</small>
-				</span>
-				<span class="ff-cell" data-label="DN Draft">
-					<span class="ff-doc">{{ docMain(row.delivery_notes) }}</span>
-					<small>{{ docSub(row.delivery_notes) }}</small>
-				</span>
-				<span class="ff-cell" data-label="Packing Slips">
-					<span class="ff-doc">{{ docMain(row.packing_slips) }}</span>
-					<small>{{ docSub(row.packing_slips) }}</small>
-				</span>
-				<span class="ff-cell" data-label="Stage">
-					<span class="ff-stage" :class="`ff-stage-${row.stage}`">{{ stageLabel(row.stage) }}</span>
-					<AlertTriangle
-						v-if="row.warnings?.length"
-						:size="14"
-						:stroke-width="2"
-						class="ff-warning"
-						:title="warningTitle(row)"
-					/>
-				</span>
-				<span class="ff-arrow"><ChevronRight :size="16" :stroke-width="2" /></span>
-			</button>
-		</div>
-
-		<div v-if="!error && total" class="ff-foot">
-			<span class="ff-range">Showing {{ rangeStart }}–{{ rangeEnd }} of {{ total }}</span>
-			<div class="ff-pager">
-				<button
-					type="button"
-					class="btn iconbtn"
-					:disabled="loading || page <= 1"
-					aria-label="Previous page"
-					@click="goPage(page - 1)"
-				>
-					<ChevronLeft :size="14" :stroke-width="2" />
-				</button>
-				<span>Page {{ page }} / {{ pageCount }}</span>
-				<button
-					type="button"
-					class="btn iconbtn"
-					:disabled="loading || page >= pageCount"
-					aria-label="Next page"
-					@click="goPage(page + 1)"
-				>
-					<ChevronRight :size="14" :stroke-width="2" />
-				</button>
-				<select
-					v-model.number="pageLength"
-					class="select ff-pagesize"
-					aria-label="Rows per page"
-					@change="onPageLength"
-				>
-					<option v-for="size in PAGE_SIZES" :key="size" :value="size">{{ size }} / page</option>
-				</select>
-			</div>
-		</div>
-
-		<FulfillmentDrawer
-			:open="Boolean(selectedSO)"
-			:sales-order="selectedSO"
-			@close="selectedSO = null"
-			@generated="load"
-		/>
 	</div>
 </template>
 
 <style scoped>
-.ff-page {
+.ff-page-container {
+	max-width: 1152px;
+	margin: 0 auto;
+	padding: 24px 28px;
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
 }
 
-.ff-head-actions,
-.ff-company,
-.ff-banner,
-.ff-stages,
-.ff-date,
-.ff-foot,
-.ff-pager {
-	display: flex;
-	align-items: center;
+.ff-date-badge {
+	padding: 6px 14px;
+	background: #ffffff;
+	border: 1px solid var(--line, #e2e8f0);
+	border-radius: 20px;
+	font-size: 12.5px;
+	color: var(--muted, #64748b);
+	font-weight: 550;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
-.ff-head-actions {
-	gap: 8px;
+/* Kartu utama persis Hand Request */
+.board-card {
+	border: 1px solid #e5e7eb;
+	border-radius: 8px;
+	background: #fff;
+	overflow: hidden;
+}
+
+/* Tabs status di kepala kartu */
+.board-tabs {
+	display: flex;
+	gap: 26px;
+	padding: 0 18px;
+	overflow-x: auto;
+	border-bottom: 1px solid #e5e7eb;
+	scrollbar-width: none;
+}
+.board-tabs::-webkit-scrollbar {
+	display: none;
+}
+.board-tab {
 	flex: none;
-}
-
-.ff-company {
-	gap: 8px;
-	font-size: 12px;
-	font-weight: 600;
-	color: var(--muted);
-}
-
-.ff-company .select {
-	min-width: 180px;
-	max-width: 240px;
-}
-
-.ff-banner {
-	gap: 10px;
-	padding: 12px 14px;
-	border: 1px solid #efd8a8;
-	border-radius: 12px;
-	background: #fff9ea;
-	color: #7a5200;
-	font-size: 13px;
-}
-
-.ff-banner > div {
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	min-width: 0;
-	flex: 1;
-}
-
-.ff-banner strong {
-	color: #5f4000;
-}
-
-.ff-filters {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-	padding: 12px;
-	border: 1px solid var(--line);
-	border-radius: 14px;
-	background: rgba(255, 255, 255, 0.55);
-}
-
-.ff-stages {
-	gap: 8px;
-	flex-wrap: wrap;
-}
-
-.ff-chip {
 	display: inline-flex;
 	align-items: center;
 	gap: 7px;
-	min-height: 34px;
-	padding: 7px 10px;
-	border: 1px solid var(--line);
-	border-radius: 999px;
-	background: var(--surface);
-	color: var(--ink);
+	height: 44px;
+	padding: 0 1px;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: none;
+	color: #6b7280;
 	font: inherit;
-	font-size: 12.5px;
+	font-size: 14px;
 	cursor: pointer;
 }
-
-.ff-chip:hover {
-	border-color: var(--brand-light);
+.board-tab:hover {
+	color: #111827;
 }
-
-.ff-chip.on {
-	border-color: var(--brand);
-	background: var(--brand-soft);
-	color: var(--brand);
-	font-weight: 650;
+.board-tab.on {
+	border-bottom-color: #111827;
+	color: #111827;
+	font-weight: 600;
 }
-
-.ff-chip-count {
-	min-width: 18px;
-	padding: 0 5px;
+.board-tab-count {
+	min-width: 20px;
+	padding: 0 6px;
 	border-radius: 999px;
-	background: var(--grey-bg);
-	color: var(--muted);
+	background: #f3f4f6;
+	color: #6b7280;
 	font-size: 11px;
 	line-height: 18px;
 	text-align: center;
 }
-
-.ff-chip.on .ff-chip-count {
-	background: var(--brand);
+.board-tab.on .board-tab-count {
+	background: #111827;
 	color: #fff;
 }
 
-.ff-toolbar {
-	gap: 8px;
-	align-items: center;
-	margin-bottom: 0;
-}
-
-.ff-toolbar .searchbox {
-	flex: 1 1 260px;
-	max-width: 420px;
-}
-
-.ff-filter-meta {
-	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: 8px;
-	flex-wrap: wrap;
-}
-
-.ff-filter-hint {
+/* Toolbar di bawah tabs */
+.board-toolbar {
 	margin: 0;
-	color: var(--muted);
-	font-size: 11.5px;
-	line-height: 1.35;
+	padding: 12px 18px;
+	border-bottom: 1px solid #e5e7eb;
+	background: #f9fafb;
+	display: flex;
+	gap: 12px;
+	align-items: center;
+	justify-content: space-between;
+}
+.board-toolbar .searchbox {
+	flex: 1 1 280px;
+	max-width: none;
+	position: relative;
+}
+.searchbox .search-ico {
+	position: absolute;
+	left: 11px;
+	top: 50%;
+	transform: translateY(-50%);
+	color: var(--faint, #94a3b8);
+	pointer-events: none;
+}
+.searchbox .input {
+	padding-left: 33px;
+	padding-right: 30px;
+	width: 100%;
+	height: 34px;
+	font-size: 13px;
+	border-radius: 6px;
+}
+.search-clear-btn {
+	position: absolute;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	background: none;
+	border: none;
+	color: var(--muted, #64748b);
+	cursor: pointer;
+	padding: 4px;
+	display: grid;
+	place-items: center;
 }
 
-.ff-filter-count {
-	color: var(--muted);
-	font-size: 11.5px;
-	font-weight: 600;
+.ff-toolbar-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
-.ff-date {
-	gap: 6px;
-	font-size: 12px;
-	color: var(--muted);
-	font-weight: 600;
+/* Filter Popover */
+.ff-filter-popover-wrap {
+	position: relative;
 }
 
-.ff-date .input {
-	width: 145px;
-}
-
-.ff-clear {
+.ff-filter-btn {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
-	flex: none;
-	padding: 0 10px;
-	font-size: 12.5px;
+	gap: 6px;
+	height: 34px;
+	padding: 0 12px;
+	font-size: 13px;
+	font-weight: 600;
+	border-radius: 6px;
+	border: 1px solid var(--line, #e2e8f0);
+	background: #ffffff;
 }
 
-.ff-table {
-	border: 1px solid var(--line);
-	border-radius: 14px;
-	background: rgba(255, 255, 255, 0.66);
+.ff-filter-btn.has-filters,
+.ff-filter-btn.is-open {
+	border-color: var(--brand, #3368a0);
+	color: var(--brand, #3368a0);
+	background: var(--brand-softer, #eff5f9);
+}
+
+.ff-filter-badge {
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: var(--brand, #3368a0);
+	color: #ffffff;
+	font-size: 10.5px;
+	font-weight: 700;
+	display: grid;
+	place-items: center;
+}
+
+.ff-floating-popover {
+	position: absolute;
+	top: calc(100% + 8px);
+	right: 0;
+	z-index: 50;
+	width: 320px;
+	background: #ffffff;
+	border: 1px solid var(--line, #e2e8f0);
+	border-radius: 12px;
+	box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
+	display: flex;
+	flex-direction: column;
 	overflow: hidden;
 }
 
-.ff-thead,
-.ff-row {
-	display: grid;
-	grid-template-columns:
-		minmax(190px, 1.45fr)
-		100px
-		minmax(170px, 1.2fr)
-		minmax(90px, 0.8fr)
-		minmax(90px, 0.8fr)
-		minmax(105px, 0.9fr)
-		minmax(112px, 0.9fr)
-		24px;
-	gap: 10px;
+.popover-head {
+	display: flex;
 	align-items: center;
+	justify-content: space-between;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--line, #f1f5f9);
+	background: #ffffff;
 }
 
-.ff-thead {
-	padding: 10px 14px;
-	border-bottom: 1px solid var(--line);
-	background: var(--grey-bg);
-	color: var(--muted);
-	font-size: 10.5px;
+.popover-title {
+	font-size: 13px;
 	font-weight: 700;
-	letter-spacing: 0.055em;
-	text-transform: uppercase;
+	color: var(--ink, #1e293b);
 }
 
-.ff-row {
-	width: 100%;
-	padding: 11px 14px;
-	border: 0;
-	border-top: 1px solid var(--line);
-	background: transparent;
-	color: var(--ink);
-	font: inherit;
-	text-align: left;
+.popover-reset-btn {
+	background: none;
+	border: none;
+	color: #ef4444;
+	font-size: 12px;
+	font-weight: 600;
 	cursor: pointer;
 }
 
-.ff-thead + .ff-row {
-	border-top: 0;
+.popover-body {
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
 }
 
-.ff-row:hover {
-	background: var(--brand-softer);
-	box-shadow: inset 2.5px 0 0 var(--brand-light);
+.popover-label {
+	font-size: 11.5px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--muted, #64748b);
+	margin-bottom: 6px;
+	display: block;
 }
 
-.ff-row:focus-visible {
-	outline-offset: -2px;
+.popover-date-grid {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
 }
 
-.ff-table.is-loading {
-	opacity: 0.66;
-	pointer-events: none;
+.date-input-wrap {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.date-hint {
+	font-size: 12px;
+	color: var(--muted, #64748b);
+	width: 55px;
+}
+
+.popover-foot {
+	padding: 10px 16px 14px;
+}
+
+.w-full {
+	width: 100%;
+}
+
+.iconbtn {
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	display: grid;
+	place-items: center;
+}
+.iconbtn .spin {
+	animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+/* Grid Kolom Tabel (5 kolom data + 1 chevron) */
+.ff-thead {
+	display: grid;
+	grid-template-columns: 200px minmax(220px, 1fr) 130px 140px 160px 32px;
+	gap: 16px;
+	padding: 12px 20px;
+	background: #ffffff;
+	border-bottom: 1px solid #e5e7eb;
+	font-size: 11px;
+	font-weight: 750;
+	color: var(--muted, #64748b);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.ff-tbody {
+	display: flex;
+	flex-direction: column;
+}
+
+.ff-trow {
+	display: grid;
+	grid-template-columns: 200px minmax(220px, 1fr) 130px 140px 160px 32px;
+	gap: 16px;
+	padding: 13px 20px;
+	align-items: center;
+	border-bottom: 1px solid #f1f5f9;
+	cursor: pointer;
+	transition: background 0.12s ease;
+}
+
+.ff-trow:last-child {
+	border-bottom: none;
+}
+
+.ff-trow:hover {
+	background: #f8fafc;
 }
 
 .ff-cell {
 	display: flex;
-	flex-direction: column;
+	align-items: center;
 	min-width: 0;
 	font-size: 13px;
+	color: var(--ink, #1e293b);
 }
 
-.ff-so {
+.ff-cell-so strong {
+	color: var(--ink, #1e293b);
+	font-size: 13.5px;
+	letter-spacing: -0.01em;
+}
+
+.ff-cell-customer {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
 	gap: 2px;
 }
 
-.ff-soname {
-	font-weight: 700;
-	color: var(--brand);
-}
-
-.ff-customer {
-	overflow: hidden;
-	color: var(--muted);
-	font-size: 12px;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.ff-cell small {
-	margin-top: 2px;
-	color: var(--muted);
-	font-size: 11px;
-}
-
-.ff-doc {
-	font-weight: 650;
-}
-
-.ff-pill {
-	display: inline-flex;
-	align-items: center;
-	width: fit-content;
-	margin: 1px 0;
-	padding: 2px 7px;
-	border-radius: 999px;
-	font-size: 11px;
+.customer-name {
 	font-weight: 600;
-	line-height: 16px;
+	color: var(--ink, #1e293b);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
 }
 
-.ff-dry {
-	background: #eaf0ff;
-	color: #36519a;
-}
-
-.ff-frozen {
-	background: #e5f6f1;
-	color: #146b57;
-}
-
-.ff-warn {
-	background: #fff1d6;
-	color: #8a5a00;
-}
-
-.ff-stage {
-	display: inline-flex;
-	width: fit-content;
-	padding: 3px 8px;
-	border-radius: 999px;
+.customer-code {
 	font-size: 11px;
-	font-weight: 650;
-	line-height: 16px;
+	color: var(--muted, #64748b);
 }
 
-.ff-stage-open {
-	background: var(--grey-bg);
-	color: var(--muted);
+.ff-cell-date {
+	color: var(--muted, #64748b);
+	font-size: 12.5px;
 }
 
-.ff-stage-picking {
-	background: #e9f2ff;
-	color: #1d5d9e;
-}
-
-.ff-stage-packing {
-	background: #fff2d9;
-	color: #8a5a00;
-}
-
-.ff-stage-ready {
-	background: #e4f6e9;
-	color: #1f6b3a;
-}
-
-.ff-stage-partially_delivered {
-	background: #f0eaff;
-	color: #5d3f9e;
-}
-
-.ff-stage-exception {
-	background: #ffe9e6;
-	color: #9b2c1f;
-}
-
-.ff-warning {
-	margin-left: 5px;
-	color: #a15c00;
-}
-
-.ff-arrow {
-	display: grid;
-	place-items: center;
-	color: var(--faint);
-}
-
-.ff-row:hover .ff-arrow {
-	color: var(--brand-light);
-	transform: translateX(1px);
-}
-
-.ff-state {
+.ff-cell-groups {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	padding: 24px;
-	border: 1px solid var(--line);
-	border-radius: 14px;
-	background: rgba(255, 255, 255, 0.66);
-	color: var(--muted);
+	gap: 6px;
 }
 
-.ff-state > div {
-	flex: 1;
+.group-pill {
+	font-size: 11px;
+	font-weight: 600;
+	padding: 2px 8px;
+	border-radius: 4px;
+}
+
+.pill-dry {
+	background: #e0f2fe;
+	color: #0369a1;
+}
+
+.pill-frozen {
+	background: #e0f2fe;
+	color: #0284c7;
+}
+
+.ff-cell-arrow {
+	color: var(--muted, #94a3b8);
+	display: grid;
+	place-items: center;
+}
+
+/* Pagination Bar persis Hand Request */
+.board-pagination {
+	border-top: 1px solid #e5e7eb;
+	background: #fff;
+}
+.pg-num {
+	font-size: 12.5px;
+	color: var(--muted, inherit);
+	font-variant-numeric: tabular-nums;
+	min-width: 52px;
+	text-align: center;
+}
+
+/* Empty / State */
+.ff-state {
+	padding: 56px 20px;
+	background: #ffffff;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	text-align: center;
+	color: var(--muted, #64748b);
 }
 
 .ff-state strong {
-	display: block;
-	color: var(--ink);
+	color: var(--ink, #1e293b);
+	font-size: 16px;
 }
 
-.ff-state p {
-	margin-top: 3px;
+.skel-box {
+	height: 14px;
+	border-radius: 4px;
+	background: var(--line, #f1f5f9);
+	animation: pulse 1.5s infinite ease-in-out;
+}
+.w-15 { width: 15%; }
+.w-20 { width: 20%; }
+.w-25 { width: 25%; }
+.w-50 { width: 50%; }
+
+@keyframes pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.5; }
 }
 
-.ff-error {
-	color: #9b2c1f;
-	border-color: #f0c7c0;
-	background: #fff6f4;
-}
-
-.ff-error strong {
-	color: #7e2117;
-}
-
-.ff-empty {
-	justify-content: center;
-	text-align: left;
-}
-
-.ff-skeleton-row {
-	cursor: default;
-	pointer-events: none;
-}
-
-.ff-skel {
-	height: 12px;
-	border-radius: 6px;
-	background: linear-gradient(90deg, var(--grey-bg) 25%, #f7f8fa 50%, var(--grey-bg) 75%);
-	background-size: 200% 100%;
-	animation: ff-shimmer 1.2s linear infinite;
-}
-
-.ff-skel-wide {
-	width: 70%;
-}
-
-.ff-foot {
-	justify-content: space-between;
-	gap: 12px;
-	font-size: 12px;
-	color: var(--muted);
-}
-
-.ff-pager {
-	gap: 8px;
-}
-
-.ff-pagesize {
-	width: auto;
-	min-width: 100px;
-}
-
-.spin {
-	animation: ff-spin 0.9s linear infinite;
-}
-
-@keyframes ff-shimmer {
-	to {
-		background-position: -200% 0;
-	}
-}
-
-@keyframes ff-spin {
-	to {
-		transform: rotate(360deg);
-	}
-}
-
-@media (max-width: 1100px) {
-	.ff-page > .page-head {
-		flex-wrap: wrap;
-		align-items: flex-start;
-	}
-
-	.ff-page > .page-head .ph-left {
-		flex: 1 1 100%;
-		min-width: 0;
-	}
-
-	.ff-head-actions {
-		width: 100%;
-		justify-content: space-between;
-	}
-
-	.ff-company {
-		flex: 1;
-	}
-
-	.ff-company .select {
-		flex: 1;
-		max-width: none;
-	}
-
-	.ff-banner {
-		align-items: flex-start;
-		flex-wrap: wrap;
-	}
-
-	.ff-banner .btn {
-		margin-left: 28px;
-	}
-
-	.ff-stages {
-		flex-wrap: wrap;
-		overflow: visible;
-	}
-
-	.ff-chip {
-		flex: 0 1 auto;
-	}
-
-	.ff-toolbar {
-		flex-wrap: wrap;
-	}
-
-	.ff-toolbar .searchbox {
-		flex: 1 1 100%;
-		max-width: none;
-	}
-
-	.ff-date {
-		flex: 1;
-	}
-
-	.ff-date .input {
-		flex: 1;
-		width: auto;
-		min-width: 0;
-	}
-
-	.ff-table {
-		border: 0;
-		background: transparent;
-		overflow: visible;
-	}
-
-	.ff-thead {
-		display: none;
-	}
-
-	.ff-row {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 8px 12px;
-		margin-bottom: 10px;
-		padding: 14px;
-		border: 1px solid var(--line);
-		border-radius: 14px;
-		background: rgba(255, 255, 255, 0.76);
-	}
-
-	.ff-row:hover {
-		box-shadow: none;
-	}
-
-	.ff-so {
-		grid-column: 1 / -1;
-	}
-
-	.ff-cell::before {
-		content: attr(data-label);
-		display: block;
-		margin-bottom: 2px;
-		color: var(--muted);
-		font-size: 10px;
-		font-weight: 700;
-		letter-spacing: 0.045em;
-		text-transform: uppercase;
-	}
-
-	.ff-so::before,
-	.ff-arrow::before {
-		display: none;
-	}
-
-	.ff-arrow {
-		display: none;
-	}
-
-	.ff-foot {
-		flex-wrap: wrap;
-	}
-
-	.ff-pager {
-		width: 100%;
-		flex-wrap: wrap;
-		justify-content: space-between;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.ff-skel,
-		.spin {
-			animation: none;
-		}
-	}
-}
-
-@media (min-width: 901px) and (max-width: 1100px) {
-	.ff-row {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-	}
-
-	.ff-so {
-		grid-column: 1 / -1;
-	}
-}
-
-@media (max-width: 560px) {
-	.ff-page {
-		gap: 12px;
-	}
-
-	.ff-head-actions {
-		gap: 10px;
-	}
-
-	.ff-company {
-		min-width: 0;
-	}
-
-	.ff-company .select {
-		min-width: 0;
-	}
-
-	.ff-banner .btn {
-		margin-left: 0;
-	}
-
-	.ff-toolbar {
-		gap: 10px;
-	}
-
-	.ff-date {
-		flex: 1 1 100%;
-	}
-
-	.ff-row {
-		grid-template-columns: 1fr;
-		gap: 6px;
-		padding: 12px;
-	}
-
-	.ff-so {
-		grid-column: auto;
-	}
-
-	.ff-cell {
-		display: grid;
-		grid-template-columns: 92px minmax(0, 1fr);
-		align-items: start;
-		gap: 8px;
-	}
-
-	.ff-cell::before {
-		grid-column: 1;
-		grid-row: 1 / span 4;
-		margin-bottom: 0;
-		padding-top: 2px;
-	}
-
-	.ff-cell > * {
-		grid-column: 2;
-	}
-
-	.ff-so {
-		display: flex;
-	}
-
-	.ff-foot {
-		flex-direction: column;
-		align-items: flex-start;
-	}
-
-	.ff-pager {
-		justify-content: flex-start;
-	}
+@media (max-width: 820px) {
+	.board-tabs { gap: 12px; padding: 0 12px; }
+	.board-tab { gap: 5px; font-size: 13px; }
+	.board-toolbar { padding: 10px 14px; }
+	.board-toolbar .searchbox { flex: 1 1 100%; }
 }
 </style>

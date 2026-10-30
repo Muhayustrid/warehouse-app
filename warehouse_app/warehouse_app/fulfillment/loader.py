@@ -13,7 +13,11 @@ from warehouse_app.warehouse_app.fulfillment.generation import (
 	GenerationError,
 	pending_stock_qty,
 )
-from warehouse_app.warehouse_app.fulfillment.profile import get_profile, resolve_frozen
+from warehouse_app.warehouse_app.fulfillment.profile import (
+	get_profile,
+	resolve_dry_exceptions,
+	resolve_frozen,
+)
 from warehouse_app.warehouse_app.fulfillment.queue import (
 	derive_stage,
 	group_counts,
@@ -21,7 +25,7 @@ from warehouse_app.warehouse_app.fulfillment.queue import (
 	safe_classify,
 )
 
-STAGES = ("open", "picking", "packing", "ready", "partially_delivered", "exception")
+STAGES = ("open", "picking", "packing", "ready", "partially_delivered", "completed", "exception")
 ROLES = {"Stock Manager", "Stock User", "System Manager"}
 
 
@@ -44,6 +48,7 @@ def load_order_queue(
 
 	profile = get_profile(company)
 	frozen = resolve_frozen(profile)
+	dry_exceptions = resolve_dry_exceptions(profile)
 	profile_ok = frozen is not None
 	profile_payload = _profile_payload(profile, profile_ok)
 	profile_warnings = _profile_warnings(profile, frozen)
@@ -60,11 +65,15 @@ def load_order_queue(
 			continue
 		has_outstanding = any(_deliverable_outstanding(item) > 0 for item in items)
 		if not is_eligible(
-			so.get("docstatus"), so.get("status"), so.get("per_delivered"), has_outstanding
+			so.get("docstatus"),
+			so.get("status"),
+			so.get("per_delivered"),
+			has_outstanding,
+			allow_completed=True,
 		):
 			continue
 
-		classified = [_classify_item(item, frozen) for item in items]
+		classified = [_classify_item(item, frozen, dry_exceptions=dry_exceptions) for item in items]
 		counts = group_counts(classified)
 		warnings = sorted(
 			set(profile_warnings + [item["reason"] for item in classified if item.get("reason")])
@@ -91,6 +100,7 @@ def load_order_queue(
 				"transaction_date": so.get("transaction_date"),
 				"delivery_date": so.get("delivery_date"),
 				"stage": stage_value,
+				"run": _active_run_summary(so["name"]),
 				"dry_count": counts["dry"],
 				"frozen_count": counts["frozen"],
 				"unclassified_count": counts["unclassified"],
@@ -139,6 +149,7 @@ def load_order_preview(sales_order: str) -> dict:
 
 	profile = get_profile(so.company)
 	frozen = resolve_frozen(profile)
+	dry_exceptions = resolve_dry_exceptions(profile)
 	profile_ok = frozen is not None
 	profile_warnings = _profile_warnings(profile, frozen)
 	item_groups = _item_group_map([item.item_code for item in so.items])
@@ -146,7 +157,13 @@ def load_order_preview(sales_order: str) -> dict:
 	groups = {"dry": [], "frozen": [], "unclassified": []}
 	for row in so.items:
 		item_group = item_groups.get(row.item_code)
-		classification, reason = safe_classify(item_group, frozen)
+		classification, reason = safe_classify(
+			item_group,
+			frozen,
+			item_code=row.item_code,
+			dry_exceptions=dry_exceptions,
+			item_override=getattr(row, "custom_fulfillment_category", None),
+		)
 		item = {
 			"sales_order_item": row.name,
 			"item_code": row.item_code,
@@ -262,6 +279,7 @@ def _positive_int(value, field: str) -> int:
 
 def _profile_payload(profile, frozen: set[str] | None) -> dict:
 	enabled = bool(profile and profile.get("enabled"))
+	val = profile.get("enable_packing_slip") if profile else None
 	return {
 		"configured": bool(enabled and profile.get("frozen_item_group") and frozen is not None),
 		"enabled": enabled,
@@ -269,6 +287,7 @@ def _profile_payload(profile, frozen: set[str] | None) -> dict:
 		"dry_display_name": (profile.get("dry_display_name") if profile else None) or "Dry",
 		"frozen_display_name": (profile.get("frozen_display_name") if profile else None)
 		or "Frozen",
+		"enable_packing_slip": 1 if val is None else int(val),
 	}
 
 
@@ -289,7 +308,6 @@ def _query_sales_orders(
 		["docstatus", "=", 1],
 		["company", "=", company],
 		["status", "not in", ["Closed", "Cancelled"]],
-		["per_delivered", "<", 100],
 	]
 	if from_date:
 		filters.append(["transaction_date", ">=", from_date])
@@ -321,6 +339,7 @@ def _query_sales_orders(
 	)
 	rows.sort(
 		key=lambda row: (
+			flt(row.get("per_delivered")) >= 100,
 			not bool(row.get("delivery_date")),
 			row.get("delivery_date") or "",
 			row.get("name"),
@@ -522,8 +541,18 @@ def _get_docs(doctype: str, names: list[str], fields: list[str]) -> list[dict]:
 	return sorted(rows, key=lambda row: row.get("creation") or "")
 
 
-def _classify_item(item: dict, frozen: set[str] | None) -> dict:
-	classification, reason = safe_classify(item.get("item_group"), frozen)
+def _classify_item(
+	item: dict,
+	frozen: set[str] | None,
+	dry_exceptions: set[str] | None = None,
+) -> dict:
+	classification, reason = safe_classify(
+		item.get("item_group"),
+		frozen,
+		item_code=item.get("item_code"),
+		dry_exceptions=dry_exceptions,
+		item_override=item.get("custom_fulfillment_category"),
+	)
 	return {**item, "classification": classification, "reason": reason}
 
 
@@ -596,7 +625,16 @@ def _active_run_summary(sales_order: str) -> dict | None:
 		["name", "status", "dry_pick_list", "frozen_pick_list"],
 		as_dict=True,
 	)
-	return dict(row) if row else None
+	if not row:
+		return None
+	# If run references pick lists that were deleted, it is an orphaned run
+	has_dry = bool(row.get("dry_pick_list"))
+	has_frozen = bool(row.get("frozen_pick_list"))
+	dry_exists = frappe.db.exists("Pick List", row["dry_pick_list"]) if has_dry else False
+	frozen_exists = frappe.db.exists("Pick List", row["frozen_pick_list"]) if has_frozen else False
+	if (has_dry or has_frozen) and not (dry_exists or frozen_exists):
+		return None
+	return dict(row)
 
 
 def _stage_for(

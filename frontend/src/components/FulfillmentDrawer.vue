@@ -1,9 +1,36 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertTriangle, ExternalLink, LoaderCircle, RefreshCw, X } from 'lucide-vue-next'
-import { fetchOrderPreview, generateFulfillmentRun, stageLabel } from '@/data/fulfillment'
+import {
+	AlertTriangle,
+	Check,
+	ChevronDown,
+	ExternalLink,
+	LoaderCircle,
+	Package,
+	Printer,
+	RefreshCw,
+	X,
+} from 'lucide-vue-next'
+import {
+	completePicking,
+	createDeliveryNote,
+	fetchOrderPreview,
+	fetchRunWorkspace,
+	generateFulfillmentRun,
+	packAll,
+	resetPacking,
+	savePicking,
+	stageLabel,
+	submitDeliveryNote,
+} from '@/data/fulfillment'
 import { fmtDate, fmtQty } from '@/lib/format'
 import { toast } from '@/lib/toast'
+
+import SplitConfirmationModal from '@/components/fulfillment/SplitConfirmationModal.vue'
+import PickingPanel from '@/components/fulfillment/PickingPanel.vue'
+import DeliveryPanel from '@/components/fulfillment/DeliveryPanel.vue'
+import PackingPanel from '@/components/fulfillment/PackingPanel.vue'
+import ReviewPanel from '@/components/fulfillment/ReviewPanel.vue'
 
 const props = defineProps({
 	open: { type: Boolean, default: false },
@@ -12,13 +39,44 @@ const props = defineProps({
 const emit = defineEmits(['close', 'generated'])
 
 const data = ref(null)
+const workspace = ref(null)
+
+const enablePackingSlip = computed(() => {
+	const prof = workspace.value?.profile || data.value?.profile
+	if (!prof) return true
+	if (prof.enable_packing_slip === 0 || prof.enable_packing_slip === false || prof.enable_packing_slip === '0') {
+		return false
+	}
+	return true
+})
+
+const STEPS = computed(() => {
+	if (!enablePackingSlip.value) {
+		return [
+			{ key: 'picking', label: '1. Picking' },
+			{ key: 'delivery', label: '2. Delivery' },
+			{ key: 'review', label: '3. Review' },
+		]
+	}
+	return [
+		{ key: 'picking', label: '1. Picking' },
+		{ key: 'delivery', label: '2. Delivery' },
+		{ key: 'packing', label: '3. Packing' },
+		{ key: 'review', label: '4. Review' },
+	]
+})
 const loading = ref(false)
+const busy = ref(false)
 const error = ref('')
 const closeBtn = ref(null)
 const drawer = ref(null)
 const generating = ref(false)
 const generateError = ref('')
 const idempotencyKey = ref('')
+const activeTab = ref('picking')
+const showSplitModal = ref(false)
+const reviewPanelRef = ref(null)
+
 let loadToken = 0
 
 const REASON_LABELS = {
@@ -54,8 +112,27 @@ const REASONS = {
 	item_group_missing: 'Item Group is missing or unknown.',
 }
 
-const dryLabel = computed(() => data.value?.profile?.dry_display_name || 'Dry')
-const frozenLabel = computed(() => data.value?.profile?.frozen_display_name || 'Frozen')
+const ACTION_REASONS = {
+	NO_PICK_LIST: 'No active Pick Lists exist.',
+	PL_NOT_SUBMITTED: 'All Pick Lists must be submitted first.',
+	SHORT_PICK_BLOCKED: 'Short pick is blocked by policy.',
+	SHORT_PICK_APPROVAL_PENDING: 'Waiting for short-pick approval.',
+	SHORT_PICK_APPROVAL_REJECTED: 'Short pick request was rejected.',
+	SHORT_PICK_STALE_APPROVAL: 'Pick quantities changed since approval.',
+}
+
+const dryLabel = computed(
+	() =>
+		workspace.value?.profile?.dry_display_name ||
+		data.value?.profile?.dry_display_name ||
+		'Dry',
+)
+const frozenLabel = computed(
+	() =>
+		workspace.value?.profile?.frozen_display_name ||
+		data.value?.profile?.frozen_display_name ||
+		'Frozen',
+)
 const groups = computed(() =>
 	['dry', 'frozen', 'unclassified'].map((key) => ({
 		key,
@@ -68,7 +145,16 @@ const groups = computed(() =>
 		items: data.value?.groups?.[key] || [],
 	})),
 )
-const hasActiveRun = computed(() => Boolean(data.value?.run))
+
+const activeRunName = computed(() => {
+	if (workspace.value?.run?.name) return workspace.value.run.name
+	if (data.value?.run?.name) return data.value.run.name
+	if (typeof data.value?.run === 'string') return data.value.run
+	return null
+})
+const hasActiveRun = computed(() => Boolean(activeRunName.value))
+const isWorkspaceMode = computed(() => Boolean(workspace.value?.run))
+
 const canGenerate = computed(
 	() =>
 		Boolean(data.value?.can_generate) &&
@@ -97,9 +183,11 @@ watch(
 		if (!open || !salesOrder) {
 			loadToken += 1
 			data.value = null
+			workspace.value = null
 			error.value = ''
 			generateError.value = ''
 			generating.value = false
+			showSplitModal.value = false
 			idempotencyKey.value = ''
 			loading.value = false
 			document.body.style.overflow = ''
@@ -108,36 +196,69 @@ watch(
 		document.body.style.overflow = 'hidden'
 		idempotencyKey.value = newIdempotencyKey()
 		generateError.value = ''
-		await load(salesOrder)
+		activeTab.value = 'picking'
+
+		await loadInitial(salesOrder)
 		await nextTick()
 		closeBtn.value?.focus()
 	},
 	{ immediate: true },
 )
 
-async function load(salesOrder = props.salesOrder) {
-	if (!salesOrder) {
-		return
-	}
+async function loadInitial(salesOrder) {
+	if (!salesOrder) return
 	const token = ++loadToken
 	loading.value = true
 	error.value = ''
 	try {
-		const result = await fetchOrderPreview(salesOrder)
-		if (token !== loadToken) {
-			return
+		const res = await fetchOrderPreview(salesOrder)
+		if (token !== loadToken) return
+		data.value = res
+
+		const existingRun = res.run?.name || (typeof res.run === 'string' ? res.run : null)
+		if (existingRun) {
+			const ws = await fetchRunWorkspace(existingRun)
+			if (token !== loadToken) return
+			workspace.value = ws
+			syncTabToRunState(ws)
+		} else {
+			workspace.value = null
 		}
-		data.value = result
 	} catch (e) {
-		if (token !== loadToken) {
-			return
-		}
-		data.value = null
-		error.value = e.message || 'Failed to load this sales order.'
+		if (token !== loadToken) return
+		error.value = e.message || 'Failed to load details.'
 	} finally {
 		if (token === loadToken) {
 			loading.value = false
 		}
+	}
+}
+
+async function refreshWorkspace() {
+	if (!activeRunName.value) {
+		await loadInitial(props.salesOrder)
+		return
+	}
+	try {
+		const ws = await fetchRunWorkspace(activeRunName.value)
+		workspace.value = ws
+		syncTabToRunState(ws)
+	} catch (e) {
+		toast.error(e.message || 'Failed to refresh workspace.')
+	}
+}
+
+function syncTabToRunState(ws) {
+	if (!ws) return
+	const actionKey = ws.next_action?.key || ws.next_action?.action
+	if (actionKey === 'create_delivery_note') {
+		activeTab.value = 'delivery'
+	} else if (actionKey === 'pack_all') {
+		activeTab.value = 'packing'
+	} else if (actionKey === 'submit_delivery_note' || actionKey === 'done') {
+		activeTab.value = 'review'
+	} else {
+		activeTab.value = 'picking'
 	}
 }
 
@@ -146,9 +267,7 @@ function close() {
 }
 
 async function generate() {
-	if (!canGenerate.value || !props.salesOrder) {
-		return
-	}
+	if (!canGenerate.value || !props.salesOrder) return
 	if (!idempotencyKey.value) {
 		idempotencyKey.value = newIdempotencyKey()
 	}
@@ -161,7 +280,15 @@ async function generate() {
 			expectedSoModified:
 				data.value?.modified || data.value?.sales_order?.modified || '',
 		})
-		await load(props.salesOrder)
+
+		const runName = typeof result?.run === 'string' ? result.run : (result?.run?.name || result?.name)
+		if (runName) {
+			const ws = await fetchRunWorkspace(runName)
+			workspace.value = ws
+			showSplitModal.value = true
+			activeTab.value = 'picking'
+		}
+
 		emit('generated', result)
 		toast.success(
 			result.reused
@@ -171,10 +298,8 @@ async function generate() {
 	} catch (e) {
 		const message = e.message || 'Failed to generate Pick Lists.'
 		if (message.startsWith('SO_CHANGED')) {
-			// The old request key belongs to the previous SO hash; retrying it would
-			// only produce an idempotency mismatch.
 			idempotencyKey.value = newIdempotencyKey()
-			await load(props.salesOrder)
+			await loadInitial(props.salesOrder)
 			generateError.value = 'The Sales Order changed. Review the refreshed detail and try again.'
 		} else {
 			generateError.value = generateErrorMessage(message)
@@ -182,6 +307,185 @@ async function generate() {
 		toast.error(generateError.value)
 	} finally {
 		generating.value = false
+	}
+}
+
+function printSingle(groupKey) {
+	const group = workspace.value?.groups?.[groupKey]
+	if (!group?.pick_list) {
+		toast.error(`No ${groupKey} Pick List available.`)
+		return
+	}
+	const formatKey = groupKey === 'dry' ? 'dry_print_format' : 'frozen_print_format'
+	const format = workspace.value?.profile?.[formatKey]
+	let url = `/printview?doctype=Pick List&name=${encodeURIComponent(group.pick_list)}`
+	if (format) {
+		url += `&format=${encodeURIComponent(format)}`
+	}
+	window.open(url, '_blank', 'noopener')
+}
+
+function printBoth() {
+	if (workspace.value?.groups?.dry?.pick_list) {
+		printSingle('dry')
+	}
+	if (workspace.value?.groups?.frozen?.pick_list) {
+		setTimeout(() => {
+			printSingle('frozen')
+		}, 300)
+	}
+}
+
+// Stepper status helpers
+function isStepComplete(stepKey) {
+	if (!workspace.value) return false
+	if (stepKey === 'picking') {
+		const drySubmitted =
+			!workspace.value.groups?.dry?.pick_list ||
+			workspace.value.groups.dry.docstatus === 1
+		const frozenSubmitted =
+			!workspace.value.groups?.frozen?.pick_list ||
+			workspace.value.groups.frozen.docstatus === 1
+		return (
+			drySubmitted &&
+			frozenSubmitted &&
+			Boolean(
+				workspace.value.groups?.dry?.pick_list ||
+				workspace.value.groups?.frozen?.pick_list,
+			)
+		)
+	}
+	if (stepKey === 'delivery') {
+		return Boolean(workspace.value.delivery_note)
+	}
+	if (stepKey === 'packing') {
+		return Boolean(workspace.value.packing?.fully_packed)
+	}
+	if (stepKey === 'review') {
+		return workspace.value.run?.status === 'DISPATCHED'
+	}
+	return false
+}
+
+function getStepStatus(stepKey) {
+	if (isStepComplete(stepKey)) return 'Selesai'
+	if (activeTab.value === stepKey) return 'Aktif'
+	return 'Menunggu'
+}
+
+// Workspace panel action handlers
+async function handleSavePicking({ rows, expected_modified }) {
+	if (busy.value || loading.value) return
+	busy.value = true
+	try {
+		await savePicking(workspace.value.run.name, rows, expected_modified)
+		toast.success('Picking quantities saved.')
+		await refreshWorkspace()
+	} catch (e) {
+		toast.error(e.message || 'Failed to save picking.')
+	} finally {
+		busy.value = false
+	}
+}
+
+async function handleFinishPicking(payload = {}) {
+	if (busy.value || loading.value) return
+	const shortPickReason = payload?.short_pick_reason || null
+	if (workspace.value?.short_pick?.blocker && !shortPickReason) {
+		toast.error(ACTION_REASONS[workspace.value.short_pick.blocker] || workspace.value.short_pick.blocker)
+		activeTab.value = 'picking'
+		return
+	}
+	busy.value = true
+	try {
+		if (payload?.rows && payload.rows.length) {
+			await savePicking(workspace.value.run.name, payload.rows, payload.expected_modified)
+			await refreshWorkspace()
+		}
+
+		let expectedModified = payload?.expected_modified
+		if (!expectedModified || (payload?.rows && payload.rows.length)) {
+			expectedModified = {}
+			for (const group of [workspace.value?.groups?.dry, workspace.value?.groups?.frozen]) {
+				if (group?.pick_list && group.docstatus === 0 && group.modified) {
+					expectedModified[group.pick_list] = group.modified
+				}
+			}
+		}
+		await completePicking(workspace.value.run.name, expectedModified, shortPickReason)
+		toast.success(shortPickReason ? 'Picking completed with short stock note.' : 'Picking completed successfully.')
+		await refreshWorkspace()
+		activeTab.value = 'delivery'
+	} catch (e) {
+		toast.error(e.message || 'Failed to finish picking.')
+	} finally {
+		busy.value = false
+	}
+}
+
+async function handleCreateDeliveryNote() {
+	if (busy.value || loading.value) return
+	busy.value = true
+	try {
+		const key = newIdempotencyKey()
+		await createDeliveryNote(workspace.value.run.name, key)
+		toast.success('Delivery Note created.')
+		await refreshWorkspace()
+		activeTab.value = enablePackingSlip.value ? 'packing' : 'review'
+	} catch (e) {
+		toast.error(e.message || 'Failed to create Delivery Note.')
+	} finally {
+		busy.value = false
+	}
+}
+
+async function handlePackAll() {
+	if (busy.value || loading.value) return
+	busy.value = true
+	try {
+		await packAll(workspace.value.run.name, workspace.value.delivery_note?.modified)
+		toast.success('All items packed.')
+		await refreshWorkspace()
+		if (workspace.value?.packing?.fully_packed) {
+			activeTab.value = 'review'
+		}
+	} catch (e) {
+		toast.error(e.message || 'Failed to pack items.')
+	} finally {
+		busy.value = false
+	}
+}
+
+async function handleResetPacking() {
+	if (busy.value || loading.value) return
+	busy.value = true
+	try {
+		await resetPacking(workspace.value.run.name, workspace.value.delivery_note?.modified)
+		toast.success('Packing reset.')
+		await refreshWorkspace()
+	} catch (e) {
+		toast.error(e.message || 'Failed to reset packing.')
+	} finally {
+		busy.value = false
+	}
+}
+
+async function handleSubmitDeliveryNote() {
+	if (busy.value || loading.value) return
+	busy.value = true
+	try {
+		const key = newIdempotencyKey()
+		await submitDeliveryNote(
+			workspace.value.run.name,
+			key,
+			workspace.value.delivery_note?.modified,
+		)
+		toast.success('Delivery Note submitted. Run dispatched.')
+		await refreshWorkspace()
+	} catch (e) {
+		toast.error(e.message || 'Failed to submit Delivery Note.')
+	} finally {
+		busy.value = false
 	}
 }
 
@@ -209,15 +513,17 @@ function newIdempotencyKey() {
 
 function onKey(event) {
 	if (props.open && event.key === 'Escape') {
+		if (showSplitModal.value) {
+			showSplitModal.value = false
+			return
+		}
 		close()
 	}
 }
 
 function openNative(doctype, name) {
 	const slug = DOC_SLUGS[doctype]
-	if (!slug) {
-		return
-	}
+	if (!slug) return
 	window.open(`/app/${slug}/${encodeURIComponent(name)}`, '_blank', 'noopener')
 }
 
@@ -237,28 +543,69 @@ function reasonText(reason) {
 				<aside
 					ref="drawer"
 					class="ff-drawer"
+					:class="{ 'ff-drawer-wide': isWorkspaceMode }"
 					role="dialog"
 					aria-modal="true"
 					aria-labelledby="ff-drawer-title"
 				>
+					<!-- Drawer Header -->
 					<header class="ff-drawer-head">
 						<div class="ff-drawer-title">
-							<p class="ff-eyebrow">Sales Order</p>
-							<h2 id="ff-drawer-title">{{ salesOrder }}</h2>
-							<p v-if="data" class="ff-drawer-customer">
-								{{ data.sales_order.customer_name || data.sales_order.customer }}
-								<span v-if="data.sales_order.company"> · {{ data.sales_order.company }}</span>
+							<p class="ff-eyebrow">
+								Sales Order
+								<span v-if="workspace?.run?.name"> · Run {{ workspace.run.name }}</span>
+							</p>
+							<h2 id="ff-drawer-title">
+								{{ salesOrder }}
+								<a
+									class="ff-so-desk-link"
+									:href="`/app/sales-order/${encodeURIComponent(salesOrder)}`"
+									target="_blank"
+									rel="noopener"
+									title="Buka Sales Order di Desk"
+								>
+									<ExternalLink :size="14" :stroke-width="2" />
+								</a>
+							</h2>
+							<p v-if="workspace || data" class="ff-drawer-customer">
+								{{ (workspace?.sales_order?.customer_name || data?.sales_order?.customer_name || workspace?.run?.customer || data?.sales_order?.customer) }}
+								<span v-if="workspace?.run?.company || data?.sales_order?.company">
+									· {{ workspace?.run?.company || data?.sales_order?.company }}
+								</span>
+								<span v-if="workspace?.run?.delivery_date || data?.sales_order?.delivery_date">
+									· Pengiriman: {{ fmtDate(workspace?.run?.delivery_date || data?.sales_order?.delivery_date) }}
+								</span>
 							</p>
 						</div>
+
 						<div class="ff-drawer-actions">
-							<span v-if="data" class="ff-stage" :class="`ff-stage-${data.stage}`">
+							<span
+								v-if="workspace?.run?.status"
+								class="badge"
+								:class="workspace.run.status === 'DISPATCHED' ? 'b-done' : 'b-run'"
+							>
+								{{ workspace.run.status }}
+							</span>
+							<span v-else-if="data" class="ff-stage" :class="`ff-stage-${data.stage}`">
 								{{ stageLabel(data.stage) }}
 							</span>
+
+							<button
+								v-if="isWorkspaceMode"
+								type="button"
+								class="btn iconbtn"
+								title="Muat ulang area kerja"
+								:disabled="loading || busy"
+								@click="refreshWorkspace"
+							>
+								<RefreshCw :size="14" :stroke-width="2" :class="{ spin: loading || busy }" />
+							</button>
+
 							<button
 								ref="closeBtn"
 								type="button"
 								class="btn iconbtn"
-								aria-label="Close detail"
+								aria-label="Tutup"
 								@click="close"
 							>
 								<X :size="16" :stroke-width="2" />
@@ -266,106 +613,161 @@ function reasonText(reason) {
 						</div>
 					</header>
 
+					<!-- Progress Stepper (Shown only when in Workspace Mode) -->
+					<nav v-if="isWorkspaceMode" class="ff-stepper" aria-label="Progress Tahapan Fulfillment">
+						<div
+							v-for="(step, idx) in STEPS"
+							:key="step.key"
+							class="ff-step-wrapper"
+						>
+							<button
+								type="button"
+								class="ff-step-btn"
+								:class="{
+									'is-active': activeTab === step.key,
+									'is-complete': isStepComplete(step.key),
+								}"
+								@click="activeTab = step.key"
+							>
+								<div class="ff-step-circle">
+									<Check v-if="isStepComplete(step.key)" :size="13" :stroke-width="2.6" />
+									<span v-else>{{ idx + 1 }}</span>
+								</div>
+								<div class="ff-step-info">
+									<span class="ff-step-label">{{ step.label }}</span>
+									<span class="ff-step-status">{{ getStepStatus(step.key) }}</span>
+								</div>
+							</button>
+							<div v-if="idx < STEPS.length - 1" class="ff-step-divider" :class="{ 'is-complete': isStepComplete(step.key) }" />
+						</div>
+					</nav>
+
+					<!-- Drawer Body -->
 					<div class="ff-drawer-body">
-						<div v-if="loading" class="ff-drawer-loading" aria-label="Loading detail">
+						<!-- Loading -->
+						<div v-if="loading && !workspace && !data" class="ff-drawer-loading" aria-label="Loading detail">
 							<div class="ff-skel ff-skel-title"></div>
 							<div class="ff-skel"></div>
 							<div class="ff-skel"></div>
 							<div class="ff-skel"></div>
 						</div>
 
+						<!-- Error -->
 						<div v-else-if="error" class="ff-drawer-state ff-error" role="alert">
 							<AlertTriangle :size="22" :stroke-width="1.8" />
 							<div>
-								<strong>Could not load this sales order</strong>
+								<strong>Gagal memuat detail</strong>
 								<p>{{ error }}</p>
 							</div>
-							<button type="button" class="btn btn-sm" @click="load()">
+							<button type="button" class="btn btn-sm" @click="loadInitial(salesOrder)">
 								<RefreshCw :size="14" :stroke-width="2" />
-								Retry
+								Coba lagi
 							</button>
 						</div>
 
+						<!-- WORKSPACE MODE PANELS (WHEN RUN EXISTS) -->
+						<template v-else-if="isWorkspaceMode">
+							<!-- Tab 1: Picking -->
+							<PickingPanel
+								v-if="activeTab === 'picking'"
+								:workspace="workspace"
+								:busy="busy"
+								@refresh="refreshWorkspace"
+								@save-picking="handleSavePicking"
+								@finish-picking="handleFinishPicking"
+								@request-approval="handleRequestApproval"
+								@approve-short-pick="handleApproveShortPick"
+								@reject-short-pick="handleRejectShortPick"
+							/>
+
+							<!-- Tab 2: Delivery -->
+							<DeliveryPanel
+								v-else-if="activeTab === 'delivery'"
+								:workspace="workspace"
+								:busy="busy"
+								@create-dn="handleCreateDeliveryNote"
+								@go-packing="activeTab = 'packing'"
+								@go-review="activeTab = 'review'"
+								@go-picking="activeTab = 'picking'"
+								@refresh="refreshWorkspace"
+							/>
+
+							<!-- Tab 3: Packing -->
+							<PackingPanel
+								v-else-if="activeTab === 'packing' && enablePackingSlip"
+								:workspace="workspace"
+								:busy="busy"
+								@pack-all="handlePackAll"
+								@reset-packing="handleResetPacking"
+								@go-delivery="activeTab = 'delivery'"
+								@go-review="activeTab = 'review'"
+								@refresh="refreshWorkspace"
+							/>
+
+							<!-- Tab 4: Review -->
+							<ReviewPanel
+								v-else-if="activeTab === 'review'"
+								ref="reviewPanelRef"
+								:workspace="workspace"
+								:busy="busy"
+								@submit-dn="handleSubmitDeliveryNote"
+								@go-packing="activeTab = 'packing'"
+								@go-delivery="activeTab = 'delivery'"
+								@refresh="refreshWorkspace"
+							/>
+						</template>
+
+						<!-- PREVIEW MODE (BEFORE RUN GENERATION) -->
 						<template v-else-if="data">
+							<!-- Metadata -->
 							<div class="ff-meta">
 								<div>
-									<span>SO date</span>
-									<strong>{{ fmtDate(data.sales_order.transaction_date) || '—' }}</strong>
+									<span>Tanggal SO</span>
+									<strong>{{ fmtDate(data.sales_order?.transaction_date) || '—' }}</strong>
 								</div>
 								<div>
-									<span>Delivery</span>
-									<strong>{{ fmtDate(data.sales_order.delivery_date) || '—' }}</strong>
+									<span>Tanggal Pengiriman</span>
+									<strong>{{ fmtDate(data.sales_order?.delivery_date) || '—' }}</strong>
 								</div>
 								<div>
-									<span>Native status</span>
-									<strong>{{ data.sales_order.status || '—' }}</strong>
+									<span>Status Native</span>
+									<strong>{{ data.sales_order?.status || '—' }}</strong>
 								</div>
 							</div>
 
+							<!-- Summary -->
 							<div class="ff-summary">
 								<div class="ff-summary-item ff-summary-dry">
-									<span>{{ dryLabel }} items</span>
+									<span>Item {{ dryLabel }}</span>
 									<strong>{{ data.groups.dry.length }}</strong>
 								</div>
 								<div class="ff-summary-item ff-summary-frozen">
-									<span>{{ frozenLabel }} items</span>
+									<span>Item {{ frozenLabel }}</span>
 									<strong>{{ data.groups.frozen.length }}</strong>
 								</div>
 								<div class="ff-summary-item ff-summary-warn">
-									<span>Needs attention</span>
+									<span>Perlu Perhatian</span>
 									<strong>{{ data.groups.unclassified.length }}</strong>
 								</div>
 							</div>
 
+							<!-- Warnings -->
 							<div v-if="data.warnings?.length" class="ff-inline-warn" role="status">
 								<AlertTriangle :size="15" :stroke-width="2" />
 								<span v-for="warning in data.warnings" :key="warning">{{ reasonText(warning) }}</span>
 							</div>
 
+							<!-- Generate Row -->
 							<section class="ff-section ff-run-section">
 								<div class="ff-section-head">
 									<h3>Fulfillment Run</h3>
-									<span v-if="data.run" class="ff-run-status">{{ data.run.status }}</span>
 								</div>
 
-								<div v-if="data.run" class="ff-run-card">
-									<div class="ff-run-main">
-										<span>Active Run</span>
-										<a
-											class="ff-run-link"
-											:href="`/app/warehouse-fulfillment-run/${encodeURIComponent(data.run.name)}`"
-											target="_blank"
-											rel="noopener"
-										>
-											{{ data.run.name }}
-											<ExternalLink :size="13" :stroke-width="2" />
-										</a>
-									</div>
-									<div class="ff-run-pls">
-										<button
-											v-if="data.run.dry_pick_list"
-											type="button"
-											class="ff-pl-link"
-											@click="openNative('Pick List', data.run.dry_pick_list)"
-										>
-											{{ dryLabel }} · {{ data.run.dry_pick_list }}
-										</button>
-										<button
-											v-if="data.run.frozen_pick_list"
-											type="button"
-											class="ff-pl-link"
-											@click="openNative('Pick List', data.run.frozen_pick_list)"
-										>
-											{{ frozenLabel }} · {{ data.run.frozen_pick_list }}
-										</button>
-									</div>
-								</div>
-
-								<div v-else class="ff-generate-row">
+								<div class="ff-generate-row">
 									<button
 										type="button"
 										class="btn btn-primary ff-generate-btn"
-										:disabled="!canGenerate"
+										:disabled="!canGenerate || generating"
 										@click="generate"
 									>
 										<LoaderCircle
@@ -374,13 +776,13 @@ function reasonText(reason) {
 											:stroke-width="2"
 											class="spin"
 										/>
-										{{ generating ? 'Generating…' : 'Generate Pick Lists' }}
+										{{ generating ? 'Membuat Pick List…' : 'Generate Pick Lists' }}
 									</button>
 									<p v-if="!canGenerate && !generating" class="ff-muted ff-generate-reason">
-										{{ generateDisabledReason || 'Generation is not available for this order.' }}
+										{{ generateDisabledReason || 'Order ini belum dapat diproses.' }}
 									</p>
 									<p v-else class="ff-muted ff-generate-reason">
-										Draft only. Picking and submission stay in the next phase.
+										Membuat Pick List Dry & Frozen secara terpisah tanpa memindahkan stok gudang.
 									</p>
 								</div>
 								<p v-if="generateError" class="ff-generate-error" role="alert">
@@ -388,19 +790,20 @@ function reasonText(reason) {
 								</p>
 							</section>
 
+							<!-- DAFTAR ITEM LENGKAP SALES ORDER (DRY & FROZEN) -->
 							<section v-for="group in groups" :key="group.key" class="ff-section">
 								<template v-if="group.items.length || group.key !== 'unclassified'">
 									<div class="ff-section-head">
-										<h3>{{ group.label }}</h3>
-										<span class="ff-count">{{ group.items.length }}</span>
+										<h3>Daftar Item {{ group.label }}</h3>
+										<span class="ff-count">{{ group.items.length }} Item</span>
 									</div>
 									<div v-if="group.items.length" class="ff-items">
 										<div class="ff-items-head">
 											<span>Item</span>
 											<span>UOM</span>
-											<span>Ordered</span>
-											<span>Delivered</span>
-											<span>Outstanding</span>
+											<span>Dipesan</span>
+											<span>Terkirim</span>
+											<span>Sisa Pick</span>
 										</div>
 										<div v-for="item in group.items" :key="item.sales_order_item" class="ff-item-row">
 											<div class="ff-item-main">
@@ -414,13 +817,14 @@ function reasonText(reason) {
 											<span data-label="Outstanding">{{ fmtQty(item.outstanding) }}</span>
 										</div>
 									</div>
-									<p v-else class="ff-muted">No {{ group.label.toLowerCase() }} items.</p>
+									<p v-else class="ff-muted">Tidak ada item {{ group.label.toLowerCase() }}.</p>
 								</template>
 							</section>
 
+							<!-- Dokumen Terkait -->
 							<section class="ff-section">
 								<div class="ff-section-head">
-									<h3>Related documents</h3>
+									<h3>Dokumen Terkait</h3>
 								</div>
 								<div v-for="docGroup in DOC_GROUPS" :key="docGroup.key" class="ff-doc-group">
 									<h4>{{ docGroup.label }}</h4>
@@ -440,17 +844,23 @@ function reasonText(reason) {
 											<ExternalLink :size="14" :stroke-width="2" />
 										</button>
 									</div>
-									<p v-else class="ff-muted">No {{ docGroup.label.toLowerCase() }}.</p>
+									<p v-else class="ff-muted">Belum ada {{ docGroup.label.toLowerCase() }}.</p>
 								</div>
 							</section>
-
-							<p class="ff-readonly">
-								F2 generates Draft Pick Lists only. Picking, Pick List submit, delivery, and
-								packing actions remain unavailable until the next phases.
-							</p>
 						</template>
 					</div>
 				</aside>
+
+				<!-- Split Confirmation Modal with Dropdown Print -->
+				<SplitConfirmationModal
+					:open="showSplitModal"
+					:workspace="workspace"
+					:sales-order="salesOrder"
+					@close="showSplitModal = false"
+					@print-both="printBoth"
+					@print-dry="printSingle('dry')"
+					@print-frozen="printSingle('frozen')"
+				/>
 			</div>
 		</Transition>
 	</Teleport>
@@ -463,16 +873,22 @@ function reasonText(reason) {
 	z-index: 60;
 	display: flex;
 	justify-content: flex-end;
-	background: rgba(36, 48, 58, 0.36);
+	background: rgba(36, 48, 58, 0.4);
+	backdrop-filter: blur(1.5px);
 }
 
 .ff-drawer {
 	display: flex;
 	flex-direction: column;
-	width: min(760px, 100vw);
+	width: min(780px, 100vw);
 	height: 100%;
-	background: var(--surface);
-	box-shadow: -12px 0 44px rgba(36, 48, 58, 0.16);
+	background: var(--surface, #ffffff);
+	box-shadow: -12px 0 44px rgba(36, 48, 58, 0.2);
+	transition: width 0.2s ease;
+}
+
+.ff-drawer.ff-drawer-wide {
+	width: min(1040px, 100vw);
 }
 
 .ff-drawer-head {
@@ -480,8 +896,10 @@ function reasonText(reason) {
 	align-items: flex-start;
 	justify-content: space-between;
 	gap: 12px;
-	padding: 18px 20px;
-	border-bottom: 1px solid var(--line);
+	padding: 16px 20px;
+	border-bottom: 1px solid var(--line, #e2e8f0);
+	background: var(--surface, #ffffff);
+	flex-shrink: 0;
 }
 
 .ff-drawer-title {
@@ -489,7 +907,7 @@ function reasonText(reason) {
 }
 
 .ff-eyebrow {
-	color: var(--muted);
+	color: var(--muted, #64748b);
 	font-size: 10.5px;
 	font-weight: 700;
 	letter-spacing: 0.06em;
@@ -498,15 +916,31 @@ function reasonText(reason) {
 
 .ff-drawer-title h2 {
 	margin-top: 2px;
-	color: var(--brand);
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--brand, #2b72ba);
 	font-size: 20px;
 	font-weight: 750;
 	letter-spacing: -0.02em;
 }
 
+.ff-so-desk-link {
+	color: var(--muted, #64748b);
+	display: inline-flex;
+	align-items: center;
+	padding: 2px;
+	border-radius: 4px;
+	transition: color 0.15s ease;
+}
+
+.ff-so-desk-link:hover {
+	color: var(--brand, #2b72ba);
+}
+
 .ff-drawer-customer {
 	margin-top: 3px;
-	color: var(--muted);
+	color: var(--muted, #64748b);
 	font-size: 12.5px;
 }
 
@@ -514,15 +948,120 @@ function reasonText(reason) {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	flex: none;
+	flex-shrink: 0;
 }
 
+/* Stepper Progress Bar */
+.ff-stepper {
+	display: flex;
+	align-items: center;
+	padding: 10px 20px;
+	background: var(--bg, #f8fafc);
+	border-bottom: 1px solid var(--line, #e2e8f0);
+	overflow-x: auto;
+	flex-shrink: 0;
+	gap: 8px;
+}
+
+.ff-step-wrapper {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+	min-width: 140px;
+}
+
+.ff-step-btn {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 12px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	background: transparent;
+	cursor: pointer;
+	text-align: left;
+	transition: all 0.15s ease;
+	font-family: inherit;
+}
+
+.ff-step-btn:hover {
+	background: rgba(0, 0, 0, 0.04);
+}
+
+.ff-step-btn.is-active {
+	background: #ffffff;
+	border-color: var(--line, #e2e8f0);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.ff-step-circle {
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--muted, #64748b);
+	border: 2px solid var(--line, #e2e8f0);
+	background: var(--surface, #ffffff);
+	flex-shrink: 0;
+	transition: all 0.15s ease;
+}
+
+.ff-step-btn.is-active .ff-step-circle {
+	border-color: var(--brand, #2b72ba);
+	color: var(--brand, #2b72ba);
+	background: rgba(43, 114, 186, 0.08);
+}
+
+.ff-step-btn.is-complete .ff-step-circle {
+	border-color: #10b981;
+	background: #10b981;
+	color: #ffffff;
+}
+
+.ff-step-info {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.ff-step-label {
+	font-size: 13px;
+	font-weight: 650;
+	color: var(--ink, #1e293b);
+	white-space: nowrap;
+}
+
+.ff-step-status {
+	font-size: 11px;
+	color: var(--muted, #64748b);
+}
+
+.ff-step-divider {
+	flex: 1;
+	height: 2px;
+	background: var(--line, #e2e8f0);
+	border-radius: 2px;
+	min-width: 16px;
+	transition: background 0.2s ease;
+}
+
+.ff-step-divider.is-complete {
+	background: #10b981;
+}
+
+/* Drawer Body */
 .ff-drawer-body {
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
 	padding: 18px 20px 28px;
 	overflow-y: auto;
+	flex: 1;
 }
 
 .ff-meta {
@@ -536,22 +1075,19 @@ function reasonText(reason) {
 	flex-direction: column;
 	gap: 2px;
 	padding: 9px 10px;
-	border: 1px solid var(--line);
-	border-radius: 10px;
-	background: var(--brand-softer);
+	border: 1px solid var(--line, #e2e8f0);
+	border-radius: 8px;
+	background: var(--surface, #ffffff);
 }
 
 .ff-meta span {
-	color: var(--muted);
-	font-size: 10.5px;
-	font-weight: 650;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
+	font-size: 11px;
+	color: var(--muted, #64748b);
 }
 
 .ff-meta strong {
-	font-size: 13px;
-	font-weight: 650;
+	font-size: 12.5px;
+	color: var(--ink, #1e293b);
 }
 
 .ff-summary {
@@ -562,403 +1098,236 @@ function reasonText(reason) {
 
 .ff-summary-item {
 	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: 8px;
+	flex-direction: column;
+	gap: 4px;
 	padding: 10px 12px;
-	border-radius: 10px;
-	font-size: 12px;
+	border-radius: 8px;
+	border: 1px solid var(--line, #e2e8f0);
 }
 
 .ff-summary-item span {
-	font-weight: 600;
+	font-size: 11.5px;
+	color: var(--muted, #64748b);
 }
 
 .ff-summary-item strong {
 	font-size: 18px;
-	line-height: 1;
+	font-weight: 700;
 }
 
 .ff-summary-dry {
-	background: #eaf0ff;
-	color: #36519a;
+	background: rgba(43, 114, 186, 0.05);
+	border-color: rgba(43, 114, 186, 0.2);
+}
+.ff-summary-dry strong {
+	color: #2b72ba;
 }
 
 .ff-summary-frozen {
-	background: #e5f6f1;
-	color: #146b57;
+	background: rgba(14, 165, 233, 0.05);
+	border-color: rgba(14, 165, 233, 0.2);
+}
+.ff-summary-frozen strong {
+	color: #0284c7;
 }
 
 .ff-summary-warn {
-	background: #fff1d6;
-	color: #8a5a00;
+	background: rgba(234, 88, 12, 0.05);
+	border-color: rgba(234, 88, 12, 0.2);
+}
+.ff-summary-warn strong {
+	color: #ea580c;
 }
 
 .ff-inline-warn {
 	display: flex;
-	align-items: flex-start;
-	flex-wrap: wrap;
-	gap: 5px 8px;
-	padding: 9px 11px;
-	border: 1px solid #efd8a8;
-	border-radius: 10px;
-	background: #fff9ea;
-	color: #7a5200;
-	font-size: 12px;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border-radius: 6px;
+	background: #fff7ed;
+	border: 1px solid #fed7aa;
+	color: #c2410c;
+	font-size: 12.5px;
 }
 
 .ff-section {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 10px;
 }
 
 .ff-section-head {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	justify-content: space-between;
 }
 
 .ff-section-head h3 {
-	font-size: 13px;
+	font-size: 14px;
 	font-weight: 700;
+	color: var(--ink, #1e293b);
 }
 
 .ff-count {
-	min-width: 20px;
-	padding: 0 6px;
-	border-radius: 999px;
-	background: var(--grey-bg);
-	color: var(--muted);
-	font-size: 11px;
-	line-height: 19px;
-	text-align: center;
+	font-size: 12px;
+	color: var(--muted, #64748b);
+	font-weight: 600;
+}
+
+.ff-generate-row {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 14px;
+	border: 1px solid var(--line, #e2e8f0);
+	border-radius: 8px;
+	background: var(--surface, #ffffff);
+}
+
+.ff-generate-btn {
+	align-self: flex-start;
+}
+
+.ff-generate-reason {
+	font-size: 12px;
+	color: var(--muted, #64748b);
+}
+
+.ff-generate-error {
+	font-size: 12px;
+	color: #dc2626;
+	margin-top: 4px;
 }
 
 .ff-items {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--line, #e2e8f0);
+	border-radius: 8px;
 	overflow: hidden;
-	border: 1px solid var(--line);
-	border-radius: 10px;
-}
-
-.ff-items-head,
-.ff-item-row {
-	display: grid;
-	grid-template-columns: minmax(170px, 1.6fr) 64px 74px 74px 88px;
-	gap: 8px;
-	align-items: center;
 }
 
 .ff-items-head {
-	padding: 8px 10px;
-	background: var(--grey-bg);
-	color: var(--muted);
-	font-size: 10px;
+	display: grid;
+	grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+	gap: 8px;
+	padding: 8px 12px;
+	background: var(--bg, #f8fafc);
+	font-size: 11px;
 	font-weight: 700;
-	letter-spacing: 0.04em;
+	color: var(--muted, #64748b);
 	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	border-bottom: 1px solid var(--line, #e2e8f0);
 }
 
 .ff-item-row {
-	padding: 8px 10px;
-	border-top: 1px solid var(--line);
-	font-size: 12px;
+	display: grid;
+	grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+	gap: 8px;
+	padding: 9px 12px;
+	align-items: center;
+	font-size: 12.5px;
+	border-bottom: 1px solid var(--line, #f1f5f9);
+}
+
+.ff-item-row:last-child {
+	border-bottom: none;
 }
 
 .ff-item-main {
 	display: flex;
 	flex-direction: column;
+	gap: 2px;
 	min-width: 0;
-	gap: 1px;
 }
 
 .ff-item-main strong {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 12.5px;
+	color: var(--ink, #1e293b);
+	font-weight: 600;
 }
 
 .ff-item-main span {
-	color: var(--muted);
-	font-size: 11px;
+	font-size: 11.5px;
+	color: var(--muted, #64748b);
 }
 
-.ff-item-reason {
-	color: #8a5a00 !important;
+.ff-doc-group {
+	margin-top: 6px;
 }
 
 .ff-doc-group h4 {
-	margin: 4px 0 5px;
-	color: var(--muted);
-	font-size: 11px;
-	font-weight: 700;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
+	font-size: 12px;
+	font-weight: 650;
+	color: var(--muted, #64748b);
+	margin-bottom: 6px;
 }
 
 .ff-doc-list {
 	display: flex;
 	flex-direction: column;
-	gap: 5px;
+	gap: 4px;
 }
 
 .ff-doc-row {
-	display: grid;
-	grid-template-columns: minmax(120px, 1fr) auto auto 16px;
-	gap: 10px;
-	align-items: center;
-	width: 100%;
-	padding: 8px 10px;
-	border: 1px solid var(--line);
-	border-radius: 9px;
-	background: var(--surface);
-	color: var(--ink);
-	font: inherit;
-	font-size: 12px;
-	text-align: left;
-	cursor: pointer;
-}
-
-.ff-doc-row:hover {
-	border-color: var(--brand-light);
-	background: var(--brand-softer);
-}
-
-.ff-doc-name {
-	font-weight: 650;
-	color: var(--brand);
-}
-
-.ff-doc-status {
-	padding: 2px 7px;
-	border-radius: 999px;
-	background: #e4f6e9;
-	color: #1f6b3a;
-	font-size: 10.5px;
-	font-weight: 650;
-}
-
-.ff-doc-status.draft {
-	background: #fff2d9;
-	color: #8a5a00;
-}
-
-.ff-doc-date {
-	color: var(--muted);
-	font-size: 11px;
-}
-
-.ff-muted {
-	color: var(--muted);
-	font-size: 12px;
-}
-
-.ff-readonly {
-	padding-top: 4px;
-	color: var(--faint);
-	font-size: 11.5px;
-}
-
-.ff-run-section {
-	padding: 12px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
-	background: var(--brand-softer);
-}
-
-.ff-run-status {
-	padding: 2px 7px;
-	border-radius: 999px;
-	background: #eaf0ff;
-	color: #36519a;
-	font-size: 10.5px;
-	font-weight: 700;
-}
-
-.ff-run-card {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 12px;
-	flex-wrap: wrap;
-	padding: 9px 11px;
-	border: 1px solid var(--line);
-	border-radius: 10px;
-	background: var(--surface);
-}
-
-.ff-run-main,
-.ff-run-pls {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	flex-wrap: wrap;
-}
-
-.ff-run-main {
-	flex-direction: column;
-	align-items: flex-start;
-	gap: 2px;
-}
-
-.ff-run-main > span {
-	color: var(--muted);
-	font-size: 10.5px;
-	font-weight: 700;
-	letter-spacing: 0.04em;
-	text-transform: uppercase;
-}
-
-.ff-run-link {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	color: var(--brand);
-	font-size: 12.5px;
-	font-weight: 700;
-	text-decoration: none;
-}
-
-.ff-run-link:hover {
-	text-decoration: underline;
-}
-
-.ff-pl-link {
-	padding: 5px 8px;
-	border: 1px solid var(--line);
-	border-radius: 8px;
-	background: var(--surface);
-	color: var(--ink);
-	font: inherit;
-	font-size: 11.5px;
+	padding: 7px 10px;
+	border: 1px solid var(--line, #e2e8f0);
+	border-radius: 6px;
+	background: var(--surface, #ffffff);
+	font-family: inherit;
 	cursor: pointer;
+	transition: all 0.15s ease;
 }
 
-.ff-pl-link:hover {
-	border-color: var(--brand-light);
-	background: var(--brand-soft);
+.ff-doc-row:hover {
+	background: var(--bg, #f8fafc);
+	border-color: var(--brand, #2b72ba);
 }
 
-.ff-generate-row {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	flex-wrap: wrap;
+.ff-doc-name {
+	font-size: 12.5px;
+	font-weight: 600;
+	color: var(--brand, #2b72ba);
 }
 
-.ff-generate-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: 7px;
-	flex: none;
-}
-
-.ff-generate-reason {
-	margin: 0;
+.ff-doc-status {
 	font-size: 11.5px;
+	padding: 1px 6px;
+	border-radius: 4px;
+	background: #dcfce7;
+	color: #15803d;
+	font-weight: 600;
 }
 
-.ff-generate-error {
-	padding: 8px 10px;
-	border: 1px solid #f0c7c0;
-	border-radius: 8px;
-	background: #fff6f4;
-	color: #9b2c1f;
-	font-size: 12px;
+.ff-doc-status.draft {
+	background: #f1f5f9;
+	color: #64748b;
 }
 
-.spin {
-	animation: ff-spin 0.9s linear infinite;
-}
-
-.ff-drawer-loading {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-	padding-top: 6px;
+.ff-doc-date {
+	font-size: 11.5px;
+	color: var(--muted, #64748b);
 }
 
 .ff-skel {
-	height: 14px;
+	height: 38px;
+	background: var(--line, #f1f5f9);
 	border-radius: 6px;
-	background: linear-gradient(90deg, var(--grey-bg) 25%, #f7f8fa 50%, var(--grey-bg) 75%);
-	background-size: 200% 100%;
-	animation: ff-shimmer 1.2s linear infinite;
+	animation: pulse 1.5s infinite ease-in-out;
 }
 
 .ff-skel-title {
-	width: 55%;
-	height: 22px;
+	height: 24px;
+	width: 40%;
 }
 
-.ff-drawer-state {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	padding: 16px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
-	color: var(--muted);
-}
-
-.ff-drawer-state > div {
-	flex: 1;
-}
-
-.ff-drawer-state strong {
-	display: block;
-	color: var(--ink);
-}
-
-.ff-error {
-	border-color: #f0c7c0;
-	background: #fff6f4;
-	color: #9b2c1f;
-}
-
-.ff-error strong {
-	color: #7e2117;
-}
-
-.ff-stage {
-	display: inline-flex;
-	width: fit-content;
-	padding: 3px 8px;
-	border-radius: 999px;
-	font-size: 11px;
-	font-weight: 650;
-	line-height: 16px;
-}
-
-.ff-stage-open {
-	background: var(--grey-bg);
-	color: var(--muted);
-}
-
-.ff-stage-picking {
-	background: #e9f2ff;
-	color: #1d5d9e;
-}
-
-.ff-stage-packing {
-	background: #fff2d9;
-	color: #8a5a00;
-}
-
-.ff-stage-ready {
-	background: #e4f6e9;
-	color: #1f6b3a;
-}
-
-.ff-stage-partially_delivered {
-	background: #f0eaff;
-	color: #5d3f9e;
-}
-
-.ff-stage-exception {
-	background: #ffe9e6;
-	color: #9b2c1f;
+@keyframes pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.5; }
 }
 
 .ff-drawer-enter-active,
@@ -966,139 +1335,18 @@ function reasonText(reason) {
 	transition: opacity 0.2s ease;
 }
 
-.ff-drawer-enter-active .ff-drawer,
-.ff-drawer-leave-active .ff-drawer {
-	transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
-}
-
 .ff-drawer-enter-from,
 .ff-drawer-leave-to {
 	opacity: 0;
 }
 
+.ff-drawer-enter-active .ff-drawer,
+.ff-drawer-leave-active .ff-drawer {
+	transition: transform 0.25s ease;
+}
+
 .ff-drawer-enter-from .ff-drawer,
 .ff-drawer-leave-to .ff-drawer {
-	transform: translateX(28px);
-}
-
-@keyframes ff-shimmer {
-	to {
-		background-position: -200% 0;
-	}
-}
-
-@keyframes ff-spin {
-	to {
-		transform: rotate(360deg);
-	}
-}
-
-@media (max-width: 820px) {
-	.ff-drawer {
-		width: 100%;
-	}
-
-	.ff-drawer-head {
-		padding: 14px 16px;
-	}
-
-	.ff-drawer-body {
-		padding: 14px 16px 24px;
-	}
-
-	.ff-meta {
-		grid-template-columns: 1fr 1fr;
-	}
-
-	.ff-summary {
-		gap: 7px;
-	}
-
-	.ff-summary-item {
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 3px;
-		padding: 9px 10px;
-	}
-
-	.ff-items {
-		border: 0;
-		overflow: visible;
-	}
-
-	.ff-items-head {
-		display: none;
-	}
-
-	.ff-item-row {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 5px 12px;
-		margin-bottom: 7px;
-		padding: 10px;
-		border: 1px solid var(--line);
-		border-radius: 9px;
-	}
-
-	.ff-item-main {
-		grid-column: 1 / -1;
-	}
-
-	.ff-item-row > span::before {
-		content: attr(data-label);
-		display: block;
-		margin-bottom: 1px;
-		color: var(--muted);
-		font-size: 9.5px;
-		font-weight: 700;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-	}
-
-	.ff-doc-row {
-		grid-template-columns: 1fr auto;
-	}
-
-	.ff-doc-date {
-		grid-column: 1;
-	}
-
-	.ff-doc-row > svg {
-		grid-column: 2;
-		grid-row: 1 / 3;
-	}
-
-	.ff-readonly {
-		padding-bottom: 8px;
-	}
-}
-
-@media (max-width: 560px) {
-	.ff-meta {
-		grid-template-columns: 1fr;
-	}
-
-	.ff-summary {
-		grid-template-columns: 1fr;
-	}
-
-	.ff-summary-item {
-		flex-direction: row;
-		align-items: baseline;
-	}
-
-	.ff-run-card {
-		align-items: flex-start;
-		flex-direction: column;
-	}
-
-	.ff-run-pls,
-	.ff-generate-btn {
-		width: 100%;
-	}
-
-	.ff-generate-btn {
-		justify-content: center;
-	}
+	transform: translateX(100%);
 }
 </style>

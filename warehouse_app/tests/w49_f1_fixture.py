@@ -171,12 +171,32 @@ def cleanup_documents() -> dict[str, int]:
 		if dn_names
 		else []
 	)
+	run_names = (
+		frappe.get_all(
+			"Warehouse Fulfillment Run",
+			filters={"sales_order": ("in", so_names)},
+			pluck="name",
+		)
+		if so_names and frappe.db.exists("DocType", "Warehouse Fulfillment Run")
+		else []
+	)
+	key_names = (
+		frappe.get_all(
+			"Warehouse Fulfillment Request Key",
+			filters={"sales_order": ("in", so_names)},
+			pluck="name",
+		)
+		if so_names and frappe.db.exists("DocType", "Warehouse Fulfillment Request Key")
+		else []
+	)
 
 	deleted = {
 		"packing_slips": _cancel_delete("Packing Slip", ps_names),
 		"delivery_notes": _cancel_delete("Delivery Note", dn_names),
 		"pick_lists": _cancel_delete("Pick List", pl_names),
 		"sales_orders": _cancel_delete("Sales Order", so_names),
+		"runs": _cancel_delete("Warehouse Fulfillment Run", run_names),
+		"keys": _cancel_delete("Warehouse Fulfillment Request Key", key_names),
 	}
 	frappe.db.commit()
 	return deleted

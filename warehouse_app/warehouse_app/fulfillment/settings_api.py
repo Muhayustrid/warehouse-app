@@ -19,6 +19,7 @@ EDITABLE_FIELDS = (
 	"dry_display_name",
 	"frozen_display_name",
 	"include_child_item_groups",
+	"dry_item_exceptions",
 	"dry_parent_warehouse",
 	"frozen_parent_warehouse",
 	"dry_print_format",
@@ -27,6 +28,7 @@ EDITABLE_FIELDS = (
 	"dry_print_copies",
 	"frozen_print_copies",
 	"allow_partial_delivery",
+	"enable_packing_slip",
 	"short_pick_approval_required",
 	"require_all_packed",
 	"require_checker_approval",
@@ -68,9 +70,11 @@ def save_fulfillment_settings(payload=None) -> dict:
 		raise frappe.PermissionError
 
 	profile_name = frappe.db.get_value(PROFILE, {"company": company}, "name")
-	profile = frappe.get_doc(PROFILE, profile_name) if profile_name else frappe.get_doc(
-		{"doctype": PROFILE, "company": company}
-	)
+	if profile_name:
+		profile = frappe.get_doc(PROFILE, profile_name)
+	else:
+		profile = frappe.new_doc(PROFILE)
+		profile.company = company
 	if not profile.is_new():
 		if not payload.get("expected_modified") and payload.get("expected_revision") is None:
 			frappe.throw(_("Reload the fulfillment profile before saving."), frappe.ValidationError)
@@ -119,6 +123,16 @@ def fulfillment_settings_options(company=None) -> dict:
 			order_by="name asc",
 			limit=0,
 		),
+		"item_groups": [
+			row.name
+			for row in frappe.get_list(
+				"Item Group",
+				filters={"parent_item_group": ("!=", "")},
+				fields=["name"],
+				order_by="lft asc",
+				limit_page_length=0,
+			)
+		],
 	}
 
 

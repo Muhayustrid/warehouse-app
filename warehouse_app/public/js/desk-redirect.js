@@ -15,5 +15,48 @@
 	}[window.location.pathname.replace(/\/+$/, "")];
 	if (target) {
 		window.location.replace(target);
+		return;
 	}
+
+	// Register Gudang Fulfillment entries into ERPNext native Awesomebar (search bar)
+	function registerSearchEntries() {
+		if (!window.frappe) return;
+
+		function addEntries() {
+			if (
+				frappe.search &&
+				frappe.search.utils &&
+				typeof frappe.search.utils.make_function_searchable === "function"
+			) {
+				var entries = [
+					{ label: "Gudang Fulfillment", action: function () { window.location.href = "/gudang/fulfillment"; } },
+					{ label: "Warehouse Fulfillment", action: function () { window.location.href = "/gudang/fulfillment"; } },
+					{ label: "Fulfillment Workspace", action: function () { window.location.href = "/gudang/fulfillment"; } },
+					{ label: "Order Queue Gudang", action: function () { window.location.href = "/gudang/fulfillment"; } },
+					{ label: "Packing Slip Gudang", action: function () { window.location.href = "/gudang/fulfillment"; } },
+					{ label: "Pick List & Kemasan Gudang", action: function () { window.location.href = "/gudang/fulfillment"; } },
+				];
+
+				var registered = frappe.search.utils.searchable_functions || [];
+				entries.forEach(function (e) {
+					var exists = registered.some(function (fn) {
+						return fn.label === e.label;
+					});
+					if (!exists) {
+						frappe.search.utils.make_function_searchable(e.action, e.label);
+					}
+				});
+			}
+		}
+
+		if (window.frappe.ready) {
+			frappe.ready(addEntries);
+		} else if (window.$) {
+			$(document).ready(addEntries);
+		} else {
+			window.addEventListener("DOMContentLoaded", addEntries);
+		}
+	}
+
+	registerSearchEntries();
 })();

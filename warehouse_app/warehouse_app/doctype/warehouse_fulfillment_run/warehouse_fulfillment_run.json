@@ -14,9 +14,21 @@
   "frozen_item_group_snapshot",
   "include_child_groups_snapshot",
   "policy_snapshot",
+  "short_pick_approval_required_snapshot",
   "status",
   "dry_pick_list",
   "frozen_pick_list",
+  "delivery_note",
+  "short_pick_status",
+  "short_pick_reason",
+  "short_pick_rejection_reason",
+  "short_pick_fingerprint",
+  "short_pick_requested_by",
+  "short_pick_requested_on",
+  "short_pick_approved_by",
+  "short_pick_approved_on",
+  "dn_created_at",
+  "dispatched_at",
   "items",
   "allocations",
   "active_so_key",
@@ -82,12 +94,19 @@
    "read_only": 1
   },
   {
+   "default": "0",
+   "fieldname": "short_pick_approval_required_snapshot",
+   "fieldtype": "Check",
+   "label": "Short Pick Approval Required Snapshot",
+   "read_only": 1
+  },
+  {
    "default": "PLANNING",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Status",
-   "options": "PLANNING\nNEEDS_RECONCILIATION"
+   "options": "PLANNING\nPICKING\nPICKED\nDN_DRAFT\nPACKING\nREADY\nDISPATCHED\nNEEDS_RECONCILIATION"
   },
   {
    "fieldname": "dry_pick_list",
@@ -100,6 +119,74 @@
    "fieldtype": "Link",
    "label": "Frozen Pick List",
    "options": "Pick List"
+  },
+  {
+   "fieldname": "delivery_note",
+   "fieldtype": "Link",
+   "label": "Delivery Note",
+   "options": "Delivery Note",
+   "read_only": 1
+  },
+  {
+   "default": "None",
+   "fieldname": "short_pick_status",
+   "fieldtype": "Select",
+   "label": "Short Pick Status",
+   "options": "None\nPending\nApproved\nRejected"
+  },
+  {
+   "fieldname": "short_pick_reason",
+   "fieldtype": "Small Text",
+   "label": "Short Pick Reason"
+  },
+  {
+   "fieldname": "short_pick_rejection_reason",
+   "fieldtype": "Small Text",
+   "label": "Short Pick Rejection Reason"
+  },
+  {
+   "fieldname": "short_pick_fingerprint",
+   "fieldtype": "Data",
+   "label": "Short Pick Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "short_pick_requested_by",
+   "fieldtype": "Link",
+   "label": "Short Pick Requested By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "short_pick_requested_on",
+   "fieldtype": "Datetime",
+   "label": "Short Pick Requested On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "short_pick_approved_by",
+   "fieldtype": "Link",
+   "label": "Short Pick Approved By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "short_pick_approved_on",
+   "fieldtype": "Datetime",
+   "label": "Short Pick Approved On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dn_created_at",
+   "fieldtype": "Datetime",
+   "label": "DN Created At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "dispatched_at",
+   "fieldtype": "Datetime",
+   "label": "Dispatched At",
+   "read_only": 1
   },
   {
    "fieldname": "items",

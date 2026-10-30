@@ -48,8 +48,20 @@ def frozen_groups(
 	return groups
 
 
-def classify(item_group: str | None, frozen: set[str]) -> str:
+def classify(
+	item_group: str | None,
+	frozen: set[str],
+	item_code: str | None = None,
+	dry_exceptions: set[str] | None = None,
+	item_override: str | None = None,
+) -> str:
 	"""Return exactly ``dry`` or ``frozen``; never guess on missing data."""
+	if item_override:
+		override_val = str(item_override).strip().lower()
+		if override_val in ("dry", "frozen"):
+			return override_val
+	if dry_exceptions and item_code and item_code in dry_exceptions:
+		return "dry"
 	if not item_group:
 		raise ClassificationError("Item has no Item Group.")
 	if not frozen:
@@ -60,6 +72,7 @@ def classify(item_group: str | None, frozen: set[str]) -> str:
 def classify_rows(
 	rows: Iterable[Mapping[str, Any]],
 	frozen: set[str],
+	dry_exceptions: set[str] | None = None,
 ) -> list[dict[str, Any]]:
 	"""Classify SO Item rows without merging duplicate item codes."""
 	classified: list[dict[str, Any]] = []
@@ -70,6 +83,12 @@ def classify_rows(
 			raise ClassificationError("Row is missing item_code.")
 
 		result = dict(row)
-		result["picking_group"] = classify(row.get("item_group"), frozen)
+		result["picking_group"] = classify(
+			row.get("item_group"),
+			frozen,
+			item_code=row.get("item_code"),
+			dry_exceptions=dry_exceptions,
+			item_override=row.get("custom_fulfillment_category"),
+		)
 		classified.append(result)
 	return classified

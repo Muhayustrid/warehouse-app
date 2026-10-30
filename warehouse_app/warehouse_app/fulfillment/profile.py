@@ -23,10 +23,34 @@ def get_profile(company: str):
 			"include_child_item_groups",
 			"dry_display_name",
 			"frozen_display_name",
+			"dry_item_exceptions",
+			"enable_packing_slip",
 		],
 		limit_page_length=1,
 	)
 	return rows[0] if rows else None
+
+
+def resolve_dry_exceptions(profile) -> set[str]:
+	exceptions: set[str] = set()
+	if profile:
+		raw = profile.get("dry_item_exceptions") or ""
+		if raw:
+			exceptions.update(
+				part.strip()
+				for line in str(raw).splitlines()
+				for part in line.split(",")
+				if part.strip()
+			)
+	# Also resolve any item master records marked with custom_fulfillment_category = 'Dry'
+	if frappe.db.has_column("Item", "custom_fulfillment_category"):
+		item_overrides = frappe.get_all(
+			"Item",
+			filters={"custom_fulfillment_category": "Dry"},
+			pluck="name",
+		)
+		exceptions.update(item_overrides)
+	return exceptions
 
 
 def resolve_frozen(profile) -> set[str] | None:

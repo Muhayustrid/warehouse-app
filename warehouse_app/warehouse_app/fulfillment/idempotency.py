@@ -36,6 +36,15 @@ def request_hash(sales_order, expected_so_modified, request_type) -> str:
 	return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def request_hash_payload(payload: dict, request_type: str) -> str:
+	body = {
+		"payload": payload,
+		"request_type": _normalize(request_type),
+	}
+	canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+	return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def begin_request(
 	actor, company, sales_order, request_type, idempotency_key, request_hash_value
 ) -> dict:

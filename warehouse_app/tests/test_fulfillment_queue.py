@@ -64,6 +64,11 @@ class TestDeriveStage(unittest.TestCase):
 			derive_stage(True, False, True, False, False, False, True, True), "picking"
 		)
 
+	def test_submitted_delivery_note_without_outstanding_is_completed(self):
+		self.assertEqual(
+			derive_stage(True, False, False, False, False, True, True, False), "completed"
+		)
+
 	def test_no_documents_is_open(self):
 		self.assertEqual(
 			derive_stage(True, False, False, False, False, False, False, True), "open"
@@ -121,6 +126,10 @@ class TestEligibility(unittest.TestCase):
 
 	def test_ineligible_without_outstanding(self):
 		self.assertFalse(is_eligible(1, "To Deliver", 0.0, 0.0))
+
+	def test_eligible_completed_when_allowed(self):
+		self.assertTrue(is_eligible(1, "Completed", 100.0, 0.0, allow_completed=True))
+		self.assertFalse(is_eligible(1, "Closed", 100.0, 0.0, allow_completed=True))
 
 
 if __name__ == "__main__":

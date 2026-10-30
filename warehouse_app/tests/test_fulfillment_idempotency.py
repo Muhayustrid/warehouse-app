@@ -3,7 +3,11 @@
 
 import unittest
 
-from warehouse_app.warehouse_app.fulfillment.idempotency import request_hash, scope_key
+from warehouse_app.warehouse_app.fulfillment.idempotency import (
+	request_hash,
+	request_hash_payload,
+	scope_key,
+)
 
 
 class TestScopeKey(unittest.TestCase):
@@ -40,6 +44,34 @@ class TestRequestHash(unittest.TestCase):
 			request_hash("SO-1", "2026-10-27 10:00:00", "GeneratePickLists"),
 			request_hash("SO-1", "2026-10-27 10:01:00", "GeneratePickLists"),
 		)
+
+
+class TestRequestHashPayload(unittest.TestCase):
+	def test_deterministic(self):
+		payload = {"run": "WFR-1", "pls": ["PL-1", "PL-2"]}
+		first = request_hash_payload(payload, "CreateDeliveryNote")
+		second = request_hash_payload(payload, "CreateDeliveryNote")
+		self.assertEqual(first, second)
+		self.assertEqual(len(first), 64)
+
+	def test_different_payload_changes_hash(self):
+		h1 = request_hash_payload({"run": "WFR-1", "pls": ["PL-1"]}, "CreateDeliveryNote")
+		h2 = request_hash_payload({"run": "WFR-1", "pls": ["PL-2"]}, "CreateDeliveryNote")
+		self.assertNotEqual(h1, h2)
+
+	def test_key_order_independence(self):
+		p1 = {"b": 2, "a": 1, "c": [1, 2]}
+		p2 = {"a": 1, "c": [1, 2], "b": 2}
+		self.assertEqual(
+			request_hash_payload(p1, "CreateDeliveryNote"),
+			request_hash_payload(p2, "CreateDeliveryNote"),
+		)
+
+	def test_different_request_type_changes_hash(self):
+		payload = {"run": "WFR-1"}
+		h1 = request_hash_payload(payload, "TypeA")
+		h2 = request_hash_payload(payload, "TypeB")
+		self.assertNotEqual(h1, h2)
 
 
 if __name__ == "__main__":

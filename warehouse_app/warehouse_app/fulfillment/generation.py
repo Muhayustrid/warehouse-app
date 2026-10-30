@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from warehouse_app.warehouse_app.fulfillment.classification import classify
+
 
 class GenerationError(Exception):
 	def __init__(self, code: str, row: Mapping | None = None):
@@ -27,7 +29,9 @@ def pending_stock_qty(
 
 
 def build_generation_plan(
-	items: Iterable[Mapping], frozen: set[str] | None
+	items: Iterable[Mapping],
+	frozen: set[str] | None,
+	dry_exceptions: set[str] | None = None,
 ) -> dict:
 	if not frozen:
 		raise GenerationError("PROFILE_INVALID")
@@ -52,7 +56,13 @@ def build_generation_plan(
 		if pending_qty <= 0:
 			continue
 
-		picking_group = "frozen" if item_group in frozen else "dry"
+		picking_group = classify(
+			item_group,
+			frozen,
+			item_code=raw.get("item_code"),
+			dry_exceptions=dry_exceptions,
+			item_override=raw.get("custom_fulfillment_category"),
+		)
 		row = {
 			"sales_order_item": sales_order_item,
 			"item_code": raw.get("item_code"),
@@ -95,6 +105,7 @@ def profile_policy_snapshot(profile: Mapping) -> dict:
 		"allow_partial_delivery": profile.get("allow_partial_delivery") or 0,
 		"short_pick_approval_required": profile.get("short_pick_approval_required") or 0,
 		"require_all_packed": profile.get("require_all_packed") or 0,
+		"enable_packing_slip": 1 if profile.get("enable_packing_slip") is None else (profile.get("enable_packing_slip") or 0),
 		"require_checker_approval": profile.get("require_checker_approval") or 0,
 		"allow_cross_group_packing": profile.get("allow_cross_group_packing") or 0,
 		"dry_parent_warehouse": profile.get("dry_parent_warehouse"),

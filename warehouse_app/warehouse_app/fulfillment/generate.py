@@ -22,7 +22,10 @@ from warehouse_app.warehouse_app.fulfillment.idempotency import (
 	fail_request,
 	request_hash,
 )
-from warehouse_app.warehouse_app.fulfillment.profile import resolve_frozen
+from warehouse_app.warehouse_app.fulfillment.profile import (
+	resolve_dry_exceptions,
+	resolve_frozen,
+)
 
 RUN = "Warehouse Fulfillment Run"
 PROFILE = "Warehouse Fulfillment Profile"
@@ -192,10 +195,12 @@ def _preflight(so, profile, frozen: set[str]) -> dict:
 				"warehouse": row.warehouse or so.set_warehouse,
 				"stock_reserved_qty": row.stock_reserved_qty,
 				"delivered_by_supplier": row.delivered_by_supplier,
+				"custom_fulfillment_category": getattr(item, "custom_fulfillment_category", None),
 			}
 		)
 
-	plan = build_generation_plan(items, frozen)
+	dry_exceptions = resolve_dry_exceptions(profile)
+	plan = build_generation_plan(items, frozen, dry_exceptions=dry_exceptions)
 	if not plan["items"]:
 		raise FulfillmentError("NO_OUTSTANDING", "There is no outstanding quantity to pick.")
 	return plan
@@ -214,6 +219,9 @@ def _create_run(so, profile, plan: dict, request_key: str):
 			"frozen_item_group_snapshot": profile.frozen_item_group,
 			"include_child_groups_snapshot": profile.include_child_item_groups,
 			"policy_snapshot": json.dumps(policy, ensure_ascii=False),
+			"short_pick_approval_required_snapshot": (
+				1 if profile.short_pick_approval_required else 0
+			),
 			"status": "PLANNING",
 			"active_so_key": so.name,
 			"request_key": request_key,
