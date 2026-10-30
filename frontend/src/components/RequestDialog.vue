@@ -1,12 +1,12 @@
 <script setup>
-// Dialog konfirmasi request massal (N WO) — tanpa input: qty = hasil penuh
-// tiap WO (server otoritatif, semantik W30). Submit berurutan per WO;
-// hasil parsial ditampilkan apa adanya (pola submit_bulk halaman klasik).
+// Dialog konfirmasi request massal (N WO) — tanpa input: qty = alokasi
+// preview tiap WO (server otoritatif). Submit berurutan per item + company
+// (grup bila >= 2 WO); hasil parsial ditampilkan apa adanya.
 // Bahasa visual production_workspace: <dialog class="dialog"> + .dlg-*.
 import { ref, computed, watch, nextTick } from 'vue'
 import { ClipboardCheck, CircleAlert } from 'lucide-vue-next'
 import { createRequest, createGroupRequest, previewHandoverRequest } from '@/data/board'
-import { fmtNum } from '@/lib/format'
+import { fmtNum, fmtUomQty } from '@/lib/format'
 
 const props = defineProps({
 	rows: { type: Array, required: true }, // WO terpilih
@@ -30,9 +30,11 @@ const externalReservations = computed(() => {
 
 const title = computed(() =>
 	phase.value === 'result'
-		? okList.value.length
-			? 'Partially created'
-			: 'All failed'
+		? !failList.value.length
+			? 'Request created'
+			: okList.value.length
+				? 'Partially created'
+				: 'All failed'
 		: `Handover Request (${props.rows.length} Work Orders)`,
 )
 
@@ -42,12 +44,9 @@ function rowQty(r) {
 	}
 	const alloc = preview.value?.allocations?.find((a) => a.work_order === r.name)
 	if (alloc) {
-		const qty = alloc.allocated_qty
 		const rem = alloc.unrequested_remainder
-		const uom = r.stock_uom || ''
-		return rem > 0
-			? `${fmtNum(qty)} ${uom} (sisa ${fmtNum(rem)})`
-			: `${fmtNum(qty)} ${uom}`
+		const main = fmtUomQty(alloc.allocated_qty, r)
+		return rem > 0 ? `${main} (sisa ${fmtUomQty(rem, r)})` : main
 	}
 	const qty = r.expected_units != null ? r.expected_units : Math.round(Number(r.produced_qty || 0))
 	return `${fmtNum(qty)} ${r.display_uom || r.stock_uom || ''}`
@@ -59,45 +58,34 @@ async function submit() {
 	okList.value = []
 	failList.value = []
 
-	// Route multi selection through one group call when same item and company (>= 2 rows)
-	const items = new Set(props.rows.map((r) => r.production_item))
-	const companies = new Set(props.rows.map((r) => r.company))
-	const canGroup = props.rows.length >= 2 && items.size === 1 && companies.size <= 1
-
-	if (canGroup) {
+	// One submit per item + company: each earlier MR changes the pool, so every
+	// partition is re-previewed just before its own call and must still match
+	// the allocation the user confirmed.
+	const partitions = new Map()
+	for (const r of props.rows) {
+		const key = `${r.production_item}\u0000${r.company || ''}`
+		partitions.set(key, [...(partitions.get(key) || []), r.name])
+	}
+	const confirmed = Object.fromEntries((preview.value.allocations || []).map((a) => [a.work_order, a.allocated_qty]))
+	for (const names of partitions.values()) {
+		const fail = (error) => names.forEach((wo) => failList.value.push({ wo, error }))
 		try {
-			const allocMap = {}
-			if (preview.value && preview.value.allocations) {
-				for (const a of preview.value.allocations) {
-					allocMap[a.work_order] = a.allocated_qty
-				}
+			const fresh = await previewHandoverRequest(names)
+			const allocs = Object.fromEntries((fresh.allocations || []).map((a) => [a.work_order, a]))
+			if (names.some((n) => !allocs[n] || Number(allocs[n].allocated_qty) !== Number(confirmed[n]))) {
+				fail('Status alokasi atau stok telah berubah sejak preview. Muat ulang halaman.')
+				continue
 			}
-			const res = await createGroupRequest(
-				props.rows.map((r) => r.name),
-				Object.keys(allocMap).length ? allocMap : null,
-				preview.value?.fingerprint,
-			)
-			const mr = (res && res.material_request) || ''
-			okList.value.push(`${mr} (Group: ${props.rows.length} Work Orders)`)
+			if (names.every((n) => Number(allocs[n].allocated_qty) <= 0)) {
+				fail('Alokasi stok 0 (stok habis atau tereservasi)')
+				continue
+			}
+			const res = names.length >= 2
+				? await createGroupRequest(names, Object.fromEntries(names.map((n) => [n, allocs[n].allocated_qty])), fresh.fingerprint)
+				: await createRequest(names[0], allocs[names[0]].allocated_qty, allocs[names[0]].fingerprint || fresh.fingerprint)
+			okList.value.push(`${(res && res.material_request) || ''} (${names.join(', ')})`)
 		} catch (e) {
-			failList.value.push({ wo: 'Group', error: e.message })
-		}
-	} else {
-		// Individual loop: single selection OR mixed-item/mixed-company bulk
-		for (const r of props.rows) {
-			try {
-				const alloc = preview.value?.allocations?.find((a) => a.work_order === r.name)
-				const qtyToRequest = alloc ? alloc.allocated_qty : null
-				if (qtyToRequest !== null && qtyToRequest <= 0) {
-					failList.value.push({ wo: r.name, error: 'Alokasi stok 0 (stok habis atau tereservasi)' })
-					continue
-				}
-				const fp = alloc?.fingerprint || preview.value?.fingerprint || null
-				const res = await createRequest(r.name, qtyToRequest, fp)
-				okList.value.push(`${res.material_request} (${r.name})`)
-			} catch (e) {
-				failList.value.push({ wo: r.name, error: e.message })
-			}
+			fail(e.message)
 		}
 	}
 	submitting.value = false

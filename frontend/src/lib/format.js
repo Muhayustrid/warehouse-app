@@ -2,6 +2,16 @@ export function fmtNum(value) {
 	return Number(value == null ? 0 : value).toLocaleString('en-US')
 }
 
+// Stock qty -> "39 Pack · 468 Pcs" via the row's display UOM; stock UOM only
+// when there is no alternate UOM with a valid factor (never relabel).
+export function fmtUomQty(qty, r) {
+	const stock = `${fmtNum(qty)} ${r?.stock_uom || ''}`.trim()
+	const factor = Number(r?.display_conversion_factor)
+	if (!r?.display_uom || r.display_uom === r.stock_uom || !isFinite(factor) || factor <= 0) return stock
+	const packs = Math.round((Number(qty || 0) / factor) * 100) / 100
+	return `${fmtNum(packs)} ${r.display_uom} · ${stock}`
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // "01 Oct 2026" — diparse dari string TANPA Date utk menghindari pergeseran

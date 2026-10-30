@@ -17,11 +17,10 @@ export function errText(e) {
 }
 
 // Frappe membungkus hasil whitelisted method dalam {"message": ...} —
-// frappeRequest mengembalikan data.message; fetch tipis ini menirunya.
+// frappeRequest mengembalikan data.message; fetch tipis ini menirunya —
+// juga bila respons membawa _server_messages (mis. alert msgprint saat MR submit).
 function unwrap(data) {
-	return data && typeof data === 'object' && 'message' in data && Object.keys(data).length === 1
-		? data.message
-		: data
+	return data && typeof data === 'object' && 'message' in data ? data.message : data
 }
 
 async function request(url, options) {

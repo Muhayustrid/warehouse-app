@@ -6,7 +6,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { Boxes } from 'lucide-vue-next'
 import { createGroupRequest, previewHandoverRequest } from '@/data/board'
-import { fmtNum } from '@/lib/format'
+import { fmtNum, fmtUomQty } from '@/lib/format'
 
 const props = defineProps({
 	rows: { type: Array, required: true }, // anggota grup (≥2, satu item grup)
@@ -28,6 +28,7 @@ const externalReservations = computed(() => {
 const r0 = computed(() => props.rows[0] || {})
 const itemName = computed(() => r0.value.item_name || r0.value.production_item || '')
 const uom = computed(() => preview.value?.groups?.[0]?.stock_uom || r0.value.stock_uom || '')
+const qtyLabel = (qty) => fmtUomQty(qty, { ...r0.value, stock_uom: uom.value })
 const total = computed(() => {
 	if (preview.value && preview.value.allocations) {
 		return preview.value.allocations.reduce((s, a) => s + Number(a.allocated_qty || 0), 0)
@@ -125,10 +126,10 @@ async function submit() {
 				One request for {{ rows.length }} Work Orders of {{ itemName }}.
 			</p>
 			<div class="dlg-context">
-				<strong>{{ fmtNum(total) }} {{ uom }}</strong>
+				<strong>{{ qtyLabel(total) }}</strong>
 				<span> total dialokasikan dari {{ rows.length }} Work Orders</span>
 				<div v-if="unrequestedTotal > 0" style="margin-top: 4px; font-size: 12px; color: #b45309;">
-					Sisa {{ fmtNum(unrequestedTotal) }} {{ uom }} belum diminta (melebihi stok tersedia).
+					Sisa {{ qtyLabel(unrequestedTotal) }} belum diminta (melebihi stok tersedia).
 				</div>
 			</div>
 			<div v-for="g in preview?.groups || []" :key="`${g.item_code}:${g.source_warehouse}`" class="dlg-note">
@@ -139,8 +140,8 @@ async function submit() {
 				</div>
 			</div>
 			<div v-for="a in preview?.allocations || []" :key="a.work_order" class="dlg-note">
-				{{ a.work_order }}: {{ fmtNum(a.allocated_qty) }} {{ uom }} diminta,
-				{{ fmtNum(a.unrequested_remainder) }} {{ uom }} belum diminta.
+				{{ a.work_order }}: {{ qtyLabel(a.allocated_qty) }} diminta,
+				{{ qtyLabel(a.unrequested_remainder) }} belum diminta.
 			</div>
 			<p v-if="unrequestedTotal > 0" class="dlg-note">Alokasi administratif GBJ, bukan atribusi konsumsi R&amp;D ke WO tertentu.</p>
 			<div v-for="g in preview?.groups || []" :key="`unresolved:${g.item_code}:${g.source_warehouse}`" class="dlg-note">
