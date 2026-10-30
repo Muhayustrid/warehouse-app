@@ -65,9 +65,10 @@ def get_items(warehouse, posting_date, posting_time, company, item_code=None, ig
 		item = items.get(code)
 		if not item or item.has_serial_no or item.has_batch_no:
 			continue
-		custom_uom = item.get(ITEM_UOM_FIELD)
 		stock_uom = item.stock_uom or row.get("stock_uom")
-		if not custom_uom or custom_uom == stock_uom:
+		# no / same inventory UOM: fill the columns in stock UOM (factor 1) so every row is countable
+		custom_uom = item.get(ITEM_UOM_FIELD) or stock_uom
+		if not custom_uom:
 			continue
 		candidates.append((row, item, custom_uom))
 
@@ -84,7 +85,7 @@ def get_items(warehouse, posting_date, posting_time, company, item_code=None, ig
 		factors[(d.parent, d.uom)] = flt(d.conversion_factor)
 
 	for row, item, custom_uom in candidates:
-		factor = factors.get((item.name, custom_uom))
+		factor = 1 if custom_uom == (item.stock_uom or row.get("stock_uom")) else factors.get((item.name, custom_uom))
 		if not factor or factor <= 0:
 			continue
 

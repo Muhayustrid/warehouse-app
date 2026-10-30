@@ -193,6 +193,7 @@ def _run_gate(check):
 			"native_row_untouched",
 			"no_change_throws_native",
 			"fetch_items_enriched",
+			"fetch_items_stock_uom",
 		):
 			check(name, True, skip_reason)
 	else:
@@ -639,6 +640,24 @@ def _run_sr_cases(check, stock, alt, invalid, item_group, company, warehouse):
 		)
 	except Exception as e:
 		check("fetch_items_enriched", False, f"{type(e).__name__}: {str(e)[:200]}")
+
+	# --- Case 9: item without inventory UOM still gets the columns, in stock UOM ---
+	try:
+		frappe.db.set_value("Item", item.name, upgrade.ITEM_UOM_FIELD, None)
+		fetch_rows = sr_get_items(warehouse, nowdate(), nowtime(), company, item_code=item.name)
+		row = fetch_rows[0] if fetch_rows else {}
+		ok = bool(
+			fetch_rows
+			and row.get(SR_UOM_FIELD) == stock
+			and flt(row.get(SR_FACTOR_FIELD)) == 1
+			and abs(flt(row.get(SR_BEFORE_FIELD)) - flt(row.get("qty"))) < 0.001
+			and abs(flt(row.get(SR_AFTER_FIELD)) - flt(row.get("qty"))) < 0.001
+		)
+		check("fetch_items_stock_uom", ok, f"item={item.name}, row={dict(row) if row else None}, want uom={stock}")
+	except Exception as e:
+		check("fetch_items_stock_uom", False, f"{type(e).__name__}: {str(e)[:200]}")
+	finally:
+		frappe.db.set_value("Item", item.name, upgrade.ITEM_UOM_FIELD, alt)
 
 
 def _teardown(check):
