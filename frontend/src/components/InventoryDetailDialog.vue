@@ -376,6 +376,7 @@ const desk = (doctype, name) =>
    popover export + panel kanan (skin .pv-table/.pv-select/.inv-dialog sendiri
    sudah didefinisikan di InventoryPage.vue, non-scoped, berlaku di sini) */
 .inv-dialog .popoverlay { position: fixed; inset: 0; z-index: 60; }
+.inv-dialog .filterpanel { z-index: 61; }
 .inv-dialog .pop-enter-active { transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.32, 0.72, 0, 1); }
 .inv-dialog .pop-leave-active { transition: opacity 0.12s ease; }
 .inv-dialog .pop-enter-from { opacity: 0; transform: scale(0.96) translateY(-4px); }

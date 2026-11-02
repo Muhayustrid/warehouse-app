@@ -40,9 +40,12 @@ export async function downloadExport(params) {
 		throw new Error(String(msg).replace(/<[^>]*>/g, ''))
 	}
 	const name = /filename="?([^";]+)"?/.exec(res.headers.get('Content-Disposition') || '')?.[1]
+	const url = URL.createObjectURL(await res.blob())
 	const a = document.createElement('a')
-	a.href = URL.createObjectURL(await res.blob())
+	a.href = url
 	a.download = decodeURIComponent(name || 'export.' + params.file_format)
+	document.body.appendChild(a)
 	a.click()
-	URL.revokeObjectURL(a.href)
+	a.remove()
+	setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

@@ -44,8 +44,11 @@ const tabs = [
 const tab = ref('balance')
 
 // ---- filter bersama ----
+const company = ref(null)
+const companyOptions = ref([])
 const warehouse = ref(null)
 const warehouseOptions = ref([])
+const warehouseCompany = ref({})
 const itemGroupOptions = ref([])
 const can = ref({ export: false })
 const item = ref('')
@@ -86,12 +89,20 @@ const periodLabel = computed(() => {
 })
 
 const activeFilterCount = computed(
-	() => [item.value.trim(), itemGroup.value, warehouse.value].filter(Boolean).length,
+	() => [item.value.trim(), itemGroup.value, company.value, warehouse.value].filter(Boolean).length,
+)
+
+// Gudang mengikuti company terpilih (reset saat company berubah)
+const filteredWarehouseOptions = computed(() =>
+	company.value
+		? warehouseOptions.value.filter((w) => warehouseCompany.value?.[w] === company.value)
+		: warehouseOptions.value,
 )
 
 const filters = computed(() => ({
 	...period.value,
 	warehouse: warehouse.value || '',
+	company: company.value || '',
 	item: item.value.trim(),
 	item_group: itemGroup.value || '',
 }))
@@ -99,11 +110,16 @@ const filters = computed(() => ({
 function clearFilters() {
 	item.value = ''
 	itemGroup.value = null
+	company.value = null
 	warehouse.value = null
 	range.value = 'This Month'
 	customFrom.value = ''
 	customTo.value = ''
 }
+
+watch(company, () => {
+	warehouse.value = null
+})
 
 // ---- tabel lazy per tab ----
 function lazyTable(fetcher, extra = () => ({})) {
@@ -177,7 +193,9 @@ onMounted(async () => {
 	active.value.load()
 	try {
 		const opts = await fetchFilterOptions()
+		companyOptions.value = opts?.companies || []
 		warehouseOptions.value = opts?.warehouses || []
+		warehouseCompany.value = opts?.warehouse_company || {}
 		itemGroupOptions.value = opts?.item_groups || []
 		can.value = { export: !!opts?.can_export }
 	} catch (e) {
@@ -238,18 +256,32 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 					<span v-if="periodLabel && tab !== 'balance'">· {{ periodLabel }}</span>
 				</p>
 			</div>
-			<label class="ph-warehouse">
-				<span>Warehouse</span>
-				<Select
-					v-model="warehouse"
-					:options="warehouseOptions"
-					placeholder="All"
-					class="pv-select inv-warehouse-select"
-					showClear
-					filter
-					filterPlaceholder="Search warehouse..."
-				/>
-			</label>
+			<div class="ph-filters">
+				<label class="ph-filter ph-company">
+					<span>Company</span>
+					<Select
+						v-model="company"
+						:options="companyOptions"
+						placeholder="All"
+						class="pv-select inv-filter-select inv-company-select"
+						showClear
+						filter
+						filterPlaceholder="Search company..."
+					/>
+				</label>
+				<label class="ph-filter ph-warehouse">
+					<span>Warehouse</span>
+					<Select
+						v-model="warehouse"
+						:options="filteredWarehouseOptions"
+						placeholder="All"
+						class="pv-select inv-filter-select inv-warehouse-select"
+						showClear
+						filter
+						filterPlaceholder="Search warehouse..."
+					/>
+				</label>
+			</div>
 		</div>
 
 		<div class="panel">
@@ -320,10 +352,21 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 								/>
 							</div>
 							<div class="ffield">
+								<label>Company</label>
+								<Select
+									v-model="company"
+									:options="companyOptions"
+									placeholder="All companies"
+									class="pv-select inv-wfull"
+									showClear
+									filter
+								/>
+							</div>
+							<div class="ffield">
 								<label>Warehouse</label>
 								<Select
 									v-model="warehouse"
-									:options="warehouseOptions"
+									:options="filteredWarehouseOptions"
 									placeholder="All warehouses"
 									class="pv-select inv-wfull"
 									showClear
@@ -698,13 +741,19 @@ const PAGE_REPORT = 'Showing {first} to {last} of {totalRecords} results'
 .inv-exportpanel { width: 200px; }
 .inv-exportpanel .btn { justify-content: flex-start; width: 100%; }
 .inv-toolbar { margin-bottom: 0; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.ph-warehouse { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
-.ph-warehouse .inv-warehouse-select { min-width: 15rem; }
+.ph-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
+.ph-filter,
+.ph-warehouse { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.ph-filter .inv-filter-select,
+.ph-warehouse .inv-warehouse-select { min-width: 14rem; }
 
 /* -- mobile ≤820px: kepala tumpuk, tab geser menyamping, paginator ringkas -- */
 @media (max-width: 820px) {
   .inv-page .page-head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .inv-page .ph-filters { width: 100%; flex-direction: column; align-items: stretch; gap: 8px; margin-top: 0; }
+  .inv-page .ph-filter,
   .inv-page .ph-warehouse { width: 100%; }
+  .inv-page .ph-filter .inv-filter-select,
   .inv-page .ph-warehouse .inv-warehouse-select { flex: 1; min-width: 0; }
   .inv-page .inv-toolbar { flex-wrap: wrap; gap: 8px; }
   /* tab ledger: baris sendiri, geser menyamping sendiri — jangan potong label */

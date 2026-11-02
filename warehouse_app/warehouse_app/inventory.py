@@ -59,7 +59,7 @@ def _page(page, page_len):
 
 def _sle_filters(
 	from_date=None, to_date=None, warehouse=None, item=None, item_group=None, item_code=None,
-	search=None, search_by="name",
+	search=None, search_by="name", company=None,
 ):
 	"""WHERE atas alias s (SLE) + i (Item). Kembali (sql, values, butuh_join_item).
 	item = cari (like kode/nama); item_code = satu item persis (modal detail);
@@ -79,6 +79,9 @@ def _sle_filters(
 	if warehouse:
 		conds.append("s.warehouse = %(warehouse)s")
 		values["warehouse"] = warehouse
+	if company:
+		conds.append("s.company = %(company)s")
+		values["company"] = company
 	need_item = False
 	if item and str(item).strip():
 		conds.append("(s.item_code like %(item)s or i.item_name like %(item)s)")
@@ -119,12 +122,13 @@ def stock_cards(
 	search_by="name",
 	page=1,
 	page_len=20,
+	company=None,
 ):
 	"""Tab Stock Cards + tabel modal detail: satu baris = satu SLE, terbaru dulu."""
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	page, page_len = _page(page, page_len)
 	rows, total = _stock_cards(
-		(from_date, to_date, warehouse, item, item_group, item_code, search, search_by),
+		(from_date, to_date, warehouse, item, item_group, item_code, search, search_by, company),
 		page_len,
 		(page - 1) * page_len,
 	)
@@ -283,6 +287,7 @@ def movements(
 	search_by="name",
 	page=1,
 	page_len=20,
+	company=None,
 ):
 	"""Tab Inventory Movements: satu baris = item+gudang dalam periode.
 
@@ -293,7 +298,7 @@ def movements(
 	dalam periode, Ending = jumlah semua (= saldo SLE terakhir periode)."""
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	page, page_len = _page(page, page_len)
-	agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by)
+	agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by, company)
 	totals = {
 		"begin_value": sum(r.bv for r in agg),
 		"in_value": sum(r.iv for r in agg),
@@ -303,12 +308,12 @@ def movements(
 	rows = _movement_rows(agg[(page - 1) * page_len : page * page_len])
 	return {"rows": rows, "total": len(agg), "totals": totals}
 
-def _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by):
+def _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by, company=None):
 	"""Agregat mentah per item+gudang (qty stock UOM), urut item_code, warehouse."""
 	from_dt = str(getdate(from_date)) if from_date else "1900-01-01"
 	# history sebelum periode tetap discan (Beginning), jadi from_date tak masuk WHERE
 	where, values, _ = _sle_filters(
-		None, to_date, warehouse, item, item_group, item_code, search, search_by
+		None, to_date, warehouse, item, item_group, item_code, search, search_by, company
 	)
 	values["from"] = from_dt
 
@@ -387,7 +392,8 @@ BALANCE_QTY = ("actual_qty", "reserved_qty", "projected_qty")
 
 @frappe.whitelist()
 def stock_balance(
-	warehouse=None, item=None, item_group=None, search=None, search_by="name", page=1, page_len=20
+	warehouse=None, item=None, item_group=None, search=None, search_by="name", page=1, page_len=20,
+	company=None,
 ):
 	"""Tab Stock Balance: saldo saat ini per item+gudang (Bin, actual_qty != 0),
 	qty & valuation rate dalam Default Inventory UOM (fallback stock UOM)."""
@@ -397,6 +403,9 @@ def stock_balance(
 	if warehouse:
 		conds.append("b.warehouse = %(warehouse)s")
 		values["warehouse"] = warehouse
+	if company:
+		conds.append("w.company = %(company)s")
+		values["company"] = company
 	if item and str(item).strip():
 		conds.append("(b.item_code like %(item)s or i.item_name like %(item)s)")
 		values["item"] = f"%{str(item).strip()}%"
@@ -410,9 +419,9 @@ def stock_balance(
 		col = SEARCH_BY.get(search_by, SEARCH_BY["name"]).replace("s.", "b.")
 		conds.append(f"{col} like %(search)s")
 		values["search"] = f"%{str(search).strip()}%"
-	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse"})
+	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse", "Company": "w.company"})
 	where = " and ".join(conds)
-	base = f"""from `tabBin` b {UOM_JOIN.replace("s.item_code", "b.item_code")} where {where}"""
+	base = f"""from `tabBin` b join `tabWarehouse` w on w.name = b.warehouse {UOM_JOIN.replace("s.item_code", "b.item_code")} where {where}"""
 
 	total, total_value = frappe.db.sql(f"select count(*), ifnull(sum(b.stock_value), 0) {base}", values)[0]
 	values.update(limit=page_len, offset=(page - 1) * page_len)
@@ -434,7 +443,7 @@ def inventory_info(item_code, warehouse):
 	"""Accordion "Inventory Information" di modal detail: master item + Bin saat ini."""
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	conds, values = ["b.item_code = %(item)s", "b.warehouse = %(wh)s"], {"item": item_code, "wh": warehouse}
-	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse"})
+	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse", "Company": "w.company"})
 	info = frappe.db.sql(
 		f"""
 		select i.item_name, i.item_group, i.stock_uom, i.description, {UOM_COLS},
@@ -472,20 +481,27 @@ def inventory_info(item_code, warehouse):
 
 @frappe.whitelist()
 def filter_options():
-	"""Opsi dropdown Warehouse + Item Group. Sengaja tidak lewat get_list
+	"""Opsi dropdown Company + Warehouse + Item Group. Sengaja tidak lewat get_list
 	Warehouse/Item Group: Custom DocPerm pos_next di Warehouse menimpa perm
 	standar sehingga Stock User kena 403 — yang dibutuhkan di sini hanya read
 	ledger. Warehouse = yang punya Bin (pernah bertransaksi), bukan 800+ gudang."""
 	frappe.has_permission("Stock Ledger Entry", "read", throw=True)
 	conds, values = ["1=1"], {}
-	_apply_user_permissions(conds, values, {"Warehouse": "warehouse"})
-	warehouses = frappe.db.sql_list(
-		f"select distinct warehouse from `tabBin` where {' and '.join(conds)} order by warehouse",
+	_apply_user_permissions(conds, values, {"Warehouse": "b.warehouse", "Company": "w.company"})
+	warehouses = frappe.db.sql(
+		f"""select distinct b.warehouse as warehouse, w.company as company
+		from `tabBin` b join `tabWarehouse` w on w.name = b.warehouse
+		where {' and '.join(conds)}
+		order by b.warehouse""",
 		values,
+		as_dict=True,
 	)
+	companies = sorted({r.company for r in warehouses if r.company})
 	groups = frappe.db.sql_list("select name from `tabItem Group` order by name")
 	return {
-		"warehouses": warehouses,
+		"warehouses": [r.warehouse for r in warehouses],
+		"warehouse_company": {r.warehouse: r.company for r in warehouses},
+		"companies": companies,
 		"item_groups": groups,
 		"can_export": bool(frappe.has_permission("Stock Ledger Entry", "export")),
 	}
@@ -517,12 +533,13 @@ def export(
 	item_code=None,
 	search=None,
 	search_by="name",
+	company=None,
 ):
 	"""Unduh tab Stock Cards / Inventory Movements (atau Stock Cards modal bila
 	item_code+warehouse) sesuai filter — kolom sama dgn layar, qty UOM inventaris."""
 	frappe.has_permission("Stock Ledger Entry", "export", throw=True)
 	if kind == "movements":
-		agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by)
+		agg = _movement_agg(from_date, to_date, warehouse, item, item_group, item_code, search, search_by, company)
 		data = [MOVEMENT_HEADER] + [
 			[
 				r["item_code"], r["item_name"], r["warehouse"], r["uom"],
@@ -540,7 +557,7 @@ def export(
 		# ponytail: satu file dibangun di memori; batas EXPORT_MAX baris —
 		# perlu export bertahap (background + File) bila periode melebihi itu.
 		rows, total = _stock_cards(
-			(from_date, to_date, warehouse, item, item_group, item_code, search, search_by), EXPORT_MAX, 0
+			(from_date, to_date, warehouse, item, item_group, item_code, search, search_by, company), EXPORT_MAX, 0
 		)
 		if total > EXPORT_MAX:
 			frappe.throw(
