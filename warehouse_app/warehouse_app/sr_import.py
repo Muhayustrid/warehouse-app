@@ -51,6 +51,7 @@ from frappe import _
 from frappe.utils import cint, cstr, escape_html, flt, nowdate, nowtime
 
 from warehouse_app.inventory_uom import ITEM_UOM_FIELD
+from warehouse_app.sr_access import assert_sr_access
 from warehouse_app.sr_uom import (
 	QTY_UOM_DECIMALS,
 	SR_AFTER_FIELD,
@@ -201,11 +202,9 @@ def make_template_bytes(rows, file_type="xlsx"):
 
 
 @frappe.whitelist(methods=["POST"])
-def download_stock_count_template(warehouse=None, include_zero_stock=0, file_type="xlsx"):
-	frappe.has_permission("Stock Reconciliation", "create", throw=True)
+def download_stock_count_template(warehouse=None, include_zero_stock=0, file_type="xlsx", company=None):
 	warehouse = cstr(warehouse).strip()
-	if not warehouse:
-		frappe.throw(_("Warehouse is required."))
+	assert_sr_access("create", warehouse=warehouse, company=company, require_warehouse=True)
 	rows = build_count_rows(warehouse, cint(include_zero_stock))
 	file_type = file_type if file_type in ("xlsx", "csv") else "xlsx"
 	name = "Stock_Count_{0}_{1}".format(frappe.scrub(warehouse), nowdate().replace("-", ""))
@@ -719,7 +718,9 @@ def upload_stock_count(filename=None, data=None, company=None, posting_date=None
 	"""File count (base64 murni atau data URL dari FileUploader as_dataurl) +
 	konteks dokumen (company, posting date/time) → dict baris grid untuk form
 	SR. TIDAK membuat dokumen (W26)."""
-	frappe.has_permission("Stock Reconciliation", "create", throw=True)
+	# Early role-only precheck before any base64 decode or file parsing
+	assert_sr_access("create")
+
 	filename = cstr(filename).strip()
 	data = cstr(data).strip()
 	if not filename or not data:
@@ -743,4 +744,16 @@ def upload_stock_count(filename=None, data=None, company=None, posting_date=None
 			)
 		)
 	parsed = parse_count_content(content, filename)
+
+	# Preflight all warehouse contexts before any ledger evaluation
+	rows = (parsed or {}).get("rows") or []
+	for r in rows:
+		wh = cstr(r.get("warehouse")).strip()
+		if not wh:
+			frappe.throw(_("A permitted warehouse is required."), frappe.PermissionError)
+
+	imported_warehouses = sorted({cstr(r.get("warehouse")).strip() for r in rows})
+	for wh in imported_warehouses:
+		assert_sr_access("create", warehouse=wh, company=company, require_warehouse=True)
+
 	return validate_count_rows(parsed, company, posting_date, posting_time)

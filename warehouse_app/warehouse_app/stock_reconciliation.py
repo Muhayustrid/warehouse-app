@@ -15,6 +15,7 @@ from erpnext.stock.doctype.stock_reconciliation.stock_reconciliation import (
 	get_items as native_get_items,
 )
 from warehouse_app.inventory_uom import ITEM_UOM_FIELD
+from warehouse_app.sr_access import assert_sr_access
 from warehouse_app import sr_uom
 from warehouse_app.sr_uom import (
 	SR_AFTER_FIELD,
@@ -29,6 +30,7 @@ from warehouse_app.sr_uom import (
 @frappe.whitelist()
 def get_items(warehouse, posting_date, posting_time, company, item_code=None, ignore_empty_stock=False):
 	"""Override of native get_items: returns pre-computed custom UOM columns."""
+	assert_sr_access("write", warehouse=warehouse, company=company, require_warehouse=True)
 	res = native_get_items(
 		warehouse,
 		posting_date,
@@ -152,9 +154,10 @@ def compute_row(
 	valuation_rate=None,
 	allow_zero_valuation_rate=0,
 	batch_no=None,
+	company=None,
 ) -> dict:
 	"""Compute per-UOM conversion and native values for a single Stock Reconciliation row."""
-	frappe.has_permission("Stock Reconciliation", "write", throw=True)
+	assert_sr_access("write", warehouse=warehouse, company=company, require_warehouse=True)
 
 	if not item_code:
 		frappe.throw(_("Item Code wajib diisi."))

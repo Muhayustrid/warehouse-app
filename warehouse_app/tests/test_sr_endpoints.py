@@ -132,6 +132,37 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
         self.addCleanup(self.flt_sr_uom_patcher.stop)
         self.addCleanup(self.flt_sr_patcher.stop)
 
+        self.orig_get_doc = frappe.get_doc
+        self.orig_user = getattr(frappe.session, "user", "Administrator")
+        self.orig_apps = getattr(frappe, "get_installed_apps", lambda: [])
+
+        frappe.session.user = "Administrator"
+        frappe.get_installed_apps = MagicMock(return_value=["frappe", "erpnext", "warehouse_app"])
+
+        def faithful_get_doc(doctype, name=None):
+            if isinstance(doctype, dict):
+                return frappe._dict(doctype)
+            if doctype == "Warehouse":
+                d = frappe._dict(name=name, company="Test Company", is_group=0, disabled=0)
+                d.has_permission = MagicMock(return_value=True)
+                return d
+            if doctype == "Company":
+                d = frappe._dict(name=name or "Test Company")
+                d.has_permission = MagicMock(return_value=True)
+                return d
+            d = frappe._dict(name=name)
+            d.has_permission = MagicMock(return_value=True)
+            return d
+
+        frappe.get_doc = MagicMock(side_effect=faithful_get_doc)
+
+        def cleanup_fixtures():
+            frappe.get_doc = self.orig_get_doc
+            frappe.session.user = self.orig_user
+            frappe.get_installed_apps = self.orig_apps
+
+        self.addCleanup(cleanup_fixtures)
+
     def test_fetch_round_trip_stable(self):
         native_row = {
             "item_code": "ITEM-PACK",
@@ -515,8 +546,8 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
             self.assertIn("Item Code", str(ctx.exception))
             _stock_ledger.get_previous_sle.assert_not_called()
 
-            # Missing warehouse (in old code this proceeded to ledger read with empty warehouse!)
-            with self.assertRaises(frappe.ValidationError) as ctx:
+            # Missing warehouse is denied by security guard before ledger read
+            with self.assertRaises(frappe.PermissionError) as ctx:
                 stock_reconciliation.compute_row(
                     item_code="ITEM-1",
                     warehouse="",
@@ -524,7 +555,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
                     posting_time="10:00:00",
                     uom="Nos",
                 )
-            self.assertIn("Warehouse", str(ctx.exception))
+            self.assertIn("warehouse", str(ctx.exception).lower())
             _stock_ledger.get_previous_sle.assert_not_called()
 
             # Missing posting_date (in old code this proceeded to ledger read!)
