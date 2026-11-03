@@ -58,7 +58,7 @@ import frappe
 from frappe.utils import flt, nowdate, nowtime
 
 from warehouse_app import upgrade
-from warehouse_app.inventory_uom import (
+from warehouse_app.sr_uom import (
 	SR_AFTER_FIELD,
 	SR_BEFORE_FIELD,
 	SR_DIFF_FIELD,

@@ -15,12 +15,11 @@
 # Keputusan desain (plan W25 disetujui user + ruling advisor 2026-09-29):
 #   - Custom flat importer, BUKAN reuse Data Import (formatnya tetap musuh
 #     pengguna; hak aksesnya pun teritori System/Import Manager).
-#   - Konversi UOM tetap DIJAGA hook W23 (apply_sr_inventory_uom,
-#     before_validate) saat draft disimpan. Endpoint menghitung qty/rate native
-#     untuk grid dengan MATEMATIKA YANG SAMA, karena fill grid programatik
-#     (add_child + $.extend + refresh_field) TIDAK menjalankan handler baris
-#     klien (custom_uom/custom_qty_after dst) — baris tanpa kolom turunan akan
-#     menyimpan nilai mentah.
+#   - Konversi UOM tetap DIJAGA sr_uom.apply_to_doc saat draft disimpan.
+#     Endpoint menghitung qty/rate native untuk grid dengan MATEMATIKA YANG SAMA,
+#     karena fill grid programatik (add_child + $.extend + refresh_field) TIDAK
+#     menjalankan handler baris klien (custom_uom/custom_qty_after dst) — baris
+#     tanpa kolom turunan akan menyimpan nilai mentah.
 #   - Multicompany-safe: company dari DOKUMEN — dialog memfilter Warehouse ke
 #     doc.company dan validasi menolak gudang milik perusahaan lain.
 #   - Kolom "Current Qty" di template = snapshot info saat download; saldo
@@ -51,14 +50,18 @@ import frappe
 from frappe import _
 from frappe.utils import cint, cstr, escape_html, flt, nowdate, nowtime
 
-from warehouse_app.inventory_uom import (
-	ITEM_UOM_FIELD,
+from warehouse_app.inventory_uom import ITEM_UOM_FIELD
+from warehouse_app.sr_uom import (
+	QTY_UOM_DECIMALS,
 	SR_AFTER_FIELD,
 	SR_BEFORE_FIELD,
 	SR_DIFF_FIELD,
 	SR_FACTOR_FIELD,
 	SR_RATE_FIELD,
 	SR_UOM_FIELD,
+	compute_row,
+	precisions,
+	resolve_factors,
 )
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -460,8 +463,8 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 	(multicompany-safe): setiap gudang wajib milik company dokumen.
 
 	Setiap kolom turunan (custom W23 + qty/valuation_rate native) dihitung
-	server-side di sini — matematika mengikuti hook apply_sr_inventory_uom
-	(satu jalur konversi yang teruji); saat draft disimpan, hook menghitung
+	server-side di sini — matematika mengikuti sr_uom.apply_to_doc
+	(satu jalur konversi yang teruji); saat draft disimpan, konversi menghitung
 	ulang nilai yang sama. Ledger dibaca pada posting_date/posting_time yang
 	DIBERIKAN (mirror native get_items) supaya SR backdated tetap benar."""
 	company = cstr(company).strip()
@@ -500,19 +503,12 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 			fields=["name", "company", "is_group", "disabled"],
 		)
 	}
-	conv_needed = {
-		(r["item_code"], r["uom"])
+	pairs = [
+		(r["item_code"], r["uom"], items[r["item_code"]].stock_uom)
 		for r in rows
-		if items.get(r["item_code"]) and r["uom"] != items[r["item_code"]].stock_uom
-	}
-	factors = {}
-	if conv_needed:
-		for d in frappe.get_all(
-			"UOM Conversion Detail",
-			filters={"parent": ("in", sorted({c[0] for c in conv_needed}))},
-			fields=["parent", "uom", "conversion_factor"],
-		):
-			factors[(d.parent, d.uom)] = flt(d.conversion_factor)
+		if items.get(r["item_code"]) and r.get("uom")
+	]
+	factors = resolve_factors(pairs)
 
 	seen = set()
 	# Semua nilai r[...] berasal dari file upload → escape sebelum masuk pesan
@@ -572,16 +568,14 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 		if not r["uom"]:
 			errors.append(_("Row {0}: UOM is required when Counted Qty is filled.").format(n))
 			continue
-		factor = 1.0
-		if r["uom"] != item.stock_uom:
-			factor = factors.get((item.name, r["uom"]))
-			if not factor:
-				errors.append(
-					_(
-						"Row {0}: UOM {1} is not valid for Item {2}. Use the Stock UOM or add it to the item's UOM conversion table."
-					).format(n, frappe.bold(escape_html(r["uom"])), frappe.bold(item.name))
-				)
-				continue
+		factor = factors.get((item.name, r["uom"]))
+		if not factor:
+			errors.append(
+				_(
+					"Row {0}: UOM {1} is not valid for Item {2}. Use the Stock UOM or add it to the item's UOM conversion table."
+				).format(n, frappe.bold(escape_html(r["uom"])), frappe.bold(item.name))
+			)
+			continue
 		key = (item.name, r["warehouse"])
 		if key in seen:
 			errors.append(
@@ -645,7 +639,7 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 	kept, matched = [], 0
 	for r in rows:
 		current, system_rate = ledger_snapshot(r["item_code"], r["warehouse"])
-		before = flt(current) / r["_factor"]
+		before = flt(flt(current) / r["_factor"], QTY_UOM_DECIMALS)
 		# Toleransi 0.0005 (di bawah presisi 3 desimal kolom before): pembulatan
 		# bisa membuat qty "berubah" versi parse ternyata identik versi native —
 		# native remove_items_with_no_change akan membuangnya juga saat simpan.
@@ -676,39 +670,43 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 		stats["message"] = _("All counts match the current stock. Nothing to import.")
 		return stats
 
+	prec = precisions()
 	use_serial_batch_fields = cint(
 		frappe.db.get_single_value("Stock Settings", "use_serial_batch_fields")
 	)
 	grid_rows = []
 	for r in kept:
-		current, system_rate, before = r["_snapshot"]
+		current, system_rate, _before = r["_snapshot"]
 		factor = r["_factor"]
 		counted = flt(r["counted"])
+		rate = r["rate"]
+		computed = compute_row(
+			factor=factor,
+			ledger_qty=current,
+			qty_after=counted,
+			rate_per_uom=rate,
+			qty=current,
+			valuation_rate=(None if rate is not None else (system_rate or None)),
+			prec=prec,
+		)
 		row = {
 			"item_code": r["item_code"],
 			"item_name": items[r["item_code"]].item_name or r["item_code"],
 			"warehouse": r["warehouse"],
 			"stock_uom": items[r["item_code"]].stock_uom,
 			SR_UOM_FIELD: r["uom"],
-			SR_FACTOR_FIELD: factor,
+			SR_FACTOR_FIELD: computed[SR_FACTOR_FIELD],
 			"current_qty": current,
 			"current_valuation_rate": system_rate,
-			SR_BEFORE_FIELD: flt(before, 3),
-			SR_AFTER_FIELD: counted,
-			SR_DIFF_FIELD: flt(counted - flt(before, 3), 3),
-			# native qty (stock UOM) & valuation_rate — matematika hook W23.
-			# Rate kosong = saldo ledger (prefill gaya native fetch); saldo-0 →
-			# None (bukan 0 eksplisit) supaya native backfill saat submit,
-			# bukan "Valuation Rate required".
-			"qty": flt(counted * factor),
-			"valuation_rate": flt(r["rate"] / factor) if r["rate"] is not None else (system_rate or None),
+			SR_BEFORE_FIELD: computed[SR_BEFORE_FIELD],
+			SR_AFTER_FIELD: computed[SR_AFTER_FIELD],
+			SR_DIFF_FIELD: computed[SR_DIFF_FIELD],
+			"qty": computed["qty"],
+			"valuation_rate": computed["valuation_rate"],
 			"use_serial_batch_fields": use_serial_batch_fields,
 		}
-		if r["rate"] is not None:
-			# Kolom review W23 ikut diisi bila file memberi rate eksplisit —
-			# hook menghitung ulang rate/factor yang identik saat simpan
-			# (rate ≠ 0 lolos guard zero-storage-nya).
-			row[SR_RATE_FIELD] = r["rate"]
+		if computed[SR_RATE_FIELD] is not None:
+			row[SR_RATE_FIELD] = computed[SR_RATE_FIELD]
 		grid_rows.append(row)
 
 	stats["added"] = len(grid_rows)

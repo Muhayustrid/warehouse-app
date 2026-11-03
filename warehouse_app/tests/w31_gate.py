@@ -50,12 +50,12 @@ import frappe
 from frappe.utils import flt, nowdate, nowtime
 
 from warehouse_app import upgrade
-from warehouse_app.inventory_uom import (
-	PL_PICKED_FIELD,
+from warehouse_app.inventory_uom import PL_PICKED_FIELD
+from warehouse_app import sr_uom
+from warehouse_app.sr_uom import (
 	SR_AFTER_FIELD,
 	SR_FACTOR_FIELD,
 	SR_UOM_FIELD,
-	apply_sr_inventory_uom,
 )
 from warehouse_app.tests.guard import count_residue, item_inventory_defaults
 
@@ -520,7 +520,7 @@ def _run_pl_cases(check, stock, alt, item_group, company, warehouse):
 				],
 			}
 		)
-		apply_sr_inventory_uom(sr, None)
+		sr_uom.apply_to_doc(sr)
 		batch_row, serial_row = sr.items[0], sr.items[1]
 		ok_batch = bool(
 			abs(flt(batch_row.qty) - 24) < 0.0001  # 2 x 12

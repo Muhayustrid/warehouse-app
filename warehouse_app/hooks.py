@@ -198,9 +198,6 @@ doctype_js = {
 doc_events = {
 	"Item": {"validate": "warehouse_app.inventory_uom.validate_inventory_uom"},
 	"Stock Entry": {"validate": "warehouse_app.inventory_uom.compute_rate_per_uom"},
-	"Stock Reconciliation": {
-		"before_validate": "warehouse_app.inventory_uom.apply_sr_inventory_uom"
-	},
 	# W31: hooks berubah wajib bench clear-cache saat deploy.
 	"Pick List": {
 		"before_validate": "warehouse_app.inventory_uom.apply_pl_inventory_uom",
@@ -241,6 +238,11 @@ doc_events = {
 # extend_doctype_class = {
 # 	"Task": "warehouse_app.custom.task.CustomTaskMixin"
 # }
+extend_doctype_class = {
+	"Stock Reconciliation": [
+		"warehouse_app.overrides.stock_reconciliation.StockReconciliationUOM"
+	]
+}
 
 # Overriding Methods
 # ------------------------------

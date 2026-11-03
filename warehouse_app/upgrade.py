@@ -357,18 +357,20 @@ CLIENT_SCRIPT_MATERIAL_REQUEST = SCRIPT_MARKER + """ — default row UOM on Mate
 # Kolom UOM di baris Stock Reconciliation: hitung stok dalam UOM pilihan
 # baris (default = Default Inventory UOM item, W21). Native qty &
 # valuation_rate tetap sumber kebenaran ledger — dikonversi server-side oleh
-# warehouse_app.inventory_uom.apply_sr_inventory_uom (before_validate). Field
+# warehouse_app.sr_uom.apply_to_doc. Field
 # kosong = native murni; client script di-gate role (SR_GATE_ROLES). W32:
 # kolom native Quantity & Valuation Rate disembunyikan dari grid utk role
 # gate — input pemilik user = kolom per-UOM.
 
 SR_SCRIPT_MARKER = "// warehouse_app W23 stock-reconciliation-uom"
-SR_UOM_FIELD = "custom_uom"
-SR_FACTOR_FIELD = "custom_conversion_factor"
-SR_BEFORE_FIELD = "custom_qty_before"
-SR_AFTER_FIELD = "custom_qty_after"
-SR_RATE_FIELD = "custom_valuation_rate_per_uom"
-SR_DIFF_FIELD = "custom_qty_difference_per_uom"
+from warehouse_app.sr_uom import (
+    SR_AFTER_FIELD,
+    SR_BEFORE_FIELD,
+    SR_DIFF_FIELD,
+    SR_FACTOR_FIELD,
+    SR_RATE_FIELD,
+    SR_UOM_FIELD,
+)
 
 SR_FIELD_SPECS = [
     {
@@ -458,30 +460,34 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 		return SR_GATE_ROLES.some((role) => frappe.user.has_role(role));
 	}
 
-		// use_serial_batch_fields sengaja TIDAK di-skip: form native menyalakan
-		// flag itu di row baru walau item tak ber-serial/batch — konversi aman
-		// selama serial/bundle kosong. batch_no (direct field) juga TIDAK
-		// di-skip sejak W31: baris batch langsung dikonversi seperti baris
-		// biasa; hanya serial_no / serial_and_batch_bundle yang passthrough.
-		function skip_row(row) {
-			return !!(row.serial_no || row.serial_and_batch_bundle);
-		}
+	// use_serial_batch_fields sengaja TIDAK di-skip: form native menyalakan
+	// flag itu di row baru walau item tak ber-serial/batch — konversi aman
+	// selama serial/bundle kosong. batch_no (direct field) juga TIDAK
+	// di-skip sejak W31: baris batch langsung dikonversi seperti baris
+	// biasa; hanya serial_no / serial_and_batch_bundle yang passthrough.
+	function skip_row(row) {
+		return !!(row.serial_no || row.serial_and_batch_bundle);
+	}
 
 	// Default UOM = the item's Default Inventory UOM (W21). Seeding the field
 	// only — the custom_uom handler resolves factor/qty from there.
 	// fallback_stock: new rows only — on refresh it would re-seed old native draft rows and overwrite their qty
-	function apply_default_uom(frm, cdt, cdn, fallback_stock) {
-		const row = locals[cdt][cdn];
+	function apply_default_uom(frm, cdt, cdn, fallback_stock, expected_item, req_id) {
+		const row = locals[cdt] && locals[cdt][cdn];
 		if (!row || !row.item_code || row.custom_uom || skip_row(row)) return;
-		frappe.db
-			.get_value("Item", row.item_code, ["custom_default_inventory_unit_of_measure", "stock_uom"])
+		const item = expected_item || row.item_code;
+		if (expected_item && row.item_code !== expected_item) return;
+		return frappe.db
+			.get_value("Item", item, ["custom_default_inventory_unit_of_measure", "stock_uom"])
 			.then((r) => {
+				if (req_id != null && request_ids.get(cdn) !== req_id) return;
+				const live = locals[cdt] && locals[cdt][cdn];
+				// re-guard: refresh may fire several promises in parallel
+				if (!live || live.item_code !== item || live.custom_uom || skip_row(live)) return;
 				const m = r.message || {};
 				const target = m.custom_default_inventory_unit_of_measure || (fallback_stock && m.stock_uom);
-				const live = locals[cdt][cdn];
-				// re-guard: refresh may fire several promises in parallel
 				if (!target || !live || live.custom_uom || skip_row(live)) return;
-				frappe.model.set_value(cdt, cdn, "custom_uom", target);
+				return frappe.model.set_value(cdt, cdn, "custom_uom", target);
 			});
 	}
 
@@ -496,171 +502,215 @@ CLIENT_SCRIPT_STOCK_RECONCILIATION = SR_SCRIPT_MARKER + """ — UOM columns on S
 		});
 	}
 
-	// Whitelist client: native get_conversion_factor falls back to 1.0 for UOMs
-	// outside the item's table — reject those before any math happens (server
-	// hook stays the hard guard). Sumber: frappe.client.get Item (read Item
-	// dimiliki role stock) membawa tabel uoms; frappe.db.get_list pada child
-	// table istable 403 utk non-Administrator dan promisenya menggantung —
-	// JANGAN pakai get_list child di sini.
-	const UOM_CACHE = {};
-	function allowed_uoms(item_code) {
-		if (UOM_CACHE[item_code]) return Promise.resolve(UOM_CACHE[item_code]);
-		return Promise.all([
-			frappe.db.get_value("Item", item_code, "stock_uom"),
-			frappe.xcall("frappe.client.get", { doctype: "Item", name: item_code }),
-		])
-			.then(([iv, doc]) => {
-				const list = [iv.message.stock_uom].concat((doc.uoms || []).map((r) => r.uom));
-				UOM_CACHE[item_code] = list;
-				return list;
-			})
-			.catch(() => null);
+	const syncing_rows = new Set();
+	const request_ids = new Map();
+
+	function round(v, p) {
+		return flt(v, p);
 	}
 
-	function apply_uom(frm, cdt, cdn) {
-		const row = locals[cdt][cdn];
+	function is_empty(val) {
+		return val == null || val === "";
+	}
+
+	function same_value(a, b) {
+		if (is_empty(a) && is_empty(b)) return true;
+		if (typeof a === "number" || typeof b === "number") {
+			return Math.abs(flt(a) - flt(b)) <= 1e-9;
+		}
+		return a === b;
+	}
+
+	function values_differ(a, b) {
+		return !same_value(a, b);
+	}
+
+	function resolve_val_rate(row) {
+		if (!row) return null;
+		return is_empty(row.valuation_rate) ? row.current_valuation_rate : row.valuation_rate;
+	}
+
+	function snapshot_matches(live, frm, snapshot, opts) {
+		if (!live || !frm || !frm.doc) return false;
+		return (
+			live.item_code === snapshot.item_code &&
+			live.warehouse === snapshot.warehouse &&
+			(live.batch_no || null) === snapshot.batch_no &&
+			live.custom_uom === snapshot.uom &&
+			(!!opts?.omit_qty_after || same_value(live.custom_qty_after, snapshot.qty_after)) &&
+			(!!opts?.omit_rate_per_uom || same_value(live.custom_valuation_rate_per_uom, snapshot.rate_per_uom)) &&
+			same_value(live.qty, snapshot.qty) &&
+			same_value(resolve_val_rate(live), snapshot.valuation_rate) &&
+			(live.allow_zero_valuation_rate ? 1 : 0) === snapshot.allow_zero &&
+			frm.doc.posting_date === snapshot.posting_date &&
+			frm.doc.posting_time === snapshot.posting_time
+		);
+	}
+
+	function sync_row(frm, cdt, cdn, opts) {
+		const row = locals[cdt] && locals[cdt][cdn];
 		if (!row || skip_row(row)) return;
-		if (!row.custom_uom || !row.item_code) {
-			// UOM cleared = back to native-unset state: blank the derived columns
-			// and unset native qty/valuation_rate — native treats an empty qty as
-			// "keep current stock"; a stale 0 or stale converted value would
-			// silently reconcile the bin on save.
-			frappe.model.set_value(cdt, cdn, "custom_conversion_factor", "");
-			frappe.model.set_value(cdt, cdn, "custom_qty_before", "");
-			frappe.model.set_value(cdt, cdn, "custom_qty_after", "");
-			frappe.model.set_value(cdt, cdn, "custom_qty_difference_per_uom", "");
-			frappe.model.set_value(cdt, cdn, "custom_valuation_rate_per_uom", "");
-			frappe.model.set_value(cdt, cdn, "qty", null);
-			frappe.model.set_value(cdt, cdn, "valuation_rate", null);
+
+		// Invalidate any older in-flight requests on every edit to this row
+		const req_id = (request_ids.get(cdn) || 0) + 1;
+		request_ids.set(cdn, req_id);
+
+		const posting_date = frm.doc && frm.doc.posting_date;
+		const posting_time = frm.doc && frm.doc.posting_time;
+
+		// Incomplete row guard: do not call endpoint or clear user values without required context
+		if (
+			!row.item_code ||
+			!row.warehouse ||
+			!row.custom_uom ||
+			!posting_date ||
+			!posting_time
+		) {
 			return;
 		}
-		allowed_uoms(row.item_code).then((allowed) => {
-			const live = locals[cdt][cdn];
-			if (!live || live.custom_uom !== row.custom_uom) return; // stale resolve
-			if (allowed && allowed.indexOf(live.custom_uom) === -1) {
-				frappe.msgprint(
-					__(
-						"UOM {0} is not valid for Item {1}: use the Stock UOM or add it to the item's UOM Conversion table.",
-						[live.custom_uom, live.item_code]
-					)
-				);
-				frappe.model.set_value(cdt, cdn, "custom_uom", "");
-				return;
-			}
-			frappe.xcall("erpnext.stock.get_item_details.get_conversion_factor", {
-				item_code: live.item_code,
-				uom: live.custom_uom,
-			}).then((res) => {
-				const factor = flt(res && res.conversion_factor);
-				if (!factor) return; // server-side validation rejects it on save
-				frappe.model.set_value(cdt, cdn, "custom_conversion_factor", factor).then(() => {
-					const cur = locals[cdt][cdn];
-					if (!cur) return;
-					const before = flt(cur.current_qty) / factor;
-					frappe.model
-						.set_value(cdt, cdn, "custom_qty_before", before)
-						// recount starts from current stock in the chosen UOM; the
-						// custom_qty_after handler drives the native qty
-						.then(() => frappe.model.set_value(cdt, cdn, "custom_qty_after", before))
-						// explicit sync: native qty remains the ledger's source of truth
-						.then(() => frappe.model.set_value(cdt, cdn, "qty", flt(cur.current_qty)))
-						.then(() => {
-							const r = locals[cdt][cdn];
-							if (!r) return;
-							const has_rate =
-								r.custom_valuation_rate_per_uom != null &&
-								r.custom_valuation_rate_per_uom !== "";
-							if (!has_rate && flt(r.current_valuation_rate)) {
-								// backfill: rate cell empty & system rate exists; fetch rows arrive pre-filled
-								frappe.model.set_value(
-									cdt,
-									cdn,
-									"custom_valuation_rate_per_uom",
-									flt(r.current_valuation_rate) * factor
-								);
-							} else if (has_rate) {
-								// pending-rate drive: rate typed before factor arrived; preserves explicit 0
-								frappe.model.set_value(
-									cdt,
-									cdn,
-									"valuation_rate",
-									flt(r.custom_valuation_rate_per_uom) / factor
-								);
-							}
-						});
+
+		const snapshot = {
+			item_code: row.item_code,
+			warehouse: row.warehouse,
+			batch_no: row.batch_no || null,
+			uom: row.custom_uom,
+			qty_after: row.custom_qty_after,
+			rate_per_uom: row.custom_valuation_rate_per_uom,
+			qty: row.qty,
+			valuation_rate: resolve_val_rate(row),
+			posting_date: posting_date,
+			posting_time: posting_time,
+			allow_zero: row.allow_zero_valuation_rate ? 1 : 0,
+		};
+
+		const args = {
+			item_code: snapshot.item_code,
+			warehouse: snapshot.warehouse,
+			batch_no: snapshot.batch_no,
+			posting_date: snapshot.posting_date,
+			posting_time: snapshot.posting_time,
+			uom: snapshot.uom,
+			qty: snapshot.qty,
+			valuation_rate: snapshot.valuation_rate,
+			allow_zero_valuation_rate: snapshot.allow_zero,
+		};
+		if (!opts || !opts.omit_qty_after) {
+			args.qty_after = snapshot.qty_after;
+		}
+		if (!opts || !opts.omit_rate_per_uom) {
+			args.rate_per_uom = snapshot.rate_per_uom;
+		}
+
+		return frappe
+			.xcall("warehouse_app.warehouse_app.stock_reconciliation.compute_row", args)
+			.then((reply) => {
+				if (request_ids.get(cdn) !== req_id) return;
+				const live = locals[cdt] && locals[cdt][cdn];
+				if (!snapshot_matches(live, frm, snapshot, opts)) return;
+
+				syncing_rows.add(cdn);
+				const promises = [];
+				for (const [key, val] of Object.entries(reply || {})) {
+					if (values_differ(live[key], val)) {
+						promises.push(frappe.model.set_value(cdt, cdn, key, val));
+					}
+				}
+				return Promise.all(promises).finally(() => {
+					syncing_rows.delete(cdn);
 				});
+			})
+			.catch(() => {
+				if (request_ids.get(cdn) !== req_id) return;
+				const live = locals[cdt] && locals[cdt][cdn];
+				if (!snapshot_matches(live, frm, snapshot, opts)) return;
+
+				return frappe.model.set_value(cdt, cdn, "custom_uom", "");
 			});
-		});
 	}
 
 	frappe.ui.form.on("Stock Reconciliation Item", {
 		item_code(frm, cdt, cdn) {
 			if (!enabled()) return;
-			frappe.after_ajax(() => apply_default_uom(frm, cdt, cdn, true));
-		},
-		custom_uom(frm, cdt, cdn) {
-			if (!enabled()) return;
-			apply_uom(frm, cdt, cdn);
-		},
-		custom_qty_after(frm, cdt, cdn) {
-			if (!enabled()) return;
-			const row = locals[cdt][cdn];
-			if (!row || !row.custom_uom || skip_row(row)) return;
-			const factor = flt(row.custom_conversion_factor);
-			if (!factor) return;
-			// the native qty handler computes amount/quantity_difference
-			frappe.model.set_value(cdt, cdn, "qty", flt(row.custom_qty_after) * factor);
-			frappe.model.set_value(
-				cdt,
-				cdn,
-				"custom_qty_difference_per_uom",
-				flt(flt(row.custom_qty_after) - flt(row.custom_qty_before))
-			);
-		},
-		// native refetches current_qty (mis. ganti warehouse) setelah resync qty —
-		// turunkan ulang before dari saldo baru sebelum diff dihitung, kalau tidak
-		// diff live = after baru − before lama (campuran salah).
-		current_qty(frm, cdt, cdn) {
-			if (!enabled()) return;
-			const row = locals[cdt][cdn];
-			if (!row || !row.custom_uom || skip_row(row)) return;
-			const factor = flt(row.custom_conversion_factor);
-			if (!factor || row.current_qty == null) return;
-			frappe.model
-				.set_value(cdt, cdn, "custom_qty_before", flt(row.current_qty) / factor)
+			const row = locals[cdt] && locals[cdt][cdn];
+			const req_id = (request_ids.get(cdn) || 0) + 1;
+			request_ids.set(cdn, req_id);
+
+			const expected_item = row && row.item_code;
+
+			syncing_rows.add(cdn);
+			const reset_promises = [
+				frappe.model.set_value(cdt, cdn, "custom_uom", ""),
+				frappe.model.set_value(cdt, cdn, "custom_conversion_factor", ""),
+				frappe.model.set_value(cdt, cdn, "custom_qty_before", ""),
+				frappe.model.set_value(cdt, cdn, "custom_qty_after", ""),
+				frappe.model.set_value(cdt, cdn, "custom_qty_difference_per_uom", ""),
+				frappe.model.set_value(cdt, cdn, "custom_valuation_rate_per_uom", ""),
+			];
+
+			return Promise.all(reset_promises)
+				.finally(() => {
+					syncing_rows.delete(cdn);
+				})
 				.then(() => {
-					const cur = locals[cdt][cdn];
-					if (!cur) return; // row re-key saat refresh grid
-					frappe.model.set_value(
-						cdt,
-						cdn,
-						"custom_qty_difference_per_uom",
-						flt(flt(cur.custom_qty_after) - flt(cur.custom_qty_before))
-					);
+					if (!expected_item) return;
+					return new Promise((resolve) => {
+						frappe.after_ajax(() => {
+							if (request_ids.get(cdn) !== req_id) return resolve();
+							const live = locals[cdt] && locals[cdt][cdn];
+							if (!live || live.item_code !== expected_item || skip_row(live)) return resolve();
+							resolve(apply_default_uom(frm, cdt, cdn, true, expected_item, req_id));
+						});
+					});
 				});
 		},
+		custom_uom(frm, cdt, cdn) {
+			if (!enabled() || syncing_rows.has(cdn)) return;
+			const row = locals[cdt] && locals[cdt][cdn];
+			if (!row || skip_row(row)) return;
+			if (!row.custom_uom || !row.item_code) {
+				const req_id = (request_ids.get(cdn) || 0) + 1;
+				request_ids.set(cdn, req_id);
+				return Promise.all([
+					frappe.model.set_value(cdt, cdn, "custom_conversion_factor", ""),
+					frappe.model.set_value(cdt, cdn, "custom_qty_before", ""),
+					frappe.model.set_value(cdt, cdn, "custom_qty_after", ""),
+					frappe.model.set_value(cdt, cdn, "custom_qty_difference_per_uom", ""),
+					frappe.model.set_value(cdt, cdn, "custom_valuation_rate_per_uom", ""),
+					frappe.model.set_value(cdt, cdn, "qty", null),
+					frappe.model.set_value(cdt, cdn, "valuation_rate", null),
+				]);
+			}
+			return sync_row(frm, cdt, cdn, { omit_qty_after: true, omit_rate_per_uom: true });
+		},
+		custom_qty_after(frm, cdt, cdn) {
+			if (!enabled() || syncing_rows.has(cdn)) return;
+			return sync_row(frm, cdt, cdn);
+		},
 		custom_valuation_rate_per_uom(frm, cdt, cdn) {
-			if (!enabled()) return;
-			const row = locals[cdt][cdn];
-			const rate = row && row.custom_valuation_rate_per_uom;
-			if (!row || !row.custom_uom || skip_row(row)) return;
-			const factor = flt(row.custom_conversion_factor);
-			// 0 is a valid rate (real revaluation) — only empty passes through
-			if (!factor || rate == null || rate === "") return;
-			frappe.model.set_value(cdt, cdn, "valuation_rate", flt(rate) / factor);
+			if (!enabled() || syncing_rows.has(cdn)) return;
+			return sync_row(frm, cdt, cdn);
+		},
+		warehouse(frm, cdt, cdn) {
+			if (!enabled() || syncing_rows.has(cdn)) return;
+			return sync_row(frm, cdt, cdn);
+		},
+		batch_no(frm, cdt, cdn) {
+			if (!enabled() || syncing_rows.has(cdn)) return;
+			return sync_row(frm, cdt, cdn);
+		},
+		current_qty(frm, cdt, cdn) {
+			if (!enabled() || syncing_rows.has(cdn)) return;
+			return sync_row(frm, cdt, cdn);
 		},
 		qty(frm, cdt, cdn) {
-			if (!enabled()) return;
-			const row = locals[cdt][cdn];
+			if (!enabled() || syncing_rows.has(cdn)) return;
+			const row = locals[cdt] && locals[cdt][cdn];
 			if (!row || !row.custom_uom || skip_row(row)) return;
 			const factor = flt(row.custom_conversion_factor);
 			if (!factor) return;
-			const expected = flt(row.custom_qty_after) * factor;
-			// anti ping-pong: our own custom_qty_after handler lands exactly on
-			// expected; a mismatch means the change came from outside (barcode
-			// scan +1, manual edit on the native qty field) -> resync the column
-			if (Math.abs(flt(row.qty) - expected) > 1e-6) {
-				frappe.model.set_value(cdt, cdn, "custom_qty_after", flt(row.qty) / factor);
+			const target = round(flt(row.qty) / factor, 3);
+			if (target !== round(row.custom_qty_after, 3)) {
+				return frappe.model.set_value(cdt, cdn, "custom_qty_after", target);
 			}
 		},
 	});
