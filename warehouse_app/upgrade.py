@@ -366,6 +366,7 @@ SR_SCRIPT_MARKER = "// warehouse_app W23 stock-reconciliation-uom"
 from warehouse_app.sr_uom import (
     SR_AFTER_FIELD,
     SR_BEFORE_FIELD,
+    SR_CONFIRMATION_FIELD,
     SR_DIFF_FIELD,
     SR_FACTOR_FIELD,
     SR_RATE_FIELD,
@@ -433,6 +434,17 @@ SR_FIELD_SPECS = [
         "in_list_view": 1,
         "insert_after": SR_BEFORE_FIELD,
         "description": "Counted difference (Qty After − Qty Before) in the selected UOM.",
+    },
+    {
+        "dt": "Stock Reconciliation Item",
+        "fieldname": SR_CONFIRMATION_FIELD,
+        "label": "Count Confirmation",
+        "fieldtype": "Data",
+        "hidden": 1,
+        "no_copy": 1,
+        "read_only": 1,
+        "insert_after": SR_DIFF_FIELD,
+        "description": "Deterministic context confirmation token for counted row.",
     },
 ]
 
@@ -1458,19 +1470,6 @@ CLIENT_SCRIPTS = [
         "script": CLIENT_SCRIPT_MATERIAL_REQUEST,
     },
     {
-        "name": "warehouse-app-w23-stock-reconciliation-uom",
-        "dt": "Stock Reconciliation",
-        "script": CLIENT_SCRIPT_STOCK_RECONCILIATION,
-        "marker": SR_SCRIPT_MARKER,
-    },
-    {
-        "name": "warehouse-app-w26-stock-count-import",
-        "dt": "Stock Reconciliation",
-        "script": CLIENT_SCRIPT_SR_FORM,
-        "marker": SR_FORM_SCRIPT_MARKER,
-        "view": "Form",
-    },
-    {
         "name": "warehouse-app-w31-pick-list-uom",
         "dt": "Pick List",
         "script": CLIENT_SCRIPT_PICK_LIST,
@@ -1547,27 +1546,51 @@ def _ensure_custom_field(spec):
 
 
 def retire_client_scripts():
-    """Pensiunkan Client Script versi lama: docs yang skripsnya masih memuat
-    marker yang sudah dihapus dari CLIENT_SCRIPTS (W25 list-view "Import Stock
-    Count" diganti W26 form-view). Idempoten — tanpa docs lama = no-op."""
-    names = frappe.get_all(
+    """Pensiunkan Client Script dan Server Script Stock Reconciliation lama.
+    W23 & W26 (serta Server Script sr_auto_populate_before_after) di-disable
+    (BUKAN didelete) agar riwayat tetap ada dan tidak merusak integritas.
+    Idempoten — tanpa docs lama = no-op."""
+    cs_targets = {"warehouse-app-w23-stock-reconciliation-uom", "warehouse-app-w26-stock-count-import"}
+    for marker in (SR_SCRIPT_MARKER, SR_FORM_SCRIPT_MARKER):
+        found = frappe.get_all(
+            "Client Script",
+            filters={"dt": "Stock Reconciliation", "script": ("like", "%" + marker + "%")},
+            pluck="name",
+        )
+        for name in found:
+            cs_targets.add(name)
+
+    retired = 0
+    for name in sorted(cs_targets):
+        if frappe.db.exists("Client Script", name):
+            doc = frappe.get_doc("Client Script", name)
+            if doc.enabled:
+                doc.enabled = 0
+                doc.flags.ignore_permissions = 1
+                doc.save()
+                retired += 1
+
+    # Disable conflicting Server Script if it exists
+    if frappe.db.exists("Server Script", "sr_auto_populate_before_after"):
+        ss = frappe.get_doc("Server Script", "sr_auto_populate_before_after")
+        if not ss.disabled:
+            ss.disabled = 1
+            ss.flags.ignore_permissions = 1
+            ss.save()
+            retired += 1
+
+    # W25 list-view script (lama): hapus jika masih ada
+    w25_names = frappe.get_all(
         "Client Script",
         filters={"script": ("like", "%" + SR_LIST_SCRIPT_MARKER + "%")},
         pluck="name",
     )
-    retired = 0
-    for name in names:
-        try:
-            frappe.delete_doc(
-                "Client Script", name, force=1, ignore_permissions=1, ignore_missing=True
-            )
-            retired += 1
-        except Exception:
-            # satu doc macet (mis. hook pihak ketiga) tak boleh menjatuhkan migrate
-            frappe.log_error(
-                title="warehouse_app.upgrade",
-                message=f"Gagal retire Client Script {name!r}.",
-            )
+    for name in w25_names:
+        frappe.delete_doc(
+            "Client Script", name, force=1, ignore_permissions=1, ignore_missing=True
+        )
+        retired += 1
+
     if retired:
         frappe.clear_cache(doctype="Stock Reconciliation")
         frappe.db.commit()

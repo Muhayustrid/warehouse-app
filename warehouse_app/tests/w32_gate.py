@@ -145,11 +145,11 @@ def _run_gate(check):
 		"client_script_sr_w32",
 		bool(
 			sr_script
-			and int(sr_script.enabled or 0) == 1
+			and int(sr_script.enabled or 0) == 0
 			and 'set_column_disp(field, false);' in sr_text
 			and 'set_column_disp_in_list_view(field, false);' in sr_text
 		),
-		f"enabled={getattr(sr_script, 'enabled', None)!r}, "
+		f"retired: enabled={getattr(sr_script, 'enabled', None)!r}, "
 		f"hide_both_apis={'set_column_disp(field, false);' in sr_text and 'set_column_disp_in_list_view(field, false);' in sr_text}",
 	)
 

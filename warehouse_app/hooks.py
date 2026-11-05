@@ -93,7 +93,8 @@ override_doctype_class = {
 
 # include js in doctype views
 doctype_js = {
-	"Purchase Receipt": "public/js/purchase_receipt.js"
+	"Purchase Receipt": "public/js/purchase_receipt.js",
+	"Stock Reconciliation": "public/js/stock_reconciliation.js",
 }
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}

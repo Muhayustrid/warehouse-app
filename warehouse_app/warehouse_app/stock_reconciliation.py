@@ -69,6 +69,7 @@ def get_items(warehouse, posting_date, posting_time, company, item_code=None, ig
 			or row.get("serial_no")
 			or row.get("current_serial_no")
 			or row.get("serial_and_batch_bundle")
+			or row.get("current_serial_and_batch_bundle")
 		):
 			continue
 		item = items.get(code)
@@ -107,8 +108,8 @@ def get_items(warehouse, posting_date, posting_time, company, item_code=None, ig
 		row[SR_UOM_FIELD] = uom
 		row[SR_FACTOR_FIELD] = factor
 		row[SR_BEFORE_FIELD] = computed["custom_qty_before"]
-		row[SR_AFTER_FIELD] = computed["custom_qty_after"]
-		row[SR_DIFF_FIELD] = computed["custom_qty_difference_per_uom"]
+		row[SR_AFTER_FIELD] = None
+		row[SR_DIFF_FIELD] = None
 		if computed["custom_valuation_rate_per_uom"] is not None:
 			row[SR_RATE_FIELD] = computed["custom_valuation_rate_per_uom"]
 
@@ -155,6 +156,8 @@ def compute_row(
 	allow_zero_valuation_rate=0,
 	batch_no=None,
 	company=None,
+	set_posting_time=0,
+	omit_confirmation=0,
 ) -> dict:
 	"""Compute per-UOM conversion and native values for a single Stock Reconciliation row."""
 	assert_sr_access("write", warehouse=warehouse, company=company, require_warehouse=True)
@@ -210,6 +213,22 @@ def compute_row(
 		valuation_rate=valuation_rate,
 		allow_zero_valuation_rate=allow_zero,
 		prec=prec,
+		stock_uom=stock_uom,
 	)
 	res[SR_UOM_FIELD] = uom
+
+	confirmation = None
+	if qty_after is not None and not cint(omit_confirmation):
+		confirmation = sr_uom.count_confirmation(
+			company=company,
+			item_code=item_code,
+			warehouse=warehouse,
+			posting_date=posting_date,
+			posting_time=posting_time,
+			set_posting_time=set_posting_time,
+			uom=uom,
+			factor=factor,
+			batch_no=clean_batch,
+		)
+	res[sr_uom.SR_CONFIRMATION_FIELD] = confirmation
 	return res

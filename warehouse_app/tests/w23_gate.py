@@ -169,13 +169,13 @@ def _run_gate(check):
 		f"ada={sorted(by_name)}, want={sorted(specs)}",
 	)
 
-	# --- Client Script SR ber-marker, enabled ---
+	# --- Client Script SR ber-marker, retired (disabled) ---
 	enabled = frappe.db.get_value(
 		"Client Script",
 		{"dt": "Stock Reconciliation", "script": ("like", "%" + MARKER + "%")},
 		"enabled",
 	)
-	check("client_script", int(enabled or 0) == 1, f"enabled={enabled!r} (marker {MARKER!r})")
+	check("client_script", int(enabled or 0) == 0, f"retired: enabled={enabled!r} (marker {MARKER!r})")
 
 	skip_reason = None
 	if not company:
@@ -214,7 +214,7 @@ def _run_gate(check):
 			first in ("created", "updated", "unchanged")
 			and second == "unchanged"
 			and bool(script_row)
-			and int(script_row.enabled or 0) == 1
+			and int(script_row.enabled or 0) == 0
 			and MARKER in (script_row.script or ""),
 			f"first={first!r}, second={second!r}, script={'ada' if script_row else 'absen'}",
 		)

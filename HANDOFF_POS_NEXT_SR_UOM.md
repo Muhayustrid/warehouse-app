@@ -1,5 +1,12 @@
 # Handoff for the pos_next agent: align with the new Stock Reconciliation UOM flow
 
+> Historical handoff (2026-11-03). For the later count-protection work, read
+> [HANDOFF_POS_NEXT_SR_COUNT_PROTECTION.md](HANDOFF_POS_NEXT_SR_COUNT_PROTECTION.md).
+> Recheck current code before applying statements below: the pre-super blind-count
+> blanking and duplicate conversion described here were already changed in the
+> local source inspected on2026-11-05. The rounded-equality count rule below is
+> superseded by the new one-way explicit-count design.
+
 Date: 2026-11-03 · Audience: AI agent working in `apps/pos_next`
 Source design: `warehouse_app` repo, [`docs/specs/2026-11-03-sr-uom-consolidation-design.md`](docs/specs/2026-11-03-sr-uom-consolidation-design.md)
 (Indonesian; this handoff is self-contained).

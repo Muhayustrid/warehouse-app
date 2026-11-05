@@ -44,7 +44,8 @@ sys.path.insert(0, str(_apps / "production_app" / "production_app" / "tests"))
 sys.path.insert(0, str(_p.parents[2]))  # worktree root
 
 import frappe_stub
-frappe_stub.setup_frappe_stub()
+if not getattr(sys.modules.get("frappe"), "__file__", None):
+    frappe_stub.setup_frappe_stub()
 import frappe
 
 # Setup required frappe.utils helpers if missing from stub

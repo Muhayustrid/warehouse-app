@@ -29,6 +29,9 @@ erpnext = ">=16.0.0,<17.0.0"
 [deploy.dependencies.apt]
 packages = []
 
+[tool.frappe.testing.function_type_validation]
+skip_namespaces = ["warehouse_app.tests"]
+
 [tool.ruff]
 line-length = 110
 target-version = "py314"

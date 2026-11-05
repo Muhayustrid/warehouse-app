@@ -56,11 +56,13 @@ from warehouse_app.sr_uom import (
 	QTY_UOM_DECIMALS,
 	SR_AFTER_FIELD,
 	SR_BEFORE_FIELD,
+	SR_CONFIRMATION_FIELD,
 	SR_DIFF_FIELD,
 	SR_FACTOR_FIELD,
 	SR_RATE_FIELD,
 	SR_UOM_FIELD,
 	compute_row,
+	count_confirmation,
 	precisions,
 	resolve_factors,
 )
@@ -96,16 +98,16 @@ _HEADER_KEYS = {
 # ---------------------------------------------------------------------------
 
 
-def build_count_rows(warehouse, include_zero_stock=False):
+def build_count_rows(warehouse, include_zero_stock=False, posting_date=None, posting_time=None):
 	"""Baris prefill template: satu baris per item yang pernah bergerak di
 	`warehouse` (default hanya yang stoknya ≠ 0). Item disabled dan item
 	ber-serial/batch native dikecualikan (v1: hitung via form SR). UOM baris =
 	Default Inventory UOM item (fallback stock UOM bila kosong/tak punya
-	konversi); current qty = Bin.actual_qty ÷ faktor."""
+	konversi); current qty = Bin.actual_qty ÷ faktor (atau SLE qty_after_transaction bila posting_date diberikan)."""
 	if not warehouse or not frappe.db.exists("Warehouse", warehouse):
 		frappe.throw(_("Warehouse {0} not found.").format(frappe.bold(warehouse)))
 	bin_filters = {"warehouse": warehouse}
-	if not cint(include_zero_stock):
+	if not posting_date and not cint(include_zero_stock):
 		bin_filters["actual_qty"] = ("!=", 0)
 	bins = frappe.get_all(
 		"Bin", filters=bin_filters, fields=["item_code", "actual_qty"], order_by="item_code"
@@ -153,13 +155,28 @@ def build_count_rows(warehouse, include_zero_stock=False):
 		if not factor:
 			# Default Inventory UOM tak punya baris konversi → fallback stock UOM
 			uom, factor = item.stock_uom, 1.0
+		if posting_date:
+			from erpnext.stock.stock_ledger import get_previous_sle
+			sle_args = {
+				"item_code": item.name,
+				"warehouse": warehouse,
+				"posting_date": posting_date,
+			}
+			if posting_time:
+				sle_args["posting_time"] = posting_time
+			sle = get_previous_sle(sle_args) or {}
+			stock_qty = flt(sle.get("qty_after_transaction"))
+			if not cint(include_zero_stock) and stock_qty == 0:
+				continue
+		else:
+			stock_qty = flt(b.actual_qty)
 		rows.append(
 			{
 				"item_code": item.name,
 				"item_name": item.item_name or item.name,
 				"warehouse": warehouse,
 				"uom": uom,
-				"current_qty": flt(flt(b.actual_qty) / factor, 3),
+				"current_qty": flt(stock_qty / factor, 3),
 			}
 		)
 	rows.sort(key=lambda r: r["item_code"])
@@ -202,10 +219,22 @@ def make_template_bytes(rows, file_type="xlsx"):
 
 
 @frappe.whitelist(methods=["POST"])
-def download_stock_count_template(warehouse=None, include_zero_stock=0, file_type="xlsx", company=None):
+def download_stock_count_template(
+	warehouse=None,
+	include_zero_stock=0,
+	file_type="xlsx",
+	company=None,
+	posting_date=None,
+	posting_time=None,
+):
 	warehouse = cstr(warehouse).strip()
 	assert_sr_access("create", warehouse=warehouse, company=company, require_warehouse=True)
-	rows = build_count_rows(warehouse, cint(include_zero_stock))
+	rows = build_count_rows(
+		warehouse,
+		cint(include_zero_stock),
+		posting_date=posting_date,
+		posting_time=posting_time,
+	)
 	file_type = file_type if file_type in ("xlsx", "csv") else "xlsx"
 	name = "Stock_Count_{0}_{1}".format(frappe.scrub(warehouse), nowdate().replace("-", ""))
 	from frappe.desk.utils import provide_binary_file
@@ -452,7 +481,7 @@ def parse_count_content(content, filename):
 # ---------------------------------------------------------------------------
 
 
-def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
+def validate_count_rows(parsed, company, posting_date=None, posting_time=None, set_posting_time=0):
 	"""parsed (hasil parse_count_content, atau dict bentuk sama) → baris grid
 	SIAP PAKAI untuk tabel items form Stock Reconciliation (W26). TIDAK membuat
 	dokumen — klien mengisi grid-nya sendiri (review + Submit tetap manual).
@@ -635,26 +664,58 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 			)
 		return ledger_cache[key]
 
+	prec = precisions()
 	kept, matched = [], 0
 	for r in rows:
 		current, system_rate = ledger_snapshot(r["item_code"], r["warehouse"])
-		before = flt(flt(current) / r["_factor"], QTY_UOM_DECIMALS)
-		# Toleransi 0.0005 (di bawah presisi 3 desimal kolom before): pembulatan
-		# bisa membuat qty "berubah" versi parse ternyata identik versi native —
-		# native remove_items_with_no_change akan membuangnya juga saat simpan.
-		# Strip di sini supaya baris tsb tak pernah sampai ke grid; tanpa ini,
-		# file yang seluruhnya cocok melempar EmptyStockReconciliationItemsError
-		# mentah di form.
-		if r["rate"] is None and abs(flt(r["counted"]) - flt(before)) < 0.0005:
+		factor = r["_factor"]
+		counted = flt(r["counted"])
+		rate = r["rate"]
+		item = items[r["item_code"]]
+
+		computed = compute_row(
+			factor=factor,
+			ledger_qty=current,
+			qty_after=counted,
+			rate_per_uom=rate,
+			qty=current,
+			valuation_rate=(None if rate is not None else (system_rate or None)),
+			prec=prec,
+			stock_uom=item.stock_uom,
+		)
+
+		qty_matches = flt(computed["qty"], prec["qty"]) == flt(current, prec["qty"])
+		rate_matches = (
+			rate is None
+			or flt(computed["valuation_rate"], prec["valuation_rate"])
+			== flt(system_rate, prec["valuation_rate"])
+		)
+		if qty_matches and rate_matches:
 			matched += 1
 			continue
+
 		if not current and flt(r["counted"]) > 0 and r["rate"] is None:
 			warnings.append(
 				_(
 					"Row {0}: Item {1} has zero stock. Fill Valuation Rate (as per UOM) or it cannot be submitted."
 				).format(r["row_no"], frappe.bold(escape_html(r["item_code"])))
 			)
-		r["_snapshot"] = (current, system_rate, before)
+
+		token = count_confirmation(
+			company=company,
+			item_code=r["item_code"],
+			warehouse=r["warehouse"],
+			posting_date=posting_date,
+			posting_time=posting_time,
+			set_posting_time=set_posting_time,
+			uom=r["uom"],
+			factor=factor,
+			batch_no=r.get("batch_no"),
+		)
+
+		r["_snapshot"] = (current, system_rate)
+		r["_computed"] = computed
+		r["_token"] = token
 		kept.append(r)
 
 	stats = {
@@ -669,30 +730,19 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 		stats["message"] = _("All counts match the current stock. Nothing to import.")
 		return stats
 
-	prec = precisions()
 	use_serial_batch_fields = cint(
 		frappe.db.get_single_value("Stock Settings", "use_serial_batch_fields")
 	)
 	grid_rows = []
 	for r in kept:
-		current, system_rate, _before = r["_snapshot"]
-		factor = r["_factor"]
-		counted = flt(r["counted"])
-		rate = r["rate"]
-		computed = compute_row(
-			factor=factor,
-			ledger_qty=current,
-			qty_after=counted,
-			rate_per_uom=rate,
-			qty=current,
-			valuation_rate=(None if rate is not None else (system_rate or None)),
-			prec=prec,
-		)
+		current, system_rate = r["_snapshot"]
+		computed = r["_computed"]
+		item = items[r["item_code"]]
 		row = {
 			"item_code": r["item_code"],
-			"item_name": items[r["item_code"]].item_name or r["item_code"],
+			"item_name": item.item_name or r["item_code"],
 			"warehouse": r["warehouse"],
-			"stock_uom": items[r["item_code"]].stock_uom,
+			"stock_uom": item.stock_uom,
 			SR_UOM_FIELD: r["uom"],
 			SR_FACTOR_FIELD: computed[SR_FACTOR_FIELD],
 			"current_qty": current,
@@ -703,6 +753,7 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 			"qty": computed["qty"],
 			"valuation_rate": computed["valuation_rate"],
 			"use_serial_batch_fields": use_serial_batch_fields,
+			SR_CONFIRMATION_FIELD: r["_token"],
 		}
 		if computed[SR_RATE_FIELD] is not None:
 			row[SR_RATE_FIELD] = computed[SR_RATE_FIELD]
@@ -714,7 +765,14 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def upload_stock_count(filename=None, data=None, company=None, posting_date=None, posting_time=None):
+def upload_stock_count(
+	filename=None,
+	data=None,
+	company=None,
+	posting_date=None,
+	posting_time=None,
+	set_posting_time=0,
+):
 	"""File count (base64 murni atau data URL dari FileUploader as_dataurl) +
 	konteks dokumen (company, posting date/time) → dict baris grid untuk form
 	SR. TIDAK membuat dokumen (W26)."""
@@ -756,4 +814,10 @@ def upload_stock_count(filename=None, data=None, company=None, posting_date=None
 	for wh in imported_warehouses:
 		assert_sr_access("create", warehouse=wh, company=company, require_warehouse=True)
 
-	return validate_count_rows(parsed, company, posting_date, posting_time)
+	return validate_count_rows(
+		parsed,
+		company,
+		posting_date=posting_date,
+		posting_time=posting_time,
+		set_posting_time=cint(set_posting_time),
+	)

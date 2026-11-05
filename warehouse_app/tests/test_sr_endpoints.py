@@ -39,7 +39,8 @@ sys.path.insert(0, str(_apps / "production_app" / "production_app" / "tests"))
 sys.path.insert(0, str(_p.parents[2]))  # worktree root
 
 import frappe_stub
-frappe_stub.setup_frappe_stub()
+if not getattr(sys.modules.get("frappe"), "__file__", None):
+    frappe_stub.setup_frappe_stub()
 import frappe
 
 # Setup stock_ledger stub before importing modules
@@ -88,6 +89,8 @@ class MockDoc(frappe._dict):
             return 6
         if field == "custom_valuation_rate_per_uom":
             return 2
+        if field == "custom_qty_before":
+            return 3
         return 2
 
 
@@ -206,24 +209,12 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
         row = res[0]
         self.assertEqual(row["custom_uom"], "Pack")
         self.assertEqual(row["custom_conversion_factor"], 12.0)
-        self.assertEqual(row["custom_qty_after"], 0.833)
+        # Revision 3.1: Fetch Items must NOT prefill After from balance
+        self.assertIsNone(row.get("custom_qty_after"))
+        self.assertIsNone(row.get("custom_count_confirmation"))
         self.assertEqual(row["qty"], 10.0)
         self.assertEqual(row["valuation_rate"], 1234.5678)
         self.assertEqual(row["custom_valuation_rate_per_uom"], 14814.81)
-
-        # Feeding stored values into compute_row keeps native values intact
-        prec = sr_uom.precisions()
-        computed = sr_uom.compute_row(
-            factor=row["custom_conversion_factor"],
-            ledger_qty=10.0,
-            qty_after=row["custom_qty_after"],
-            rate_per_uom=row["custom_valuation_rate_per_uom"],
-            qty=row["qty"],
-            valuation_rate=row["valuation_rate"],
-            prec=prec,
-        )
-        self.assertEqual(computed["qty"], 10.0)
-        self.assertEqual(computed["valuation_rate"], 1234.5678)
 
     def test_fetch_fills_batch_rows(self):
         batch_row = {
@@ -269,7 +260,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
         row = res[0]
         self.assertEqual(row["custom_uom"], "Box")
         self.assertEqual(row["custom_conversion_factor"], 6.0)
-        self.assertEqual(row["custom_qty_after"], 4.0)
+        self.assertIsNone(row.get("custom_qty_after"))
         self.assertEqual(row["custom_qty_before"], 4.0)
         self.assertEqual(row["qty"], 24.0)
 
@@ -295,6 +286,13 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
             "qty": 1.0,
             "stock_uom": "Nos",
         }
+        current_bundle_row = {
+            "item_code": "ITEM-CURR-BND",
+            "warehouse": "Stores - C",
+            "current_serial_and_batch_bundle": "SABB002",
+            "qty": 1.0,
+            "stock_uom": "Nos",
+        }
         item_has_serial_row = {
             "item_code": "ITEM-ITEM-SN",
             "warehouse": "Stores - C",
@@ -305,6 +303,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
             serial_row_1,
             serial_row_2,
             bundle_row,
+            current_bundle_row,
             item_has_serial_row,
         ]
 
@@ -325,6 +324,13 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
             ),
             frappe._dict(
                 name="ITEM-BND",
+                stock_uom="Nos",
+                has_batch_no=0,
+                has_serial_no=0,
+                custom_default_inventory_unit_of_measure="Box",
+            ),
+            frappe._dict(
+                name="ITEM-CURR-BND",
                 stock_uom="Nos",
                 has_batch_no=0,
                 has_serial_no=0,
@@ -389,7 +395,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
         row = res[0]
         self.assertEqual(row["custom_uom"], "Nos")
         self.assertEqual(row["custom_conversion_factor"], 1.0)
-        self.assertEqual(row["custom_qty_after"], 15.0)
+        self.assertIsNone(row.get("custom_qty_after"))
         self.assertEqual(row["qty"], 15.0)
 
     def test_endpoint_permission(self):
@@ -439,7 +445,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
         with patch("frappe.has_permission", return_value=True), patch(
             "frappe.get_cached_value", return_value="Nos"
         ), patch("frappe.get_all", side_effect=mock_get_all):
-            # Prefill: qty_after is None
+            # Uncounted row: qty_after is None
             res1 = stock_reconciliation.compute_row(
                 item_code="ITEM-1",
                 warehouse="Stores - C",
@@ -447,14 +453,16 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
                 posting_time="10:00:00",
                 uom="Pack",
                 qty_after=None,
+                company="Test Company",
             )
             self.assertEqual(res1["custom_uom"], "Pack")
             self.assertEqual(res1["custom_qty_before"], 7.0)
-            self.assertEqual(res1["custom_qty_after"], 7.0)
+            self.assertIsNone(res1["custom_qty_after"])
+            self.assertIsNone(res1.get("custom_count_confirmation"))
             self.assertEqual(res1["qty"], 84.0)
-            self.assertEqual(res1["custom_qty_difference_per_uom"], 0.0)
+            self.assertIsNone(res1["custom_qty_difference_per_uom"])
 
-            # Change: qty_after is passed as string "2.5"
+            # Explicit count: qty_after is passed as string "2.5"
             res2 = stock_reconciliation.compute_row(
                 item_code="ITEM-1",
                 warehouse="Stores - C",
@@ -462,12 +470,55 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
                 posting_time="10:00:00",
                 uom="Pack",
                 qty_after="2.5",
+                company="Test Company",
             )
             self.assertEqual(res2["custom_uom"], "Pack")
             self.assertEqual(res2["custom_qty_before"], 7.0)
             self.assertEqual(res2["custom_qty_after"], 2.5)
             self.assertEqual(res2["qty"], 30.0)
             self.assertEqual(res2["custom_qty_difference_per_uom"], -4.5)
+            self.assertTrue(res2.get("custom_count_confirmation"))
+
+    def test_endpoint_returns_confirmation_for_explicit_count(self):
+        def mock_get_all(doctype, filters=None, fields=None):
+            if doctype == "UOM Conversion Detail":
+                return [
+                    frappe._dict(
+                        parent="ITEM-1",
+                        uom="Pack",
+                        conversion_factor=6.0,
+                    )
+                ]
+            return []
+
+        _stock_ledger.get_previous_sle.return_value = {"qty_after_transaction": 6306.0}
+
+        with patch("frappe.has_permission", return_value=True), patch(
+            "frappe.get_cached_value", return_value="Nos"
+        ), patch("frappe.get_all", side_effect=mock_get_all):
+            res = stock_reconciliation.compute_row(
+                item_code="ITEM-1",
+                warehouse="Stores - C",
+                posting_date="2026-11-05",
+                posting_time="14:30:00",
+                uom="Pack",
+                qty_after=1056,
+                company="Test Company",
+                set_posting_time=0,
+            )
+            self.assertEqual(res["custom_qty_after"], 1056)
+            self.assertEqual(res["qty"], 6336.0)
+            expected_token = sr_uom.count_confirmation(
+                company="Test Company",
+                item_code="ITEM-1",
+                warehouse="Stores - C",
+                posting_date="2026-11-05",
+                posting_time="14:30:00",
+                set_posting_time=0,
+                uom="Pack",
+                factor=6.0,
+            )
+            self.assertEqual(res.get("custom_count_confirmation"), expected_token)
 
     def test_endpoint_rate_handling(self):
         def mock_get_all(doctype, filters=None, fields=None):
@@ -635,9 +686,9 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
                 valuation_rate="null",
             )
             self.assertEqual(res_null["qty"], 84.0)
-            self.assertEqual(res_null["custom_qty_after"], 7.0)
+            self.assertIsNone(res_null["custom_qty_after"])
 
-            # "undefined" for qty_after must also prefill
+            # "undefined" for qty_after must also be empty (not prefilled)
             res_undef = stock_reconciliation.compute_row(
                 item_code="ITEM-1",
                 warehouse="Stores - C",
@@ -648,7 +699,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
                 rate_per_uom="undefined",
             )
             self.assertEqual(res_undef["qty"], 84.0)
-            self.assertEqual(res_undef["custom_qty_after"], 7.0)
+            self.assertIsNone(res_undef["custom_qty_after"])
 
     def test_endpoint_rejects_non_numeric_strings(self):
         _stock_ledger.get_previous_sle.reset_mock()
@@ -736,7 +787,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
                 batch_no="B1",
             )
             self.assertEqual(res["custom_qty_before"], 2.0)
-            self.assertEqual(res["custom_qty_after"], 2.0)
+            self.assertIsNone(res["custom_qty_after"])
             self.assertEqual(res["qty"], 24.0)
             _batch_mod.get_batch_qty.assert_called_once()
             call_kwargs = _batch_mod.get_batch_qty.call_args[1]

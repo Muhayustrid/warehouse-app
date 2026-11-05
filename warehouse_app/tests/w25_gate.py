@@ -216,13 +216,13 @@ def _run_gate(check):
 			not list_left
 			and w26
 			and w26.dt == "Stock Reconciliation"
-			and int(w26.enabled or 0) == 1
+			and int(w26.enabled or 0) == 0
 			and w26.view == "Form"
 			and upgrade.SR_FORM_SCRIPT_MARKER in (w26.script or "")
 			and "has_role" in (w26.script or "")
 			and "Import Stock Count" in (w26.script or "")
 			and form_script
-			and int(form_script.enabled or 0) == 1
+			and int(form_script.enabled or 0) == 0
 			and form_script.view == "Form"
 		)
 		check(

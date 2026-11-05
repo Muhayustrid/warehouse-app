@@ -101,6 +101,7 @@ class PosNextSR(FakeStockReconciliation):
 
 
 from warehouse_app.overrides.stock_reconciliation import StockReconciliationUOM
+from warehouse_app.sr_uom import confirm_count_rows
 
 
 class MockRow(frappe._dict):
@@ -192,10 +193,18 @@ class TestStockReconciliationClass(unittest.TestCase):
             serial_and_batch_bundle=None,
         )
         doc.items = [row]
+        doc.company = "Test Company"
+        doc.set_posting_time = 0
+
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("BATCH-ITEM", "Pcs"): 1.0}):
+            confirm_count_rows(doc)
 
         with patch(
             "erpnext.stock.stock_ledger.get_previous_sle",
             return_value={"qty_after_transaction": 10},
+        ), patch(
+            "warehouse_app.sr_uom.resolve_factors",
+            return_value={("BATCH-ITEM", "Pcs"): 1.0},
         ):
             doc.validate()
 

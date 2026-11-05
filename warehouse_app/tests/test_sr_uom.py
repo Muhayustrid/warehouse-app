@@ -58,19 +58,26 @@ _batch_mod = sys.modules["erpnext.stock.doctype.batch.batch"]
 if not hasattr(_batch_mod, "get_batch_qty"):
     _batch_mod.get_batch_qty = MagicMock(return_value=0.0)
 
+if not hasattr(frappe, "get_cached_value"):
+    frappe.get_cached_value = MagicMock(return_value=None)
+
 from warehouse_app.sr_uom import (
     SR_AFTER_FIELD,
     SR_BEFORE_FIELD,
+    SR_CONFIRMATION_FIELD,
     SR_DIFF_FIELD,
     SR_FACTOR_FIELD,
     SR_RATE_FIELD,
     SR_UOM_FIELD,
     apply_to_doc,
     compute_row,
+    confirm_count_rows,
+    count_confirmation,
     is_convertible,
     ledger_qty,
     precisions,
     resolve_factors,
+    validate_representable_qty,
 )
 
 P = {"qty": 6, "valuation_rate": 6, "rate_per_uom": 2}
@@ -112,6 +119,8 @@ class MockDoc(frappe._dict):
             return 6
         if field == SR_RATE_FIELD:
             return 2
+        if field == SR_BEFORE_FIELD:
+            return 3
         return 2
 
 
@@ -121,35 +130,33 @@ class TestSrUom(unittest.TestCase):
         self.flt_patcher.start()
         self.addCleanup(self.flt_patcher.stop)
 
-    def test_prefill_empty_after_rounding_boundary_keeps_ledger_qty(self):
-        # Boundary: factor=12, ledger_qty=0.054 -> 0.054/12 = 0.0045.
-        # Frappe legacy flt rounds 0.0045 at 3 decimals to 0.005.
-        # Empty qty_after and empty qty must preserve ledger_qty (0.054)
-        # without shifting to 0.005 * 12 = 0.060.
+    def test_counted_1056_factor_6_stale_6306_yields_6336(self):
         res = compute_row(
-            factor=12,
-            ledger_qty=0.054,
-            qty_after=None,
-            qty=None,
+            factor=6,
+            ledger_qty=6306,
+            qty_after=1056,
+            qty=6306,
             prec=P,
         )
-        self.assertEqual(res["custom_qty_after"], 0.005)
-        self.assertEqual(res["qty"], 0.054)
+        self.assertEqual(res["custom_qty_after"], 1056)
+        self.assertEqual(res["qty"], 6336.0)
 
-    def test_untouched_row_at_rounding_boundary_keeps_native_qty(self):
-        # Untouched row with stored qty_after=0.005, qty=0.054 must not shift.
+    def test_counted_zero_yields_zero(self):
         res = compute_row(
-            factor=12,
-            ledger_qty=0.054,
-            qty_after=0.005,
-            qty=0.054,
+            factor=6,
+            ledger_qty=6306,
+            qty_after=0,
+            qty=6306,
             prec=P,
         )
-        self.assertEqual(res["qty"], 0.054)
+        self.assertEqual(res["custom_qty_after"], 0)
+        self.assertEqual(res["qty"], 0.0)
 
-    def test_untouched_row_keeps_native_qty(self):
+    def test_one_way_derived_native_qty_overrides_stale_qty(self):
+        # Revision 3.1: No rounded-equality preservation of stale native qty
         res = compute_row(factor=12, ledger_qty=10, qty_after=0.833, qty=10, prec=P)
-        self.assertEqual(res["qty"], 10)
+        self.assertEqual(res["qty"], 9.996)
+        self.assertEqual(res["custom_qty_after"], 0.833)
 
     def test_changed_after_recomputes_qty(self):
         res = compute_row(factor=12, ledger_qty=10, qty_after=1, qty=10, prec=P)
@@ -159,11 +166,12 @@ class TestSrUom(unittest.TestCase):
         res = compute_row(factor=12, ledger_qty=10, qty_after=0.833, qty=None, prec=P)
         self.assertEqual(res["qty"], 9.996)
 
-    def test_empty_after_prefills_from_ledger(self):
+    def test_empty_after_does_not_prefill_from_ledger(self):
+        # Revision 3.1: empty After is not prefilled from balance
         res = compute_row(factor=12, ledger_qty=10, qty_after=None, qty=None, prec=P)
-        self.assertEqual(res["custom_qty_after"], 0.833)
+        self.assertIsNone(res["custom_qty_after"])
         self.assertEqual(res["qty"], 10)
-        self.assertEqual(res["custom_qty_difference_per_uom"], 0)
+        self.assertIsNone(res["custom_qty_difference_per_uom"])
 
     def test_rate_round_trip_kept(self):
         res = compute_row(
@@ -378,7 +386,9 @@ class TestSrUom(unittest.TestCase):
         _stock_ledger.get_previous_sle.reset_mock()
         _stock_ledger.get_previous_sle.return_value = {"qty_after_transaction": 8.0}
 
-        apply_to_doc(doc)
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Nos"): 1.0}):
+            confirm_count_rows(doc)
+            apply_to_doc(doc)
 
         _stock_ledger.get_previous_sle.assert_called_once_with(
             {
@@ -395,13 +405,13 @@ class TestSrUom(unittest.TestCase):
     def test_precisions_from_row(self):
         row = MockDoc()
         prec = precisions(row)
-        self.assertEqual(prec, {"qty": 6, "valuation_rate": 6, "rate_per_uom": 2})
+        self.assertEqual(prec, {"qty": 6, "valuation_rate": 6, "rate_per_uom": 2, "qty_uom": 3})
 
     def test_precisions_from_new_doc(self):
         mock_doc = MockDoc()
         with patch("frappe.new_doc", return_value=mock_doc):
             prec = precisions(None)
-            self.assertEqual(prec, {"qty": 6, "valuation_rate": 6, "rate_per_uom": 2})
+            self.assertEqual(prec, {"qty": 6, "valuation_rate": 6, "rate_per_uom": 2, "qty_uom": 3})
 
     def test_ledger_qty_caching(self):
         _stock_ledger.get_previous_sle.reset_mock()
@@ -502,6 +512,7 @@ class TestSrUom(unittest.TestCase):
         )
 
         with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-B", "Pack"): 12.0}):
+            confirm_count_rows(doc)
             apply_to_doc(doc)
 
         # B1: ledger=24, factor=12 -> before=2.0, qty_after=2.0, qty=24.0
@@ -529,6 +540,462 @@ class TestSrUom(unittest.TestCase):
         self.assertEqual(val, 24.0)
         self.assertTrue(_batch_mod.get_batch_qty.call_args[1].get("ignore_reserved_stock"))
 
+    def test_precision_2_5_x_1_2_equals_3(self):
+        res = compute_row(
+            factor=1.2,
+            ledger_qty=0,
+            qty_after=2.5,
+            prec=P,
+        )
+        self.assertEqual(res["qty"], 3.0)
+
+    def test_unrepresentable_target_throws(self):
+        with self.assertRaises(frappe.ValidationError):
+            validate_representable_qty(1.0000005, 1.0, prec_qty=6)
+
+    def test_unrepresentable_integer_uom_throws(self):
+        with patch("frappe.get_cached_value", return_value=1):
+            with self.assertRaises(frappe.ValidationError):
+                validate_representable_qty(2.5, 1.0, stock_uom="Nos", prec_qty=6)
+
+    def test_invalid_nonfinite_factor_input_throws_atomically(self):
+        with self.assertRaises(frappe.ValidationError):
+            validate_representable_qty(float("nan"), 1.0, prec_qty=6)
+        with self.assertRaises(frappe.ValidationError):
+            validate_representable_qty(10, 0, prec_qty=6)
+        with self.assertRaises(frappe.ValidationError):
+            validate_representable_qty(10, -2, prec_qty=6)
+
+    def test_fingerprint_normalization(self):
+        import datetime
+
+        t1 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=1,
+            uom="Pack",
+            factor=6.0,
+            batch_no=None,
+        )
+        t2 = count_confirmation(
+            company=" Test Co ",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date=datetime.date(2026, 11, 5),
+            posting_time=datetime.time(14, 30, 0),
+            set_posting_time=1,
+            uom="Pack",
+            factor="6",
+            batch_no="",
+        )
+        self.assertEqual(t1, t2)
+        self.assertTrue(len(t1) <= 64)
+        t3 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-2",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=1,
+            uom="Pack",
+            factor=6,
+            batch_no=None,
+        )
+        self.assertNotEqual(t1, t3)
+
+    def test_posting_context_now_mode(self):
+        tok1 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=0,
+            uom="Pack",
+            factor=6,
+        )
+        tok2 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-06",
+            posting_time="00:05:00",
+            set_posting_time=0,
+            uom="Pack",
+            factor=6,
+        )
+        self.assertEqual(tok1, tok2)
+
+    def test_posting_context_explicit_mode_detects_same_day_time_change(self):
+        e1 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=1,
+            uom="Pack",
+            factor=6,
+        )
+        e2 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:05",
+            set_posting_time=1,
+            uom="Pack",
+            factor=6,
+        )
+        self.assertNotEqual(e1, e2)
+
+    def test_posting_context_explicit_mode_detects_microsecond_time_change(self):
+        e1 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:00.100000",
+            set_posting_time=1,
+            uom="Pack",
+            factor=6,
+        )
+        e2 = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:00.200000",
+            set_posting_time=1,
+            uom="Pack",
+            factor=6,
+        )
+        self.assertNotEqual(e1, e2)
+
+    def test_posting_context_toggle_invalidates(self):
+        tok_now = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=0,
+            uom="Pack",
+            factor=6,
+        )
+        tok_exp = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=1,
+            uom="Pack",
+            factor=6,
+        )
+        self.assertNotEqual(tok_now, tok_exp)
+
+    def test_missing_confirmation_on_custom_row_throws(self):
+        row = MockDoc(
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=10.0,
+            qty=60.0,
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            items=[row],
+        )
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Pack"): 6.0}):
+            with self.assertRaises(frappe.ValidationError):
+                apply_to_doc(doc)
+
+    def test_context_mismatch_throws(self):
+        token = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            set_posting_time=0,
+            uom="Pack",
+            factor=6.0,
+        )
+        row = MockDoc(
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-2",
+            custom_uom="Pack",
+            custom_qty_after=10.0,
+            custom_count_confirmation=token,
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            set_posting_time=0,
+            items=[row],
+        )
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Pack"): 6.0}):
+            with self.assertRaises(frappe.ValidationError):
+                apply_to_doc(doc)
+
+    def test_posting_context_explicit_mode_accepts_midnight_timedelta(self):
+        import datetime
+        tok = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            posting_date="2026-11-05",
+            posting_time=datetime.timedelta(0),
+            set_posting_time=1,
+            uom="Pack",
+            factor=6,
+        )
+        self.assertTrue(bool(tok))
+
+
+    def test_master_factor_change_throws(self):
+        token = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            set_posting_time=0,
+            uom="Pack",
+            factor=6.0,
+        )
+        row = MockDoc(
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=10.0,
+            custom_count_confirmation=token,
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            set_posting_time=0,
+            items=[row],
+        )
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Pack"): 12.0}):
+            with self.assertRaises(frappe.ValidationError):
+                apply_to_doc(doc)
+
+    def test_native_only_and_mixed_rows_untouched(self):
+        token = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-CUSTOM",
+            warehouse="WH-1",
+            set_posting_time=0,
+            uom="Pack",
+            factor=6.0,
+        )
+        row_custom = MockDoc(
+            item_code="ITEM-CUSTOM",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=10.0,
+            custom_count_confirmation=token,
+            qty=0,
+        )
+        row_native = MockDoc(
+            item_code="ITEM-NATIVE",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom=None,
+            qty=42.0,
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            set_posting_time=0,
+            items=[row_custom, row_native],
+        )
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-CUSTOM", "Pack"): 6.0}):
+            apply_to_doc(doc)
+        self.assertEqual(row_custom.qty, 60.0)
+        self.assertEqual(row_native.qty, 42.0)
+        self.assertNotIn("custom_conversion_factor", row_native)
+
+    def test_removing_uom_from_saved_counted_row_throws(self):
+        """Finding 4: Removing custom_uom from saved counted row must throw ValidationError."""
+        token = count_confirmation(
+            company="Test Co",
+            item_code="ITEM-1",
+            warehouse="WH-1",
+            set_posting_time=0,
+            uom="Pack",
+            factor=6.0,
+        )
+        prev_row = MockDoc(
+            name="row-1",
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=1056.0,
+            custom_count_confirmation=token,
+            qty=6336.0,
+        )
+        prev_doc = MockDoc(
+            name="SR-001",
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            set_posting_time=0,
+            items=[prev_row],
+        )
+        # In current doc, user/client stripped custom_uom and confirmation to bypass count validation
+        curr_row = MockDoc(
+            name="row-1",
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom=None,
+            custom_qty_after=None,
+            custom_count_confirmation=None,
+            qty=123.0,
+        )
+        doc = MockDoc(
+            name="SR-001",
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            set_posting_time=0,
+            items=[curr_row],
+            get_doc_before_save=lambda: prev_doc,
+        )
+        with self.assertRaises(frappe.ValidationError):
+            apply_to_doc(doc)
+
+    def test_deleting_saved_counted_row_allowed(self):
+        """Finding 4: Deleting a row completely is allowed (normal draft row removal)."""
+        prev_row = MockDoc(
+            name="row-1",
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=1056.0,
+            custom_count_confirmation="tok",
+            qty=6336.0,
+        )
+        prev_doc = MockDoc(
+            name="SR-001",
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            set_posting_time=0,
+            items=[prev_row],
+        )
+        doc = MockDoc(
+            name="SR-001",
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="10:00:00",
+            set_posting_time=0,
+            items=[],  # Row-1 was deleted
+            get_doc_before_save=lambda: prev_doc,
+        )
+        # Should not raise
+        apply_to_doc(doc)
+
+    def test_confirm_count_rows(self):
+        row = MockDoc(
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=1056,
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=0,
+            items=[row],
+        )
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Pack"): 6.0}):
+            confirm_count_rows(doc)
+        self.assertTrue(row.get(SR_CONFIRMATION_FIELD))
+        self.assertEqual(row.get(SR_FACTOR_FIELD), 6.0)
+
+    def test_now_mode_save_submit_different_times_incl_midnight(self):
+        row = MockDoc(
+            item_code="ITEM-1",
+            stock_uom="Nos",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=1056,
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="23:59:00",
+            set_posting_time=0,
+            items=[row],
+        )
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Pack"): 6.0}):
+            confirm_count_rows(doc)
+
+        doc.posting_date = "2026-11-06"
+        doc.posting_time = "00:05:00"
+        with patch("warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Pack"): 6.0}):
+            apply_to_doc(doc)
+
+        self.assertEqual(row.qty, 6336.0)
+        self.assertEqual(row.custom_qty_after, 1056)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSrUomPrecisionContract(unittest.TestCase):
+    """Round 6b: per-UOM qty precision comes from installed metadata, not a constant."""
+
+    def setUp(self):
+        self.flt_patcher = patch("warehouse_app.sr_uom.flt", side_effect=_frappe_flt)
+        self.flt_patcher.start()
+        self.addCleanup(self.flt_patcher.stop)
+
+    def test_precisions_reads_qty_uom_from_before_field_metadata(self):
+        class Row(MockDoc):
+            def precision(self, field):
+                return {SR_BEFORE_FIELD: 4, "qty": 5, "valuation_rate": 5, SR_RATE_FIELD: 4}.get(field, 9)
+
+        self.assertEqual(
+            precisions(Row()), {"qty": 5, "valuation_rate": 5, "rate_per_uom": 4, "qty_uom": 4}
+        )
+
+    def test_nondefault_precision_before_diff_and_rate_round_trip(self):
+        prec = {"qty": 5, "valuation_rate": 5, "rate_per_uom": 4, "qty_uom": 4}
+        # Balance 6301 Pcs @ 1000.004 seeded as the stock-UOM rate (client seed), factor 6.
+        out1 = compute_row(
+            factor=6, ledger_qty=6301, qty_after=1056, qty=None, valuation_rate=1000.004, prec=prec
+        )
+        self.assertEqual(out1["custom_qty_before"], 1050.1667)
+        self.assertEqual(out1["custom_qty_difference_per_uom"], 5.8333)
+        self.assertEqual(out1["custom_valuation_rate_per_uom"], 6000.024)
+        self.assertEqual(out1["valuation_rate"], 1000.004)
+        self.assertEqual(out1["qty"], 6336.0)
+        # Save feeds the reply back: valuation must not drift.
+        out2 = compute_row(
+            factor=6,
+            ledger_qty=6301,
+            qty_after=out1["custom_qty_after"],
+            rate_per_uom=out1["custom_valuation_rate_per_uom"],
+            qty=out1["qty"],
+            valuation_rate=out1["valuation_rate"],
+            prec=prec,
+        )
+        self.assertEqual(out1, out2)
