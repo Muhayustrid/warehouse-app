@@ -75,6 +75,13 @@ def _set_val(obj, key, val):
         setattr(obj, key, val)
 
 
+def _master_stock_uom(item_code) -> str | None:
+    """Item master is the only source of truth for the stock UOM; row payloads are not trusted."""
+    if not hasattr(frappe, "get_cached_value"):
+        return None
+    return frappe.get_cached_value("Item", item_code, "stock_uom")
+
+
 def is_convertible(row) -> bool:
     """Return True if row has item_code, custom_uom, and custom_qty_after is not empty,
     and has no serial numbers or serial/batch bundles."""
@@ -176,23 +183,59 @@ def ledger_qty(
     return cache[key]
 
 
+def _get_prec(field, default, target=None) -> int:
+    """Field precision from the doc/row metadata, else the default.
+
+    target=None resolves against a blank Stock Reconciliation Item, so the
+    installed metadata (which already folds in the system float_precision) wins.
+    """
+    if target is None:
+        target = frappe.new_doc("Stock Reconciliation Item")
+    if hasattr(target, "precision"):
+        p = target.precision(field)
+        if p is not None:
+            return p
+    return default
+
+
 def precisions(row=None) -> dict[str, int]:
     """Return precision dict for qty, valuation_rate, and rate_per_uom."""
     target = row if row is not None else frappe.new_doc("Stock Reconciliation Item")
-
-    def _get_prec(field, default):
-        if hasattr(target, "precision"):
-            p = target.precision(field)
-            if p is not None:
-                return p
-        return default
-
     return {
-        "qty": _get_prec("qty", 6),
-        "valuation_rate": _get_prec("valuation_rate", 6),
-        "rate_per_uom": _get_prec(SR_RATE_FIELD, 2),
-        "qty_uom": _get_prec(SR_BEFORE_FIELD, 3),
+        "qty": _get_prec("qty", 6, target),
+        "valuation_rate": _get_prec("valuation_rate", 6, target),
+        "rate_per_uom": _get_prec(SR_RATE_FIELD, 2, target),
+        "qty_uom": _get_prec(SR_BEFORE_FIELD, 3, target),
     }
+
+
+def validate_representable_after(row, qty_after) -> None:
+    """Reject a counted qty that cannot be held exactly at its own field precision.
+
+    The confirmation token never covers After, so an After that changes on
+    storage/display (1.234 -> 1.23) would silently move the derived native qty
+    after a reload. Reject instead of rounding: the user's count is authoritative.
+    """
+    prec_after = _get_prec(SR_AFTER_FIELD, 3, row)
+    try:
+        d_after = Decimal(str(qty_after))
+    except (InvalidOperation, TypeError, ValueError):
+        return  # malformed input is reported by validate_representable_qty
+
+    if not d_after.is_finite() or d_after == round(d_after, prec_after):
+        return
+
+    frappe.throw(
+        _(
+            "Baris {0} ({1}): Qty After {2} tidak dapat disimpan tepat pada presisi {3} desimal. "
+            "Bulatkan hitungan ke {3} desimal atau kurang."
+        ).format(
+            _get_val(row, "idx") or "",
+            _get_val(row, "item_code"),
+            qty_after,
+            prec_after,
+        )
+    )
 
 
 def validate_representable_qty(qty_after, factor, stock_uom=None, prec_qty=6) -> float:
@@ -349,10 +392,7 @@ def confirm_count_rows(doc) -> None:
     for row in custom_rows:
         item_code = _get_val(row, "item_code")
         uom = _get_val(row, SR_UOM_FIELD)
-        stock_uom = _get_val(row, "stock_uom") or frappe.get_cached_value(
-            "Item", item_code, "stock_uom"
-        )
-        pairs.append((item_code, uom, stock_uom))
+        pairs.append((item_code, uom, _master_stock_uom(item_code)))
 
     factors = resolve_factors(pairs)
 
@@ -370,11 +410,14 @@ def confirm_count_rows(doc) -> None:
             )
 
         qa = _get_val(row, SR_AFTER_FIELD)
-        stock_uom = _get_val(row, "stock_uom") or frappe.get_cached_value(
-            "Item", item_code, "stock_uom"
-        )
         prec = precisions(row)
-        validate_representable_qty(qa, factor, stock_uom=stock_uom, prec_qty=prec["qty"])
+        validate_representable_after(row, qa)
+        validate_representable_qty(
+            qa,
+            factor,
+            stock_uom=_master_stock_uom(item_code),
+            prec_qty=prec["qty"],
+        )
 
         token = count_confirmation(
             company=company,
@@ -536,10 +579,7 @@ def apply_to_doc(doc) -> None:
     for row in custom_rows:
         item_code = _get_val(row, "item_code")
         uom = _get_val(row, SR_UOM_FIELD)
-        stock_uom = _get_val(row, "stock_uom") or frappe.get_cached_value(
-            "Item", item_code, "stock_uom"
-        )
-        pairs.append((item_code, uom, stock_uom))
+        pairs.append((item_code, uom, _master_stock_uom(item_code)))
 
     factors = resolve_factors(pairs)
 
@@ -578,11 +618,14 @@ def apply_to_doc(doc) -> None:
             )
 
         qa = _get_val(row, SR_AFTER_FIELD)
-        stock_uom = _get_val(row, "stock_uom") or frappe.get_cached_value(
-            "Item", item_code, "stock_uom"
-        )
         prec = precisions(row)
-        validate_representable_qty(qa, factor, stock_uom=stock_uom, prec_qty=prec["qty"])
+        validate_representable_after(row, qa)
+        validate_representable_qty(
+            qa,
+            factor,
+            stock_uom=_master_stock_uom(item_code),
+            prec_qty=prec["qty"],
+        )
 
     # All custom rows validated! Now compute and apply atomically
     ledger_cache = {}
@@ -607,9 +650,7 @@ def apply_to_doc(doc) -> None:
         qty = _get_val(row, "qty")
         val_rate = _get_val(row, "valuation_rate")
         allow_zero = bool(_get_val(row, "allow_zero_valuation_rate", False))
-        stock_uom = _get_val(row, "stock_uom") or frappe.get_cached_value(
-            "Item", item_code, "stock_uom"
-        )
+        stock_uom = _master_stock_uom(item_code)
 
         res = compute_row(
             factor=factor,

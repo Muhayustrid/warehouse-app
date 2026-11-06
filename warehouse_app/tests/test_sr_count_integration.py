@@ -1076,3 +1076,86 @@ class TestSrCountIntegration(FrappeTestCase):
             else:
                 self._cleanup_records([], [sentinel_item])
             frappe.db.commit()
+
+    def _pack_sr(self, item, qty_after, **row):
+        """Build an explicit-mode SR with one custom Pack row (not inserted)."""
+        return frappe.get_doc({
+            "doctype": "Stock Reconciliation",
+            "company": self.company,
+            "purpose": "Stock Reconciliation",
+            "posting_date": "2026-11-05",
+            "posting_time": "12:00:00",
+            "set_posting_time": 1,
+            "items": [dict({
+                "item_code": item,
+                "warehouse": self.warehouse,
+                "custom_uom": "Pack",
+                "custom_qty_after": qty_after,
+                "valuation_rate": 1000.0,
+            }, **row)],
+        })
+
+    def test_17_row_stock_uom_payload_cannot_change_factor(self):
+        """H2: payload stock_uom=Pack on a Pcs item (Pack=6) never yields 1056 Pcs from 1056 Pack."""
+        item = self.make_test_item("C17", stock_uom="Pcs", pack_factor=6.0)
+        self.make_stock_entry(item, 6000.0, 1000.0, posting_date="2026-11-01")
+
+        # Forged token minted for factor 1 (what a lying stock_uom used to produce) is rejected.
+        forged = self._pack_sr(item, 1056.0, stock_uom="Pack")
+        forged.items[0].set(SR_FACTOR_FIELD, 1.0)
+        forged.items[0].set(SR_CONFIRMATION_FIELD, count_confirmation(
+            company=self.company, item_code=item, warehouse=self.warehouse,
+            posting_date="2026-11-05", posting_time="12:00:00", set_posting_time=1,
+            uom="Pack", factor=1.0,
+        ))
+        try:
+            with self.assertRaises(frappe.ValidationError):
+                forged.insert()
+        finally:
+            if forged.name and frappe.db.exists("Stock Reconciliation", forged.name):
+                self.track_sr(forged)
+            frappe.db.rollback()
+
+        # Helper path: confirm with the lying payload still derives the master factor.
+        sr = self._pack_sr(item, 1056.0, stock_uom="Pack")
+        confirm_count_rows(sr)
+        self.assertEqual(sr.items[0].get(SR_FACTOR_FIELD), 6.0)
+        sr.insert()
+        self.track_sr(sr)
+        frappe.db.commit()
+        sr.reload()
+        self.assertEqual(sr.items[0].custom_qty_after, 1056.0)
+        self.assertEqual(sr.items[0].qty, 6336.0)
+        self.assertNotEqual(sr.items[0].qty, 1056.0)
+
+    def test_18_after_must_fit_its_own_field_precision(self):
+        """H1: After with more decimals than its field holds is rejected; a fitting one never drifts."""
+        item = self.make_test_item("C18", stock_uom="Kg", pack_factor=1000.0)
+        self.make_stock_entry(item, 1000.0, 10.0, posting_date="2026-11-01")
+        prec_after = frappe.new_doc("Stock Reconciliation Item").precision(SR_AFTER_FIELD)
+        step = 10 ** -prec_after
+
+        too_fine = self._pack_sr(item, round(1.2 + step / 2, prec_after + 1), valuation_rate=10.0)
+        with self.assertRaises(frappe.ValidationError):
+            confirm_count_rows(too_fine)
+
+        fitting = round(1.2 + step, prec_after)
+        sr = self._pack_sr(item, fitting, valuation_rate=10.0)
+        confirm_count_rows(sr)
+        sr.insert()
+        self.track_sr(sr)
+        frappe.db.commit()
+        expected_qty = flt(fitting * 1000.0, 6)
+
+        sr.reload()
+        self.assertEqual(sr.items[0].custom_qty_after, fitting)
+        self.assertEqual(sr.items[0].qty, expected_qty)
+        sr.submit()
+        frappe.db.commit()
+        sr.reload()
+        self.assertEqual(sr.items[0].custom_qty_after, fitting)
+        self.assertEqual(sr.items[0].qty, expected_qty)
+        sle_qty = frappe.db.get_value(
+            "Stock Ledger Entry", {"voucher_no": sr.name, "is_cancelled": 0}, "qty_after_transaction"
+        )
+        self.assertEqual(flt(sle_qty, 6), expected_qty)

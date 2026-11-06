@@ -119,7 +119,7 @@ class MockDoc(frappe._dict):
             return 6
         if field == SR_RATE_FIELD:
             return 2
-        if field == SR_BEFORE_FIELD:
+        if field in (SR_BEFORE_FIELD, SR_AFTER_FIELD):
             return 3
         return 2
 
@@ -999,3 +999,212 @@ class TestSrUomPrecisionContract(unittest.TestCase):
             prec=prec,
         )
         self.assertEqual(out1, out2)
+
+
+def _cached_value_item_stock_uom(stock_uom):
+    """frappe.get_cached_value stub: Item.stock_uom answered, everything else empty."""
+
+    def _get(doctype, name, fieldname=None):
+        if doctype == "Item" and fieldname == "stock_uom":
+            return stock_uom
+        return None
+
+    return _get
+
+
+class TestSrUomMasterStockUom(unittest.TestCase):
+    """H2: stock UOM and factor come from the Item master, never from the row payload."""
+
+    def setUp(self):
+        self.flt_patcher = patch("warehouse_app.sr_uom.flt", side_effect=_frappe_flt)
+        self.flt_patcher.start()
+        self.addCleanup(self.flt_patcher.stop)
+
+        cached = patch(
+            "frappe.get_cached_value", side_effect=_cached_value_item_stock_uom("Pcs")
+        )
+        cached.start()
+        self.addCleanup(cached.stop)
+
+        get_all = patch(
+            "frappe.get_all",
+            return_value=[{"parent": "ITEM-1", "uom": "Pack", "conversion_factor": 6.0}],
+        )
+        get_all.start()
+        self.addCleanup(get_all.stop)
+
+    def _lying_row(self, **kwargs):
+        # Payload claims the count UOM is the stock UOM; the master says Pcs.
+        return MockDoc(
+            idx=1,
+            item_code="ITEM-1",
+            stock_uom="Pack",
+            warehouse="WH-1",
+            custom_uom="Pack",
+            custom_qty_after=1056,
+            **kwargs,
+        )
+
+    def test_confirm_rows_uses_master_stock_uom_not_row(self):
+        row = self._lying_row()
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=0,
+            items=[row],
+        )
+
+        confirm_count_rows(doc)
+
+        self.assertEqual(row.get(SR_FACTOR_FIELD), 6.0)
+        self.assertEqual(
+            row.get(SR_CONFIRMATION_FIELD),
+            count_confirmation(
+                company="Test Co",
+                item_code="ITEM-1",
+                warehouse="WH-1",
+                set_posting_time=0,
+                uom="Pack",
+                factor=6.0,
+            ),
+        )
+
+    def test_apply_uses_master_factor_when_row_stock_uom_lies(self):
+        row = self._lying_row(
+            custom_count_confirmation=count_confirmation(
+                company="Test Co",
+                item_code="ITEM-1",
+                warehouse="WH-1",
+                set_posting_time=0,
+                uom="Pack",
+                factor=6.0,
+            )
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=0,
+            items=[row],
+        )
+
+        apply_to_doc(doc)
+
+        self.assertEqual(row[SR_FACTOR_FIELD], 6.0)
+        self.assertEqual(row.qty, 6336.0)
+
+    def test_apply_rejects_token_minted_with_row_stock_uom(self):
+        # Token minted by the pre-fix code, which trusted row.stock_uom="Pack" -> factor 1.
+        row = self._lying_row(
+            custom_count_confirmation=count_confirmation(
+                company="Test Co",
+                item_code="ITEM-1",
+                warehouse="WH-1",
+                set_posting_time=0,
+                uom="Pack",
+                factor=1.0,
+            )
+        )
+        doc = MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=0,
+            items=[row],
+        )
+
+        with self.assertRaises(frappe.ValidationError):
+            apply_to_doc(doc)
+        self.assertIsNone(row.get("qty"))  # 1056 Pack must never become 1056 Pcs
+
+
+class AfterPrecisionRow(MockDoc):
+    """Stock Reconciliation Item row whose After field is pinned to 2 decimals."""
+
+    def precision(self, field):
+        return 2 if field == SR_AFTER_FIELD else super().precision(field)
+
+
+class TestSrUomAfterPrecision(unittest.TestCase):
+    """H1: custom_qty_after must be exactly representable at its own field precision."""
+
+    def setUp(self):
+        self.flt_patcher = patch("warehouse_app.sr_uom.flt", side_effect=_frappe_flt)
+        self.flt_patcher.start()
+        self.addCleanup(self.flt_patcher.stop)
+
+        cached = patch(
+            "frappe.get_cached_value", side_effect=_cached_value_item_stock_uom("Pcs")
+        )
+        cached.start()
+        self.addCleanup(cached.stop)
+
+        factors = patch(
+            "warehouse_app.sr_uom.resolve_factors", return_value={("ITEM-1", "Ton"): 1000.0}
+        )
+        factors.start()
+        self.addCleanup(factors.stop)
+
+    def _row(self, after, **kwargs):
+        return AfterPrecisionRow(
+            idx=1,
+            item_code="ITEM-1",
+            stock_uom="Pcs",
+            warehouse="WH-1",
+            custom_uom="Ton",
+            custom_qty_after=after,
+            **kwargs,
+        )
+
+    def _doc(self, row):
+        return MockDoc(
+            company="Test Co",
+            posting_date="2026-11-05",
+            posting_time="14:30:00",
+            set_posting_time=0,
+            items=[row],
+        )
+
+    def test_confirm_rejects_after_not_representable_at_own_precision(self):
+        row = self._row(1.234)
+
+        with self.assertRaises(frappe.ValidationError) as cm:
+            confirm_count_rows(self._doc(row))
+
+        msg = str(cm.exception)
+        self.assertIn("Baris 1 (ITEM-1)", msg)
+        self.assertIn("1.234", msg)
+        self.assertIn("2 desimal", msg)
+        self.assertNotIn(SR_CONFIRMATION_FIELD, row)
+
+    def test_apply_rejects_after_not_representable_at_own_precision(self):
+        row = self._row(
+            1.234,
+            custom_count_confirmation=count_confirmation(
+                company="Test Co",
+                item_code="ITEM-1",
+                warehouse="WH-1",
+                set_posting_time=0,
+                uom="Ton",
+                factor=1000.0,
+            ),
+        )
+
+        with self.assertRaises(frappe.ValidationError) as cm:
+            apply_to_doc(self._doc(row))
+
+        msg = str(cm.exception)
+        self.assertIn("Baris 1 (ITEM-1)", msg)
+        self.assertIn("1.234", msg)
+        self.assertIn("2 desimal", msg)
+
+    def test_after_at_own_precision_round_trip_is_stable(self):
+        # 1.23 is exactly representable at precision 2: storing it and re-deriving
+        # qty must not move the counted stock.
+        out1 = compute_row(factor=1000, ledger_qty=0, qty_after=1.23, prec=P)
+        self.assertEqual(out1["qty"], 1230.0)
+
+        stored_after = _frappe_flt(out1["custom_qty_after"], 2)
+        out2 = compute_row(factor=1000, ledger_qty=0, qty_after=stored_after, prec=P)
+        self.assertEqual(out2["qty"], 1230.0)

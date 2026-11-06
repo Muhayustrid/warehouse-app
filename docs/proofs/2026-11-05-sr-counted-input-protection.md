@@ -965,3 +965,85 @@ browser s11 (late native response, then Pack 1056) gives MAT-RECO-2026-00264:
 saved, reloaded and submitted with After 1056, qty 6336, Before 1050, rate 1000 / 6000.
 Behaviour change: on srcount the installed precision of `custom_qty_before` is 2,
 so Before/diff now round to 2 decimals (previously 3) on server and client alike.
+
+## Rollback rehearsal (2026-11-06, srcount only)
+
+Commit under test: `810dacc` (W49). Rollback target: `cc0634b`. srcount runs warehouse_app
+bind-mounted from the working tree, so rollback = `git switch --detach cc0634b` + `bench migrate`
++ backend restart + `clear-cache`; roll forward = `git switch main` + migrate twice + restart.
+Pre-rehearsal DB backup: `sites/srcount.localhost/private/backups/20261106_043819-*`.
+
+| Step | Observed |
+|---|---|
+| Before (810dacc) | W23/W26 Client Scripts disabled, Server Script `sr_auto_populate_before_after` absent on srcount, field `custom_count_confirmation` present, Bin W49E2E-PACK @ Stores 6336 @1000, 7 SLE |
+| Draft by new code | MAT-RECO-2026-00265: Pack 1056 -> qty 6336, factor 6, token set |
+| Rollback to cc0634b + migrate | old `upgrade.apply()` re-enabled W23/W26 (single SR handler from warehouse_app: doctype_js gone, only the POSNext form script remains); additive field kept; Bin/SLE unchanged |
+| Old code re-saves 00265 | SAVE OK, After 1056 / qty 6336 / factor 6 unchanged, token kept |
+| Old code creates draft | MAT-RECO-2026-00266: Pack 1057 -> qty 6342, no token |
+| Submitted 00264 under old code | unchanged (1056 / 6336 / Before 1050) |
+| Roll forward to 810dacc, migrate x2 | W23/W26 disabled again, idempotent; field kept; Bin 6336, SLE 7 |
+| New code re-saves 00265 | SAVE OK, unchanged |
+| New code re-saves 00266 (old-code draft) | blocked: "Baris 1 (W49E2E-PACK) belum dikonfirmasi..." -> needs Konfirmasi Hitungan in the form; numbers not altered |
+
+Conclusions: code rollback/roll-forward is clean and idempotent, no stock document is mutated,
+and the additive field is harmless to the old code. Operational consequence: drafts created
+while rolled back must be re-confirmed after roll forward (by design, spec section 9).
+Not rehearsed: image-based deployment (prod uses a baked image, not a bind mount), browser
+asset cache across the switch, cloud runtime. New fixtures: MAT-RECO-2026-00265, 00266 (drafts).
+`get_hooks("doctype_js")["Stock Reconciliation"]` lists two paths: warehouse_app's and
+pos_next's own `public/js/stock_reconciliation.js` (different files, both load).
+
+## POSNext adapter simulation (2026-11-06, srcount, server-side only, no POSNext code changed)
+
+Simulated `save_opname` / `submit_opname` steps with `bench execute` as Administrator
+(rows as `_validated_rows` builds them: `custom_uom` + `custom_qty_after`, no native qty, no rate).
+
+| Step | Result |
+|---|---|
+| Insert without `confirm_count_rows` | REJECTED "Baris 1 (W49E2E-PACK) belum dikonfirmasi" -> current POSNext is incompatible |
+| Insert with `confirm_count_rows` (MAT-RECO-2026-00268, Finished Goods) | saved: Pack 1056 -> qty 6336, factor 6, token set |
+| Rebuild children + `confirm_count_rows` + save | saved, same numbers, same token |
+| Stamp posting now + `set_posting_time=1` without re-confirm | REJECTED "tidak cocok dengan konteks dokumen" (as designed) |
+| Same with `confirm_count_rows` (user decision 2026-11-06) | saved, new token, numbers unchanged |
+| `doc.submit()` (no rate, empty warehouse) | **ANOMALY**: 00268 reached docstatus 1 with NO Stock Ledger Entry and NO GL Entry |
+
+Root cause of the anomaly (found 2026-11-06): it is a TEST-HARNESS ARTIFACT, not a product bug.
+Frappe 16.52 `bench execute` (`frappe/commands/utils.py` ~309) catches an exception from the target,
+re-evaluates the same method WITHOUT rolling back, then commits. First call: `submit()` wrote
+docstatus=1, then native `update_stock_ledger` raised "Valuation Rate required for Item W49E2E-PACK
+at row 1". Second call: the doc loaded with docstatus=1, so `_submit()` ran as update-after-submit
+(no `on_submit`), and bench committed. Reproduced deterministically as MAT-RECO-2026-00272 (new scratch
+warehouse "W49 Repro - _SCC"). Every direct submit of the equivalent drafts (00269/00270/00271, rolled
+back) raises the native valuation error as expected; doubled error lines in the log are the same retry.
+Real product behaviour: an outlet count for a warehouse with no prior stock and no rate cannot be
+submitted until HQ supplies a valuation rate (native ERPNext rule, unchanged by W49).
+
+Lesson for later sessions: never assert stock outcomes through `bench execute` on functions that can
+raise; wrap them with an explicit try/rollback inside the function, or use `bench console`/run-tests.
+
+Corrupted scratch fixtures (srcount only, docstatus 1 without SLE/GL, caused by the harness):
+MAT-RECO-2026-00268 (Finished Goods - _SCC) and MAT-RECO-2026-00272 (W49 Repro - _SCC).
+They are kept as-is, NOT cancelled (no approval). Other new fixtures: drafts 00265-00267, 00269-00271,
+warehouse "W49 Repro - _SCC". The drafts hold POSNext's one-open-opname-per-warehouse guard on
+Stores/WIP/FG/GIT - _SCC; a POSNext test session must use its own warehouse or ask before deleting them.
+
+## Fix round H1/H2/M4/M5 (2026-11-06, after Opus review of 810dacc)
+
+Scope: warehouse_app only (H3/POSNext out of scope). TDD: each finding reproduced by a failing test before the fix.
+
+| Finding | RED (before fix) | Fix | GREEN |
+|---|---|---|---|
+| H2 row.stock_uom trusted | unit `test_confirm_rows_uses_master_stock_uom_not_row`: `1.0 != 6.0`; `test_apply_rejects_token_minted_with_row_stock_uom`: ValidationError not raised. Integration `test_17` vs 810dacc sr_uom.py: `AssertionError: 1.0 != 6.0` | `sr_uom._master_stock_uom()` used at all 3 sites (confirm, apply validate, apply compute) | unit + integration test_17: payload `stock_uom=Pack` on Pcs item (Pack=6) -> factor 6, After 1056, qty 6336 (never 1056); forged factor-1 token rejected on insert |
+| H1 After precision | unit `test_confirm/apply_rejects_after_not_representable_at_own_precision`: not raised. Integration `test_18` vs 810dacc: ValidationError not raised | `validate_representable_after(row, qty_after)` (Decimal, `row.precision(custom_qty_after)`) in confirm + apply; no rounding, no global precision change | integration test_18: over-precise After rejected; fitting After survives save/reload/submit/reload, qty and SLE unchanged |
+| M4 Undo stale snapshot | node `m4_undo_to_confirmed_value_does_not_block_save`: `false !== true` | JS `forget_committed_input()` at the custom_qty_after / rate handlers (model commit point) | node green; guards `m4_typed_uncommitted_value_still_blocks_save`, `m4_input_typed_during_inflight_sync_still_blocks_save` green before and after |
+| M5 lock not reapplied | node `m5_item_change_to_native_row_unlocks_qty_and_rate` (`undefined !== 0`), `m5_import_bulk_fill_locks_custom_rows` (`undefined !== 1`) | `apply_row_qty_protection(frm)` after item-change reset `.finally()` and after `fill_grid` refresh | node green |
+
+Regression (orchestrator-run): pytest 120 passed + 41 subtests (baseline 114); node 80/80 (baseline 75); srcount integration `run-tests --module warehouse_app.tests.test_sr_count_integration` 18/18 OK (16 + test_17/18). Residue `_T_C17_%`/`_T_C18_%` Item/SR Item/SLE = 0/0/0. RED for test_17/18 shown by temporarily swapping in 810dacc sr_uom.py (restored, cmp-verified).
+
+Browser (srcount, served form after backend restart, existing fixture W49E2E-PACK @ Stores - _SCC, no submit):
+- M5a import 1060 Pack -> row custom, qty 6360, token set, qty/valuation_rate read_only=1.
+- M5b same row item -> W49E2E-SER: custom_uom cleared, token cleared, qty/valuation_rate read_only=0.
+- M4 1056 committed, 1057 committed, `undo_manager.undo()` -> After 1056 / qty 6336, token valid; Ctrl+S saved MAT-RECO-2026-00292 (no modal); reload 1056 / 6336. Draft deleted afterwards (created by this check only).
+- H1 Desk path: After field precision on srcount = 2 (System Settings float_precision 2, Custom Field precision empty). Typing 1056.1234 is rounded by the native Desk Float control to 1056.12 before any server call; the row is then rejected (client: "6336.72 Pcs ... harus bilangan bulat"; Save: "Konfirmasi hitungan belum valid"). Nothing saved. The H1 server message itself is reached only by API/import payloads (proved by integration test_18). OPEN (low): Desk rounding of typed After to field precision is native control behaviour; the count is not silently saved, but the user sees an indirect message.
+
+Final targeted review (Opus, one pass): H2 CLOSED, H1 CLOSED, M5 CLOSED, M4 PARTIAL — a same-value retype (native skips the no-op commit event, so the field handler never fires) left a stale snapshot that blocked Save after Undo. Fixed inside M4 scope: `snapshot_typed_input` no longer records a typed value equal to the model. RED node `m4_same_value_retype_then_undo_does_not_block_save` (`false !== true`, 80/81) -> GREEN 81/81. Browser recheck: 1056 -> 1057 -> retype 1057 -> Undo -> 1056/6336, Save OK (MAT-RECO-2026-00292, deleted after the check), reload unchanged. pytest 120 + 41 subtests still green. No further review round (user-bounded).

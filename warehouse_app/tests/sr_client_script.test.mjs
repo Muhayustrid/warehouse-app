@@ -21,12 +21,15 @@ const scriptCode = fs.readFileSync(appScriptPath, "utf8");
 function setupEnvironment(options = {}) {
 	const childHandlerMap = {};
 	const formHandlerMap = {};
+	const customButtons = {};
 	const setValueCalls = [];
 	const xcallCalls = [];
 	const callCalls = [];
 	const pendingBalanceCalls = [];
 	const msgprintCalls = [];
 	const activeElementBlurCalls = [];
+	const dialogCalls = [];
+	const fileUploaderCalls = [];
 
 	let xcallHandler = async (method, args) => ({});
 	let callHandler = null;
@@ -93,7 +96,9 @@ function setupEnvironment(options = {}) {
 		add_fetch: () => {},
 		set_query: () => {},
 		is_new: () => true,
-		add_custom_button: () => {},
+		add_custom_button: (label, action) => {
+			customButtons[label] = action;
+		},
 		toggle_display: () => {},
 		dashboard: {
 			headline: null,
@@ -134,6 +139,32 @@ function setupEnvironment(options = {}) {
 			has_role: () => true,
 		},
 		ui: {
+			Dialog: class {
+				constructor(opts) {
+					this.opts = opts;
+					this.values = {};
+					this.visible = false;
+					dialogCalls.push(this);
+				}
+				show() {
+					this.visible = true;
+				}
+				hide() {
+					this.visible = false;
+				}
+				get_value(fieldname) {
+					return this.values[fieldname];
+				}
+				set_value(fieldname, value) {
+					this.values[fieldname] = value;
+				}
+			},
+			FileUploader: class {
+				constructor(opts) {
+					this.opts = opts;
+					fileUploaderCalls.push(this);
+				}
+			},
 			form: {
 				on(doctype, handlers) {
 					if (doctype === "Stock Reconciliation Item") {
@@ -203,6 +234,9 @@ function setupEnvironment(options = {}) {
 		show_alert(msg) {},
 		msgprint(msg) {
 			msgprintCalls.push(msg);
+		},
+		confirm(message, on_confirm) {
+			on_confirm();
 		},
 		flags: {},
 		validated: true,
@@ -356,6 +390,9 @@ function setupEnvironment(options = {}) {
 		pendingBalanceCalls,
 		msgprintCalls,
 		activeElementBlurCalls,
+		customButtons,
+		dialogCalls,
+		fileUploaderCalls,
 		locals,
 		frm,
 		frappe,
@@ -2751,6 +2788,7 @@ test("native_serial_item_with_configured_default_uom_does_not_autofill_custom_uo
 
 const R5_CDT = "Stock Reconciliation Item";
 const tick = () => new Promise((r) => setTimeout(r, 20));
+const flt = (v) => (v == null || v === "" ? 0 : Number(v));
 
 function r5_newRow(overrides = {}) {
 	return {
@@ -3361,4 +3399,215 @@ test("r6b_stale_compute_row_rejection_after_context_change_is_ignored", async ()
 
 	assert.equal(env.locals[R5_CDT].row1.custom_count_confirmation, "token-new-context", "stale rejection must not clear a newer token");
 	assert.equal(env.msgprintCalls.length, before_msgs, "stale rejection must not show an error for the old context");
+});
+
+// ---------------------------------------------------------------------------
+// Round 7: M4 stale typed snapshot after a model-only revert (native Undo),
+// M5 per-row qty/rate lock after bulk fill and after item-change reset.
+// ---------------------------------------------------------------------------
+
+const COMPUTE_ROW = "warehouse_app.warehouse_app.stock_reconciliation.compute_row";
+
+test("m4_undo_to_confirmed_value_does_not_block_save", async () => {
+	const env = setupEnvironment();
+	env.locals[R5_CDT].row1 = r5_newRow({
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
+		custom_count_confirmation: "token_for_5", qty: 30,
+	});
+	env.frm.doc.items = [env.locals[R5_CDT].row1];
+	env.setXcallHandler(async (method, args) => ({
+		custom_uom: args.uom,
+		custom_conversion_factor: 6,
+		custom_qty_after: args.qty_after,
+		custom_valuation_rate_per_uom: null,
+		qty: flt(args.qty_after) * 6,
+		custom_count_confirmation: "token_for_" + args.qty_after,
+	}));
+	await env.frm.trigger("setup");
+
+	// User types 6 and the editor commits it (blur): model 6, snapshot 6.
+	env.locals[R5_CDT].row1.custom_qty_after = 6;
+	const editor = createMockGridInput({ rowName: "row1", fieldname: "custom_qty_after", value: "6" });
+	env.setActiveElement(editor);
+	env.triggerInputEvent(editor);
+	env.setActiveElement({ tagName: "BODY" });
+	await env.childHandlers.custom_qty_after(env.frm, R5_CDT, "row1");
+	await tick();
+	assert.equal(env.locals[R5_CDT].row1.custom_qty_after, 6, "committed model value is 6");
+	assert.equal(env.locals[R5_CDT].row1.custom_count_confirmation, "token_for_6");
+
+	// Native Undo restores model After to the confirmed 5 via set_value (no DOM input event).
+	await env.frappe.model.set_value(R5_CDT, "row1", "custom_qty_after", 5);
+	await tick();
+	env.setActiveElement({ tagName: "BODY" });
+
+	const result = await env.triggerSave("Save");
+
+	assert.equal(result.validated, true, "a model value matching the snapshot must not block Save");
+	assert.equal(env.msgprintCalls.length, 0);
+});
+
+test("m4_typed_uncommitted_value_still_blocks_save", async () => {
+	const env = setupEnvironment();
+	env.locals[R5_CDT].row1 = r5_newRow({
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
+		custom_count_confirmation: "token_for_5", qty: 30,
+	});
+	env.frm.doc.items = [env.locals[R5_CDT].row1];
+	env.setXcallHandler(async (method, args) => ({
+		custom_uom: args.uom,
+		custom_conversion_factor: 6,
+		custom_qty_after: args.qty_after,
+		qty: flt(args.qty_after) * 6,
+		custom_count_confirmation: "token_for_" + args.qty_after,
+	}));
+	await env.frm.trigger("setup");
+
+	// Operator types 6 without blurring (Ctrl+S path); the model still holds 5.
+	const editor = createMockGridInput({ rowName: "row1", fieldname: "custom_qty_after", value: "6" });
+	env.setActiveElement(editor);
+	env.triggerInputEvent(editor);
+	env.setActiveElement({ tagName: "BODY" });
+
+	const result = await env.triggerSave("Save");
+
+	assert.equal(result.validated, false, "text typed but not committed must still abort Save");
+	assert.equal(env.msgprintCalls[env.msgprintCalls.length - 1].title, "Perubahan Input Terdeteksi");
+});
+
+test("m4_input_typed_during_inflight_sync_still_blocks_save", async () => {
+	const env = setupEnvironment();
+	env.locals[R5_CDT].row1 = r5_newRow({
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
+		custom_count_confirmation: "token_for_5", qty: 30,
+	});
+	env.frm.doc.items = [env.locals[R5_CDT].row1];
+	let resolveSync;
+	env.setXcallHandler(() => new Promise((resolve) => (resolveSync = resolve)));
+	await env.frm.trigger("setup");
+
+	env.childHandlers.custom_qty_after(env.frm, R5_CDT, "row1");
+	// The user types 7 while the reply for 5 is still in flight.
+	const editor = createMockGridInput({ rowName: "row1", fieldname: "custom_qty_after", value: "7" });
+	env.setActiveElement(editor);
+	env.triggerInputEvent(editor);
+	env.setActiveElement({ tagName: "BODY" });
+	resolveSync({ custom_qty_after: 5, qty: 30 });
+	await tick();
+
+	const result = await env.triggerSave("Save");
+
+	assert.equal(result.validated, false, "input typed during an in-flight sync must still block Save");
+	assert.equal(env.msgprintCalls[env.msgprintCalls.length - 1].title, "Perubahan Input Terdeteksi");
+});
+
+test("m5_item_change_to_native_row_unlocks_qty_and_rate", async () => {
+	const env = setupEnvironment();
+	const locks = [];
+	env.frm.set_df_property = (table, prop, value, docname, field, row) => locks.push([row, field, value]);
+	env.locals[R5_CDT].row1 = r5_newRow({
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
+		custom_count_confirmation: "token_for_5", qty: 30,
+	});
+	env.frm.doc.items = [env.locals[R5_CDT].row1];
+	await env.frm.trigger("refresh");
+	locks.length = 0;
+
+	// Item changes to a native (non-serial) item: the reset clears custom_uom.
+	env.locals[R5_CDT].row1.item_code = "ITEM-002";
+	await env.childHandlers.item_code(env.frm, R5_CDT, "row1");
+	await tick();
+
+	assert.equal(env.locals[R5_CDT].row1.custom_uom, "", "reset must clear custom_uom");
+	const lock = (field) => locks.filter((l) => l[0] === "row1" && l[1] === field).pop()?.[2];
+	assert.equal(lock("qty"), 0, "a row that became native must unlock qty");
+	assert.equal(lock("valuation_rate"), 0, "a row that became native must unlock valuation_rate");
+});
+
+test("m5_import_bulk_fill_locks_custom_rows", async () => {
+	const env = setupEnvironment();
+	const locks = [];
+	env.frm.set_df_property = (table, prop, value, docname, field, row) => locks.push([row, field, value]);
+	env.setCallHandler((opts) => {
+		if ((opts.method || "").endsWith("upload_stock_count")) {
+			opts.callback({
+				message: {
+					added: 1,
+					rows: [
+						{
+							item_code: "ITEM-001",
+							warehouse: "Stores - RR",
+							custom_uom: "Pack",
+							custom_conversion_factor: 6,
+							custom_qty_after: 5,
+							qty: 30,
+							valuation_rate: 10,
+							custom_count_confirmation: "token_for_5",
+						},
+					],
+				},
+			});
+		}
+	});
+	await env.frm.trigger("refresh");
+
+	env.customButtons["Import Stock Count"]();
+	const d = env.dialogCalls[env.dialogCalls.length - 1];
+	d.set_value("warehouse", "Stores - RR");
+	d.opts.fields.find((f) => f.fieldname === "upload_btn").click();
+	env.fileUploaderCalls[env.fileUploaderCalls.length - 1].opts.on_success({
+		name: "count.xlsx",
+		dataurl: "data:text/csv;base64,eA==",
+	});
+	await tick();
+
+	const rows = env.frm.doc.items;
+	assert.equal(rows.length, 1, "import must fill the grid");
+	assert.equal(rows[0].custom_uom, "Pack");
+	const lock = (field) => locks.filter((l) => l[0] === rows[0].name && l[1] === field).pop()?.[2];
+	assert.equal(lock("qty"), 1, "an imported custom row must lock qty");
+	assert.equal(lock("valuation_rate"), 1, "an imported custom row must lock valuation_rate");
+});
+
+
+test("m4_same_value_retype_then_undo_does_not_block_save", async () => {
+	const env = setupEnvironment();
+	env.locals[R5_CDT].row1 = r5_newRow({
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
+		custom_count_confirmation: "token_for_5", qty: 30,
+	});
+	env.frm.doc.items = [env.locals[R5_CDT].row1];
+	env.setXcallHandler(async (method, args) => ({
+		custom_uom: args.uom,
+		custom_conversion_factor: 6,
+		custom_qty_after: args.qty_after,
+		custom_valuation_rate_per_uom: null,
+		qty: flt(args.qty_after) * 6,
+		custom_count_confirmation: "token_for_" + args.qty_after,
+	}));
+	await env.frm.trigger("setup");
+
+	// Commit 6 normally.
+	env.locals[R5_CDT].row1.custom_qty_after = 6;
+	const editor = createMockGridInput({ rowName: "row1", fieldname: "custom_qty_after", value: "6" });
+	env.setActiveElement(editor);
+	env.triggerInputEvent(editor);
+	env.setActiveElement({ tagName: "BODY" });
+	await env.childHandlers.custom_qty_after(env.frm, R5_CDT, "row1");
+	await tick();
+
+	// Re-type a value that parses to the same 6; native skips the no-op commit (no field handler).
+	const retype = createMockGridInput({ rowName: "row1", fieldname: "custom_qty_after", value: "6" });
+	env.setActiveElement(retype);
+	env.triggerInputEvent(retype);
+	env.setActiveElement({ tagName: "BODY" });
+
+	// Native Undo back to the confirmed 5 via set_value.
+	await env.frappe.model.set_value(R5_CDT, "row1", "custom_qty_after", 5);
+	await tick();
+	env.setActiveElement({ tagName: "BODY" });
+
+	const result = await env.triggerSave("Save");
+	assert.equal(result.validated, true, "a no-op retype must not leave a snapshot that blocks Save after Undo");
+	assert.equal(env.msgprintCalls.length, 0);
 });

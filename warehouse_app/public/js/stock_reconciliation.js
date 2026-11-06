@@ -128,7 +128,12 @@
 		const info = get_active_field_info(target);
 		if (!info || !info.row_name || COUNT_FIELDS.indexOf(info.fieldname) === -1) return;
 		const value = parsed_input_value(target);
-		typed_inputs.set(typed_key(info.row_name, info.fieldname), value);
+		const key = typed_key(info.row_name, info.fieldname);
+		const live = locals[SR_ITEM_DOCTYPE] && locals[SR_ITEM_DOCTYPE][info.row_name];
+		// Typed value equal to the model: nothing pending, and native skips the no-op commit event,
+		// so a kept snapshot would go stale and block Save after a later Undo.
+		if (live && same_value(live[info.fieldname], value)) typed_inputs.delete(key);
+		else typed_inputs.set(key, value);
 		if (info.fieldname === "custom_qty_after") count_touched.add(info.row_name);
 		form_input_generation++;
 	}
@@ -139,6 +144,16 @@
 			if (!target) return;
 			snapshot_typed_input(target);
 		});
+	}
+
+	// A model commit matching the snapshot proves the editor already committed it; drop the stale
+	// entry so a later model-only change (native Undo) is not reported as uncommitted input.
+	function forget_committed_input(row_name, fieldname) {
+		const key = typed_key(row_name, fieldname);
+		const live = locals[SR_ITEM_DOCTYPE] && locals[SR_ITEM_DOCTYPE][row_name];
+		if (live && typed_inputs.has(key) && same_value(live[fieldname], typed_inputs.get(key))) {
+			typed_inputs.delete(key);
+		}
 	}
 
 	// True while any count field holds a raw value the model has not committed yet.
@@ -728,6 +743,7 @@
 			return Promise.all(reset_promises)
 				.finally(() => {
 					syncing_rows.delete(cdn);
+					apply_row_qty_protection(frm);
 				})
 				.then(() => {
 					if (!expected_item) return;
@@ -763,11 +779,13 @@
 			return sync_row(frm, cdt, cdn, { omit_qty_after: true, omit_rate_per_uom: true, omit_confirmation: true });
 		},
 		custom_qty_after(frm, cdt, cdn) {
+			forget_committed_input(cdn, "custom_qty_after");
 			if (!enabled() || syncing_rows.has(cdn) || frm.doc.docstatus > 0) return;
 			form_input_generation++;
 			return sync_row(frm, cdt, cdn);
 		},
 		custom_valuation_rate_per_uom(frm, cdt, cdn) {
+			forget_committed_input(cdn, "custom_valuation_rate_per_uom");
 			if (!enabled() || syncing_rows.has(cdn) || frm.doc.docstatus > 0) return;
 			form_input_generation++;
 			return sync_row(frm, cdt, cdn, { omit_confirmation: true });
@@ -845,6 +863,7 @@
 			$.extend(frm.add_child("items"), r);
 		});
 		frm.refresh_field("items");
+		apply_row_qty_protection(frm);
 		d.hide();
 		frappe.show_alert({
 			message: __("{0} rows imported. Review and Save.", [res.added]),
