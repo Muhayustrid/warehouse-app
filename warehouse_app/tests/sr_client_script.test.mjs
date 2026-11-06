@@ -135,6 +135,9 @@ function setupEnvironment(options = {}) {
 	});
 
 	const frappe = {
+		utils: {
+			escape_html: (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+		},
 		user: {
 			has_role: () => true,
 		},
@@ -1780,6 +1783,42 @@ test("posting_mode_headline_indicator explains now vs explicit mode", async () =
 	await env.frm.trigger("refresh");
 	assert.equal(env.frm.dashboard.headline_indicator, "blue");
 	assert.match(env.frm.dashboard.headline, /Waktu Spesifik/);
+});
+
+test("posting_mode_headline_replaces_previous_and_auto_hides", async () => {
+	const env = setupEnvironment();
+	// Frappe v16 layout.show_message APPENDS a .form-message block per call, returns nothing.
+	const shown = [{ msg: "other app message" }];
+	const MARK = "wa-posting-mode";
+	env.frm.dashboard.set_headline_alert = (msg) => shown.push({ msg });
+	env.frm.layout = {
+		message: {
+			find: (sel) => ({
+				closest: () => ({
+					remove: () => {
+						for (let i = shown.length - 1; i >= 0; i--) {
+							if (sel === "." + MARK && shown[i].msg.includes(MARK)) shown.splice(i, 1);
+						}
+					},
+				}),
+			}),
+			children: () => ({ length: shown.length }),
+			addClass() {},
+		},
+	};
+
+	env.frm.doc.set_posting_time = 0;
+	await env.frm.trigger("refresh");
+	env.frm.doc.set_posting_time = 1;
+	for (const d of ["2026-11-06", "2026-11-05", "2026-11-08"]) {
+		env.frm.doc.posting_date = d;
+		await env.frm.trigger("posting_date");
+	}
+	assert.equal(shown.length, 2, "only one posting-mode message at a time");
+	assert.match(shown[1].msg, /2026-11-08/);
+
+	await new Promise((r) => setTimeout(r, 4200));
+	assert.deepEqual(shown.map((s) => s.msg), ["other app message"], "ours hides itself, others stay");
 });
 
 test("finding_1_warehouse_change_on_unconfirmed_zero_row_does_not_confirm", async () => {

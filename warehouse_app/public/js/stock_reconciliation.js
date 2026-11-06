@@ -199,11 +199,23 @@
 			  ])
 			: __("Posting Mode: Waktu Nyata (now). Target hitungan diterapkan pada waktu posting aktual saat submit.");
 		const indicator = is_explicit ? "blue" : "green";
+		// Frappe appends a new block per call (and returns nothing): drop ours, show one, auto-hide.
+		clearTimeout(posting_indicator_timer);
+		remove_posting_indicator(frm);
+		const html = `<span class="wa-posting-mode">${frappe.utils.escape_html(msg)}</span>`;
 		if (frm.dashboard && frm.dashboard.set_headline_alert) {
-			frm.dashboard.set_headline_alert(msg, indicator);
+			frm.dashboard.set_headline_alert(html, indicator);
 		} else if (frm.dashboard && frm.dashboard.set_headline) {
-			frm.dashboard.set_headline(msg);
+			frm.dashboard.set_headline(html);
 		}
+		posting_indicator_timer = setTimeout(() => remove_posting_indicator(frm), 4000);
+	}
+	let posting_indicator_timer = null;
+	function remove_posting_indicator(frm) {
+		const box = frm.layout && frm.layout.message;
+		if (!box || !box.find) return;
+		box.find(".wa-posting-mode").closest(".form-message").remove();
+		if (!box.children().length) box.addClass("hidden");
 	}
 
 	// Counted rows derive qty/valuation_rate from After, so only those rows are locked;
