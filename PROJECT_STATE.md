@@ -10,7 +10,8 @@ W49 evidence: docs/proofs/2026-11-05-sr-counted-input-protection.md.
   - M4: Undo leaves stale typed snapshot -> Save blocked (keep in-flight/no-blur protection).
   - M5: Qty/rate lock not reapplied after import fill_grid / custom->serial item change.
   - Status: ALL FOUR FIXED, committed after 810dacc (user-approved 2026-11-06; not pushed/deployed). See below.
-- Open after this round: H3 POSNext incompatible (adapter needed; handoff HANDOFF_POS_NEXT_SR_COUNT_PROTECTION.md, prompt in section 10).
+- Open after this round: H3 POSNext incompatible (adapter needed; handoff HANDOFF_POS_NEXT_SR_COUNT_PROTECTION.md rev 3 vs d171a3b: 5 call sites incl. import, revise edge case 4b).
+- dev.localhost (2026-11-06) already runs d171a3b code (image + custom field) WITHOUT the POSNext adapter: outlet custom-UOM Stock Opname saves fail there; tokenless docs RECO-OTPameran-261009001 (Draft) and RECO-TRNG-261105001 (Approval Pending).
 - User decision 2026-11-06: POSNext re-confirms (confirm_count_rows) in submit_opname initial state after stamping posting; HQ approval never re-confirms.
 - Blockers before deploy: POSNext adapter + paired release, cloud recheck (cloud Frappe 16.55.2 / ERPNext 16.53.0 vs srcount 16.52.0/16.51.1), SR Client/Server Script backup (migrate disables W23/W26), deploy approval.
 - Rollback rehearsal DONE on srcount (cc0634b <-> 810dacc): clean, idempotent, no stock doc mutated; drafts made while rolled back need re-confirm after roll-forward. Not rehearsed: image deploy, browser asset cache, cloud.
