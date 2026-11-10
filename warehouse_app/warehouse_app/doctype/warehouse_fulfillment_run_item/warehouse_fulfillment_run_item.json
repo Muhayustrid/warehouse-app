@@ -1,0 +1,85 @@
+{
+ "actions": [],
+ "creation": "2026-10-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sales_order_item",
+  "item_code",
+  "item_group_snapshot",
+  "picking_group",
+  "required_stock_qty",
+  "allocated_stock_qty",
+  "stock_uom",
+  "conversion_factor"
+ ],
+ "fields": [
+  {
+   "fieldname": "sales_order_item",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Order Item",
+   "options": "Sales Order Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item Code",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_group_snapshot",
+   "fieldtype": "Data",
+   "label": "Item Group Snapshot"
+  },
+  {
+   "fieldname": "picking_group",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Picking Group",
+   "options": "dry\nfrozen",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "required_stock_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Required Stock Qty"
+  },
+  {
+   "default": "0",
+   "fieldname": "allocated_stock_qty",
+   "fieldtype": "Float",
+   "label": "Allocated Stock Qty"
+  },
+  {
+   "fieldname": "stock_uom",
+   "fieldtype": "Link",
+   "label": "Stock UOM",
+   "options": "UOM"
+  },
+  {
+   "default": "1",
+   "fieldname": "conversion_factor",
+   "fieldtype": "Float",
+   "label": "Conversion Factor"
+  }
+ ],
+ "index_web_pages_for_search": 0,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-10-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Warehouse App",
+ "name": "Warehouse Fulfillment Run Item",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
