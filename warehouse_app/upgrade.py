@@ -21,11 +21,18 @@ def apply():
     retire_legacy_desk_ui()
     ensure_single_desk_entry()
     ensure_item_fields()
+    ensure_profile_dry_exceptions()
     ensure_sr_fields()
     ensure_pl_fields()
+    ensure_pl_fulfillment_fields()
+    ensure_fulfillment_lineage_fields()
+    ensure_delivery_note_letterhead_koli()
+    ensure_format_print_pick_list()
+    ensure_format_print_packing_slip()
     retire_client_scripts()
     ensure_client_scripts()
     migrate_legacy_uom_field()
+    backfill_run_short_pick_snapshot()
 
 
 def retire_legacy_desk_ui():
@@ -112,6 +119,16 @@ ITEM_FIELD_SPEC = {
     "insert_after": "unit_of_measure_conversion",
     "description": "UOM used for internal transactions (Stock Entry, Material Request). "
     "Must exist in the UOM Conversion table below. Empty = stock UOM.",
+}
+
+ITEM_FULFILLMENT_CATEGORY_SPEC = {
+    "dt": "Item",
+    "fieldname": "custom_fulfillment_category",
+    "label": "Fulfillment Category",
+    "fieldtype": "Select",
+    "options": "\nDry\nFrozen",
+    "insert_after": "item_group",
+    "description": "Fulfillment category override. Leave empty to follow Item Group.",
 }
 
 SE_FIELD_SPEC = {
@@ -1003,6 +1020,82 @@ PL_FIELD_SPEC = {
 # scan +1), tapi entries yang ditulis ke bundle TETAP SATUAN STOCK karena
 # server memvalidasi total bundle == stock_qty baris
 # (serial_and_batch_bundle.validate_quantity).
+PL_RUN_FIELD_SPEC = {
+    "dt": "Pick List",
+    "fieldname": "custom_fulfillment_run",
+    "label": "Fulfillment Run",
+    "fieldtype": "Link",
+    "options": "Warehouse Fulfillment Run",
+    "insert_after": "purpose",
+}
+
+PL_GROUP_FIELD_SPEC = {
+    "dt": "Pick List",
+    "fieldname": "custom_fulfillment_group",
+    "label": "Fulfillment Group",
+    "fieldtype": "Select",
+    "options": "Dry\nFrozen",
+    "insert_after": "custom_fulfillment_run",
+}
+
+# F3/F4: reverse audit links from the native delivery documents to the Run.
+DN_RUN_FIELD_SPEC = {
+    "dt": "Delivery Note",
+    "fieldname": "custom_fulfillment_run",
+    "fieldtype": "Link",
+    "label": "Fulfillment Run",
+    "options": "Warehouse Fulfillment Run",
+    "read_only": 1,
+    "insert_after": "customer",
+}
+
+DN_DRY_PACKAGES_SPEC = {
+    "dt": "Delivery Note",
+    "fieldname": "custom_dry_packages",
+    "fieldtype": "Int",
+    "label": "Dry Packages",
+    "read_only": 1,
+    "default": 0,
+    "insert_after": "custom_fulfillment_run",
+}
+
+DN_FROZEN_PACKAGES_SPEC = {
+    "dt": "Delivery Note",
+    "fieldname": "custom_frozen_packages",
+    "fieldtype": "Int",
+    "label": "Frozen Packages",
+    "read_only": 1,
+    "default": 0,
+    "insert_after": "custom_dry_packages",
+}
+
+DN_TOTAL_PACKAGES_SPEC = {
+    "dt": "Delivery Note",
+    "fieldname": "custom_total_packages",
+    "fieldtype": "Int",
+    "label": "Total Packages",
+    "read_only": 1,
+    "default": 0,
+    "insert_after": "custom_frozen_packages",
+}
+
+PS_RUN_FIELD_SPEC = {
+    "dt": "Packing Slip",
+    "fieldname": "custom_fulfillment_run",
+    "fieldtype": "Link",
+    "label": "Fulfillment Run",
+    "options": "Warehouse Fulfillment Run",
+    "read_only": 1,
+    "insert_after": "delivery_note",
+}
+
+# Installer patch SerialBatchPackageSelector — sama persis disematkan di script
+# Pick List DAN Stock Entry (dialog batch/serial dibuka dari kedua form);
+# flag proto.__w31 menjaga install tunggal walau kedua script dimuat bersama.
+# Prinsip: dialog bicara dalam UOM BARIS (target qty, qty per batch, input
+# scan +1), tapi entries yang ditulis ke bundle TETAP SATUAN STOCK karena
+# server memvalidasi total bundle == stock_qty baris
+# (serial_and_batch_bundle.validate_quantity).
 _SELECTOR_PATCH_JS = """
 	// Cache item -> Default Inventory UOM (null = tidak ada). Diprima oleh form
 	// script (refresh + item_code); dialog membacanya sinkron.
@@ -1491,12 +1584,29 @@ CLIENT_SCRIPTS = [
 
 
 def ensure_item_fields():
-    results = [_ensure_custom_field(ITEM_FIELD_SPEC), _ensure_custom_field(SE_FIELD_SPEC)]
+    results = [
+        _ensure_custom_field(ITEM_FIELD_SPEC),
+        _ensure_custom_field(SE_FIELD_SPEC),
+        _ensure_custom_field(ITEM_FULFILLMENT_CATEGORY_SPEC),
+    ]
     frappe.clear_cache(doctype="Item")
     frappe.clear_cache(doctype="Stock Entry Detail")
     if "created" in results or "updated" in results:
         frappe.db.commit()
     return "created" if "created" in results else ("updated" if "updated" in results else "unchanged")
+
+
+def ensure_profile_dry_exceptions():
+    if frappe.db.exists("DocType", "Warehouse Fulfillment Profile"):
+        frappe.reload_doc("warehouse_app", "doctype", "warehouse_fulfillment_profile")
+        changed = False
+        if not frappe.db.has_column("Warehouse Fulfillment Profile", "dry_item_exceptions"):
+            frappe.db.sql("ALTER TABLE `tabWarehouse Fulfillment Profile` ADD COLUMN `dry_item_exceptions` TEXT")
+            changed = True
+        if not frappe.db.has_column("Warehouse Fulfillment Profile", "enable_packing_slip"):
+            frappe.db.sql("ALTER TABLE `tabWarehouse Fulfillment Profile` ADD COLUMN `enable_packing_slip` INT(1) NOT NULL DEFAULT 1")
+            changed = True
+        frappe.clear_cache(doctype="Warehouse Fulfillment Profile")
 
 
 def ensure_sr_fields():
@@ -1591,6 +1701,1448 @@ def retire_client_scripts():
         )
         retired += 1
 
+    if retired:
+        frappe.clear_cache(doctype="Stock Reconciliation")
+        frappe.db.commit()
+    return f"retired {retired}"
+
+
+def ensure_pl_fulfillment_fields():
+    """F2: optional lineage fields on native Pick List (never required)."""
+    results = [
+        _ensure_custom_field(PL_RUN_FIELD_SPEC),
+        _ensure_custom_field(PL_GROUP_FIELD_SPEC),
+    ]
+    frappe.clear_cache(doctype="Pick List")
+    if "created" in results or "updated" in results:
+        frappe.db.commit()
+    if "created" in results:
+        return "created"
+    if "updated" in results:
+        return "updated"
+    return "unchanged"
+
+
+def ensure_fulfillment_lineage_fields():
+    """F3/F4: reverse lineage from Delivery Note / Packing Slip to the Run, and package count fields."""
+    results = [
+        _ensure_custom_field(DN_RUN_FIELD_SPEC),
+        _ensure_custom_field(DN_DRY_PACKAGES_SPEC),
+        _ensure_custom_field(DN_FROZEN_PACKAGES_SPEC),
+        _ensure_custom_field(DN_TOTAL_PACKAGES_SPEC),
+        _ensure_custom_field(PS_RUN_FIELD_SPEC),
+    ]
+    for dt in ("Delivery Note", "Packing Slip"):
+        frappe.clear_cache(doctype=dt)
+    if "created" in results or "updated" in results:
+        frappe.db.commit()
+    if "created" in results:
+        return "created"
+    if "updated" in results:
+        return "updated"
+    return "unchanged"
+
+
+def ensure_delivery_note_letterhead_koli():
+    """Ensure Company Letterhead - Grey includes the Dry / Frozen Koli box for Delivery Note
+    and prominent DRY / FROZEN badge for Pick List."""
+    if not frappe.db.exists("Letter Head", "Company Letterhead - Grey"):
+        return "skipped"
+
+    doc = frappe.get_doc("Letter Head", "Company Letterhead - Grey")
+    canonical_content = """<style>
+    /* Header Global Ropi — dipakai sebagai Letter Head default site (docs/11).
+       Prefix jh- agar tidak bentrok dengan CSS body format. */
+    .jh-header {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #1a1a1a;
+        background: #ffffff;
+        padding: 0 0 12px 0;
+        margin-bottom: 12px;
+        line-height: 1.4;
+    }
+    .jh-header table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .jh-header td {
+        vertical-align: top;
+        padding: 0;
+    }
+    .jh-header td.jh-logo-cell {
+        width: 250px;
+    }
+    .jh-header td.jh-info-cell {
+        text-align: right;
+    }
+
+    /* Kiri: logo + info perusahaan (sisi atas logo = sisi atas judul) */
+    .jh-logo-box {
+        width: 120px;
+        height: auto;
+        border: none;
+        text-align: left;
+        margin: 0 0 14px 0;
+        padding: 0;
+        line-height: 0;
+    }
+    .jh-logo-box img {
+        display: block;
+        max-width: 100%;
+        max-height: 80px;
+        object-fit: contain;
+    }
+    .jh-company {
+        text-align: left;
+        line-height: 1.6;
+    }
+    .jh-company .jh-company-name {
+        font-weight: bold;
+        font-size: 15px;
+        margin-bottom: 4px;
+    }
+    .jh-company div {
+        font-size: 11.5px;
+        color: #333;
+    }
+
+    /* Khusus Pick List: badge penanda DRY / FROZEN di atas judul */
+    .jh-group-badge-wrap {
+        text-align: right;
+        margin-bottom: 4px;
+    }
+    .jh-group-badge {
+        display: inline-block;
+        font-size: 13.5px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        padding: 3.5px 14px;
+        border-radius: 4px;
+        border: 1.5px solid #111111;
+        background: #f8fafc;
+        color: #111111;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+    .jh-group-badge.badge-frozen {
+        background: #0284c7;
+        color: #ffffff;
+        border-color: #0369a1;
+    }
+    .jh-group-badge.badge-dry {
+        background: #334155;
+        color: #ffffff;
+        border-color: #1e293b;
+    }
+
+    /* Kanan: judul + meta */
+    .jh-title {
+        font-size: 24px;
+        font-weight: bold;
+        text-align: right;
+        margin: 0 0 14px 0;
+        padding: 0;
+        line-height: 1;
+    }
+    .jh-meta {
+        text-align: right;
+    }
+    .jh-meta .jh-row {
+        margin-bottom: 7px;
+        white-space: nowrap;
+    }
+    .jh-meta .jh-label {
+        display: inline-block;
+        width: 90px;
+        color: #666;
+        font-size: 11.5px;
+        text-align: right;
+        margin-right: 10px;
+        vertical-align: middle;
+        border: none;
+        background: none;
+        padding: 0;
+        border-radius: 0;
+    }
+    .jh-meta .jh-val {
+        display: inline-block;
+        font-weight: 600;
+        font-size: 11.5px;
+        text-align: left;
+        min-width: 130px;
+        vertical-align: middle;
+        border: none;
+        background: none;
+        padding: 0;
+        border-radius: 0;
+    }
+
+    /* Khusus Delivery Note: isian jumlah koli, Frozen di kiri dan Dry di kanan dalam satu kotak */
+    .jh-koli {
+        display: block;
+        width: 240px;
+        margin: 12px 16px 0 auto;
+        padding: 9px 12px;
+        border: 1.5px solid #1a1a1a;
+    }
+    .jh-koli table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .jh-koli td {
+        width: 50%;
+        font-size: 13.5px;
+        font-weight: 600;
+        white-space: nowrap;
+        vertical-align: bottom;
+    }
+    .jh-koli td.jh-koli-left {
+        text-align: left;
+    }
+    .jh-koli td.jh-koli-right {
+        text-align: right;
+    }
+    .jh-koli .jh-line {
+        display: inline-block;
+        width: 36px;
+        border-bottom: 1px solid #1a1a1a;
+        margin: 0 0 0 6px;
+    }
+</style>
+
+{# Header global: logo + info company + judul + meta kondisional per DocType.
+   Context render = {"doc": doc.as_dict()} — pakai doc.get(...), jangan
+   doc.items (bentrok dengan method dict). #}
+{% set _company = doc.get("company") %}
+{% set _cd = frappe.db.get_value("Company", _company, ["company_logo", "phone_no", "email", "website"], as_dict=True) if _company else None %}
+{% set _items = doc.get("items") or [] %}
+{% set _doctype = doc.get("doctype") %}
+{% set _status = "Draft" if doc.get("docstatus") == 0 else doc.get("status") %}
+
+{% if _doctype == "Purchase Order" %}
+    {% set _title = "Purchase Order" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("PO No.", doc.get("name")),
+        ("PO Date", frappe.utils.formatdate(doc.get("transaction_date"))),
+        ("Required By", frappe.utils.formatdate(doc.get("schedule_date"))),
+        ("Supplier Quotation", doc.get("supplier_quotation")),
+        ("Payment Terms", doc.get("payment_terms_template")),
+    ] %}
+{% elif _doctype == "Purchase Receipt" %}
+    {% set _po_refs = _items | map(attribute='purchase_order') | select | unique | list %}
+    {% set _title = "Purchase Receipt" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("PR No.", doc.get("name")),
+        ("Posting Date", frappe.utils.formatdate(doc.get("posting_date"))),
+        ("Delivery Note", doc.get("supplier_delivery_note")),
+        ("Against PO", (_po_refs | join(", ")) if _po_refs else "-"),
+        ("Payment Terms", doc.get("payment_terms_template")),
+    ] %}
+{% elif _doctype == "Purchase Invoice" %}
+    {% set _po_refs = _items | map(attribute='purchase_order') | select | unique | list %}
+    {% set _pr_refs = _items | map(attribute='purchase_receipt') | select | unique | list %}
+    {% set _title = "Purchase Invoice" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("Invoice No.", doc.get("name")),
+        ("Posting Date", frappe.utils.formatdate(doc.get("posting_date"))),
+        ("Due Date", frappe.utils.formatdate(doc.get("due_date"))),
+        ("Supplier Inv. No.", doc.get("bill_no")),
+        ("Against PO", (_po_refs | join(", ")) if _po_refs else "-"),
+        ("Against PR", (_pr_refs | join(", ")) if _pr_refs else "-"),
+        ("Payment Terms", doc.get("payment_terms_template")),
+    ] %}
+{% elif _doctype == "Sales Order" %}
+    {% set _title = "Sales Order" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("SO No.", doc.get("name")),
+        ("SO Date", frappe.utils.formatdate(doc.get("transaction_date"))),
+        ("Delivery Date", frappe.utils.formatdate(doc.get("delivery_date"))),
+        ("Customer PO No.", doc.get("po_no")),
+        ("Payment Terms", doc.get("payment_terms_template")),
+    ] %}
+{% elif _doctype == "Delivery Note" %}
+    {% set _so_refs = _items | map(attribute='against_sales_order') | select | unique | list %}
+    {% set _title = "Delivery Note" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("DN No.", doc.get("name")),
+        ("Posting Date", frappe.utils.formatdate(doc.get("posting_date"))),
+        ("Customer PO No.", doc.get("po_no")),
+        ("Against SO", (_so_refs | join(", ")) if _so_refs else "-"),
+        ("Payment Terms", doc.get("payment_terms_template")),
+    ] %}
+{% elif _doctype == "Pick List" %}
+    {% set _so_refs = [] %}
+    {% for _loc in (doc.get("locations") or []) %}
+        {% if _loc.sales_order and _loc.sales_order not in _so_refs %}
+            {% set _ = _so_refs.append(_loc.sales_order) %}
+        {% endif %}
+    {% endfor %}
+    {% set _group_name = (doc.get("custom_fulfillment_group") or "").upper() %}
+    {% if not _group_name and doc.get("custom_fulfillment_run") %}
+        {% set _run_doc = frappe.db.get_value("Warehouse Fulfillment Run", doc.get("custom_fulfillment_run"), ["dry_pick_list", "frozen_pick_list"], as_dict=True) %}
+        {% if _run_doc %}
+            {% if _run_doc.dry_pick_list == doc.get("name") %}
+                {% set _group_name = "DRY" %}
+            {% elif _run_doc.frozen_pick_list == doc.get("name") %}
+                {% set _group_name = "FROZEN" %}
+            {% endif %}
+        {% endif %}
+    {% endif %}
+    {% set _title = "PICKING LIST" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("Pick List No.", doc.get("name")),
+        ("Date", frappe.utils.formatdate(doc.get("creation"))),
+        ("Purpose", doc.get("purpose") or "Delivery"),
+        ("Against SO", (_so_refs | join(", ")) if _so_refs else "-"),
+    ] %}
+{% elif _doctype == "Material Request" %}
+    {% set _title = "Material Request" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("MR No.", doc.get("name")),
+        ("Transaction Date", frappe.utils.formatdate(doc.get("transaction_date"))),
+        ("Required By", frappe.utils.formatdate(doc.get("schedule_date"))),
+        ("Purpose", doc.get("material_request_type")),
+    ] %}
+{% elif _doctype == "Stock Entry" %}
+    {% set _status = "Draft" if doc.get("docstatus") == 0 else ("Submitted" if doc.get("docstatus") == 1 else "Cancelled") %}
+    {% set _title = "Stock Entry" %}
+    {% set _rows = [
+        ("Status", _status),
+        ("STE No.", doc.get("name")),
+        ("Posting Date", frappe.utils.formatdate(doc.get("posting_date"))),
+        ("Purpose", doc.get("purpose")),
+    ] %}
+{% else %}
+    {% set _title = _doctype or "" %}
+    {% set _rows = [
+        ("No.", doc.get("name")),
+        ("Date", frappe.utils.formatdate(doc.get("posting_date") or doc.get("creation"))),
+    ] %}
+{% endif %}
+
+<div class="jh-header">
+    <table>
+        <tr>
+            <td class="jh-logo-cell">
+                {% if _cd and _cd.company_logo %}
+                <div class="jh-logo-box"><img src="{{ _cd.company_logo }}" alt="Company Logo"></div>
+                {% endif %}
+                {% if _company %}
+                <div class="jh-company">
+                    <div class="jh-company-name">{{ _company }}</div>
+                    {% if _cd and _cd.phone_no %}<div>Phone: {{ _cd.phone_no }}</div>{% endif %}
+                    {% if _cd and _cd.email %}<div>Email: {{ _cd.email }}</div>{% endif %}
+                    {% if _cd and _cd.website %}<div>WEB: {{ _cd.website }}</div>{% endif %}
+                </div>
+                {% endif %}
+            </td>
+            <td class="jh-info-cell">
+                {% if _doctype == "Pick List" and _group_name %}
+                <div class="jh-group-badge-wrap">
+                    <span class="jh-group-badge {% if 'FROZEN' in _group_name %}badge-frozen{% else %}badge-dry{% endif %}">
+                        {{ _group_name }}
+                    </span>
+                </div>
+                {% endif %}
+                <div class="jh-title">{{ _title }}</div>
+                <div class="jh-meta">
+                    {% for _label, _value in _rows %}{% if _value %}
+                    <div class="jh-row"><span class="jh-label">{{ _label }}</span><span class="jh-val">{{ _value }}</span></div>
+                    {% endif %}{% endfor %}
+                </div>
+                {% if _doctype == "Delivery Note" %}
+                <div class="jh-koli">
+                    <table>
+                        <tr>
+                            <td class="jh-koli-left">Dry :<span class="jh-line"></span></td>
+                            <td class="jh-koli-right">Frozen :<span class="jh-line"></span></td>
+                        </tr>
+                    </table>
+                </div>
+                {% endif %}
+            </td>
+        </tr>
+    </table>
+</div>"""
+
+    if (doc.content or "").strip() != canonical_content.strip():
+        doc.content = canonical_content
+        doc.save(ignore_permissions=True)
+        frappe.db.commit()
+        return "updated"
+
+    return "unchanged"
+
+
+def ensure_format_print_pick_list():
+    """Ensure standard Pick List print format matches the clean corporate layout
+    with logo, phone, customer details, clean table with PICKER, PACKER, CHECKER,
+    summary for Time & Total Koli, and 3-column signature block."""
+    template_html = """<div class="pl-print-format">
+<style>
+    @page {
+        size: A4 portrait;
+        margin: 10mm;
+    }
+
+    .pl-print-format {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #1a1a1a;
+        font-size: 12px;
+        background: #ffffff;
+        padding: 0;
+        line-height: 1.4;
+    }
+    .pl-print-format table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    /* HEADER + TITLE + META */
+    .pl-header {
+        padding-bottom: 12px;
+        margin-bottom: 12px;
+    }
+    .pl-header table {
+        width: 100%;
+    }
+    .pl-header td {
+        vertical-align: top;
+    }
+    .pl-header td.logo-cell {
+        width: 200px;
+    }
+    .pl-header td.info-cell {
+        text-align: right;
+    }
+    .pl-logo-box {
+        width: 90px;
+        height: 70px;
+        border: none;
+        text-align: center;
+        font-size: 10px;
+        color: #999;
+        line-height: 70px;
+        margin-bottom: 10px;
+    }
+    .pl-logo-box img {
+        max-width: 85px !important;
+        max-height: 65px !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+        vertical-align: middle;
+        display: block !important;
+    }
+    .company-info {
+        text-align: left;
+        line-height: 1.5;
+    }
+    .company-info .company-name {
+        font-weight: bold;
+        font-size: 15px;
+        margin-bottom: 2px;
+    }
+    .company-info div {
+        font-size: 11.5px;
+        color: #333;
+    }
+    .pl-group-badge-wrap {
+        text-align: right;
+        margin-bottom: 4px;
+    }
+    .pl-group-badge {
+        display: inline-block;
+        font-size: 13.5px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        padding: 3.5px 14px;
+        border-radius: 4px;
+        border: 1.5px solid #111111;
+        background: #f8fafc;
+        color: #111111;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+    .pl-group-badge.badge-frozen {
+        background: #0284c7;
+        color: #ffffff;
+        border-color: #0369a1;
+    }
+    .pl-group-badge.badge-dry {
+        background: #334155;
+        color: #ffffff;
+        border-color: #1e293b;
+    }
+    .pl-page-subhead {
+        border-bottom: 1.5px solid #1a1a1a;
+        margin-bottom: 12px;
+        padding-bottom: 4px;
+    }
+    .pl-page-subhead table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .pl-group-badge-sub {
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 1.5px 8px;
+        border-radius: 3px;
+        border: 1px solid #111111;
+        margin-left: 6px;
+        vertical-align: middle;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+    .pl-group-badge-sub.badge-frozen {
+        background: #0284c7;
+        color: #ffffff;
+        border-color: #0369a1;
+    }
+    .pl-group-badge-sub.badge-dry {
+        background: #334155;
+        color: #ffffff;
+        border-color: #1e293b;
+    }
+    .pl-title {
+        font-size: 24px;
+        font-weight: bold;
+        text-align: right;
+        margin-top: 0;
+        margin-bottom: 10px;
+        line-height: 1.2;
+    }
+    .pl-meta {
+        text-align: right;
+    }
+    .pl-meta .meta-row {
+        margin-bottom: 4px;
+        white-space: nowrap;
+    }
+    .pl-meta .pl-label {
+        display: inline-block;
+        width: 100px;
+        color: #666;
+        font-size: 11.5px;
+        text-align: right;
+        margin-right: 10px;
+        vertical-align: middle;
+    }
+    .pl-meta .pl-val {
+        display: inline-block;
+        font-weight: 600;
+        font-size: 11.5px;
+        text-align: left;
+        min-width: 140px;
+        vertical-align: middle;
+    }
+
+    /* CUSTOMER & REF INFO SECTION */
+    .pl-parties {
+        border-top: 1px solid #1a1a1a;
+        padding: 10px 0;
+        margin-bottom: 12px;
+    }
+    .pl-parties table td {
+        width: 50%;
+        vertical-align: top;
+        padding-right: 24px;
+    }
+    .pl-parties .section-title {
+        font-weight: bold;
+        font-size: 11px;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: #555;
+        margin-bottom: 4px;
+    }
+    .pl-parties .party-name {
+        font-weight: bold;
+        font-size: 13px;
+        margin-bottom: 2px;
+    }
+    .pl-parties .party-line {
+        font-size: 12px;
+        color: #333;
+    }
+
+    /* ITEMS TABLE */
+    .pl-items table {
+        border-top: 1px solid #1a1a1a;
+        border-bottom: 1px solid #1a1a1a;
+        table-layout: fixed;
+    }
+    .pl-items th {
+        text-align: left;
+        padding: 6px 5px;
+        border-bottom: 1px solid #1a1a1a;
+        font-size: 10.5px;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        color: #444;
+    }
+    .pl-items td {
+        padding: 7px 5px;
+        vertical-align: middle;
+        font-size: 12px;
+        border-bottom: 1px solid #eee;
+    }
+    .pl-items tr:last-child td {
+        border-bottom: none;
+    }
+    .pl-items th.text-right, .pl-items td.text-right {
+        text-align: right;
+        white-space: nowrap;
+    }
+    .pl-items th.text-center, .pl-items td.text-center {
+        text-align: center;
+    }
+    .item-code {
+        font-weight: normal;
+    }
+    .item-desc {
+        color: #666;
+        font-weight: 400;
+    }
+    .batch-box {
+        display: inline-block;
+        border: 1px solid #ccc;
+        padding: 1px 4px;
+        font-size: 10px;
+        margin-top: 3px;
+        color: #555;
+    }
+
+    /* FOOTER (Time / Total Koli) */
+    .pl-summary-wrap {
+        margin-top: 10px;
+    }
+    .pl-summary-left {
+        font-size: 11.5px;
+        color: #555;
+        padding-top: 4px;
+        font-weight: bold;
+    }
+
+    /* SIGNATURES */
+    .pl-signatures {
+        margin-top: 45px;
+    }
+    .pl-signatures table td {
+        width: 33.33%;
+        text-align: center;
+        padding: 0 10px;
+        vertical-align: top;
+    }
+    .pl-signatures .sig-role {
+        font-size: 12px;
+        color: #555;
+        margin-bottom: 70px;
+    }
+    .pl-signatures .sig-name {
+        font-size: 11.5px;
+        color: #444;
+    }
+
+    .pl-page {
+        page-break-after: always;
+        break-after: page;
+    }
+    .pl-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+    }
+    .manual-line {
+        display: inline-block;
+        min-width: 170px;
+        border-bottom: 1px dotted #777;
+        height: 13px;
+        vertical-align: top;
+    }
+    .manual-line.short {
+        min-width: 90px;
+    }
+    .packing-footer-table td {
+        vertical-align: top;
+    }
+
+    @media print {
+        .pl-page {
+            page-break-after: always;
+            break-after: page;
+        }
+        .pl-page:last-child {
+            page-break-after: auto;
+            break-after: auto;
+        }
+    }
+</style>
+
+{# Read company logo and contact safely #}
+{% set company_doc = frappe.get_doc("Company", doc.company) if doc.company else None %}
+{% set location_rows = doc.locations or [] %}
+{% set group_name = (doc.custom_fulfillment_group or '').upper() %}
+{% if not group_name and doc.custom_fulfillment_run %}
+    {% set run_doc = frappe.get_doc("Warehouse Fulfillment Run", doc.custom_fulfillment_run) if frappe.db.exists("Warehouse Fulfillment Run", doc.custom_fulfillment_run) else None %}
+    {% if run_doc %}
+        {% if run_doc.dry_pick_list == doc.name %}
+            {% set group_name = "DRY" %}
+        {% elif run_doc.frozen_pick_list == doc.name %}
+            {% set group_name = "FROZEN" %}
+        {% endif %}
+    {% endif %}
+{% endif %}
+
+{# Referensi Sales Order hanya dibaca dari child table bila memang tersedia. #}
+{% set sales_order_refs = [] %}
+{% for row in location_rows %}
+    {% if row.sales_order and row.sales_order not in sales_order_refs %}
+        {% set _ = sales_order_refs.append(row.sales_order) %}
+    {% endif %}
+{% endfor %}
+
+{% if sales_order_refs %}
+    {% set reference_label = "Sales Order" %}
+    {% set reference_value = sales_order_refs | join(", ") %}
+{% elif doc.work_order %}
+    {% set reference_label = "Work Order" %}
+    {% set reference_value = doc.work_order %}
+{% elif doc.material_request %}
+    {% set reference_label = "Material Request" %}
+    {% set reference_value = doc.material_request %}
+{% else %}
+    {% set reference_label = "Reference" %}
+    {% set reference_value = "-" %}
+{% endif %}
+
+{% set displayed_customer = doc.customer_name or doc.customer or "Internal / N/A" %}
+{% set displayed_status = "Draft" if doc.docstatus == 0 else (doc.status or "-") %}
+{% set rows_per_page = 24 %}
+{% set item_count = location_rows | length %}
+{% set total_pages = (((item_count - 1) // rows_per_page) + 1) if item_count > 0 else 1 %}
+{% set page_starts = range(0, item_count, rows_per_page) if item_count > 0 else [0] %}
+
+{% for start_index in page_starts %}
+{% set page_rows = location_rows[start_index:start_index + rows_per_page] %}
+
+<div class="pl-page">
+    {% if loop.first %}
+    <div class="pl-header">
+        <table>
+            <tr>
+                <td class="logo-cell">
+                    {% if company_doc and company_doc.company_logo and company_doc.company_logo.strip() %}
+                    <div class="pl-logo-box">
+                        <img src="{{ company_doc.company_logo }}">
+                    </div>
+                    {% endif %}
+                    <div class="company-info">
+                        <div class="company-name">{{ doc.company or (company_doc.name if company_doc else "PT. JUARA ROTI INDONESIA") }}</div>
+                        {% if company_doc and company_doc.phone_no %}
+                            <div>Phone: {{ company_doc.phone_no }}</div>
+                        {% else %}
+                            <div>Phone: 08114232789</div>
+                        {% endif %}
+                        {% if company_doc and company_doc.email %}
+                            <div>Email: {{ company_doc.email }}</div>
+                        {% endif %}
+                        {% if company_doc and company_doc.website %}
+                            <div>WEB: {{ company_doc.website }}</div>
+                        {% endif %}
+                    </div>
+                </td>
+
+                <td class="info-cell">
+                    {% if group_name %}
+                    <div class="pl-group-badge-wrap">
+                        <span class="pl-group-badge {% if 'FROZEN' in group_name %}badge-frozen{% else %}badge-dry{% endif %}">
+                            {{ group_name }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    <div class="pl-title">PICKING LIST</div>
+
+                    <div class="pl-meta">
+                        <div class="meta-row">
+                            <span class="pl-label">Status</span>
+                            <span class="pl-val">{{ displayed_status }}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="pl-label">Pick List No.</span>
+                            <span class="pl-val">{{ doc.name }}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="pl-label">Date</span>
+                            <span class="pl-val">{{ frappe.utils.formatdate(doc.creation) }}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="pl-label">Purpose</span>
+                            <span class="pl-val">{{ doc.purpose or "-" }}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="pl-label">Page</span>
+                            <span class="pl-val">{{ loop.index }} / {{ total_pages }}</span>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="pl-parties">
+        <table>
+            <tr>
+                <td>
+                    <div class="section-title">Customer Details</div>
+                    <div class="party-name">{{ displayed_customer }}</div>
+                    {% if doc.customer and doc.customer_name and doc.customer != doc.customer_name %}
+                        <div class="party-line">{{ doc.customer }}</div>
+                    {% endif %}
+                </td>
+
+                <td>
+                    <div class="section-title">{{ reference_label }}</div>
+                    <div class="party-line">{{ reference_value }}</div>
+                    {% if doc.parent_warehouse %}
+                        <div class="section-title" style="margin-top:8px;">Warehouse</div>
+                        <div class="party-line">{{ doc.parent_warehouse }}</div>
+                    {% endif %}
+                </td>
+            </tr>
+        </table>
+    </div>
+    {% else %}
+    <div class="pl-page-subhead">
+        <table>
+            <tr>
+                <td style="font-size: 12px; font-weight: bold; text-align: left; padding: 4px 0;">
+                    PICKING LIST — {{ doc.name }}
+                    {% if group_name %}
+                        <span class="pl-group-badge-sub {% if 'FROZEN' in group_name %}badge-frozen{% else %}badge-dry{% endif %}">
+                            {{ group_name }}
+                        </span>
+                    {% endif %}
+                </td>
+                <td style="font-size: 11.5px; text-align: right; color: #555; padding: 4px 0;">
+                    Page {{ loop.index }} / {{ total_pages }}
+                </td>
+            </tr>
+        </table>
+    </div>
+    {% endif %}
+
+    <div class="pl-items">
+        <table>
+            <thead>
+                <tr>
+                    <th class="text-center" style="width:6%;">No</th>
+                    <th class="text-center" style="width:34%;">Item</th>
+                    <th class="text-right" style="width:10%;">Qty</th>
+                    <th class="text-center" style="width:10%;">Satuan</th>
+                    <th class="text-center" style="width:13%;">Picker</th>
+                    <th class="text-center" style="width:13%;">Packer</th>
+                    <th class="text-center" style="width:14%;">Checker</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in page_rows %}
+                {% if row.uom and row.qty %}
+                    {% set displayed_qty = row.qty %}
+                    {% set displayed_uom = row.uom %}
+                {% else %}
+                    {% set displayed_qty = row.stock_qty %}
+                    {% set displayed_uom = row.stock_uom or "-" %}
+                {% endif %}
+                <tr>
+                    <td class="text-center" style="vertical-align:top;">
+                        {{ start_index + loop.index }}
+                    </td>
+                    <td style="vertical-align:top;">
+                        <span class="item-code">{{ row.item_name or row.item_code }}</span>
+                        {% if row.batch_no %}
+                            <br><span class="batch-box">Batch: {{ row.batch_no }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right" style="vertical-align:top;">
+                        {{ displayed_qty | int if displayed_qty == displayed_qty | int else displayed_qty }}
+                    </td>
+                    <td class="text-center" style="vertical-align:top;">
+                        {{ displayed_uom }}
+                    </td>
+                    <td class="text-center"></td>
+                    <td class="text-center"></td>
+                    <td class="text-center"></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if loop.last %}
+    <div class="pl-summary-wrap">
+        <table class="packing-footer-table">
+            <tr>
+                <td style="width:50%;"></td>
+                <td style="width:25%; text-align:right; padding-right:12px;">
+                    <div class="pl-summary-left">Time:</div>
+                </td>
+                <td style="width:25%;">
+                    <span class="manual-line short"></span>
+                </td>
+            </tr>
+            <tr>
+                <td></td>
+                <td style="text-align:right; padding-right:12px;">
+                    <div class="pl-summary-left">Total Koli:</div>
+                </td>
+                <td>
+                    <span class="manual-line short"></span>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="pl-signatures">
+        <table>
+            <tr>
+                <td>
+                    <div class="sig-role">Picker Name</div>
+                    <div class="sig-name">( ................................ )</div>
+                </td>
+                <td>
+                    <div class="sig-role">Packer Name</div>
+                    <div class="sig-name">( ................................ )</div>
+                </td>
+                <td>
+                    <div class="sig-role" style="margin-bottom:4px;">Checker Name</div>
+                    <div class="sig-name" style="margin-bottom:50px;">...... / ...... / ............</div>
+                    <div class="sig-name">( ................................ )</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+</div>"""
+
+    name = "Format Print Pick List"
+    if not frappe.db.exists("Print Format", name):
+        doc = frappe.get_doc({
+            "doctype": "Print Format",
+            "name": name,
+            "doc_type": "Pick List",
+            "module": "Stock",
+            "standard": "No",
+            "custom_format": 1,
+            "print_format_type": "Jinja",
+            "html": template_html,
+        })
+        doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        return "created"
+
+    doc = frappe.get_doc("Print Format", name)
+    doc.html = template_html
+    doc.custom_format = 1
+    doc.print_format_type = "Jinja"
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return "updated"
+
+
+def ensure_format_print_packing_slip():
+    """Ensure standard Packing Slip print format matches the clean corporate layout in Image 3
+    with logo, phone, customer details, clean table with PICKER, PACKER, CHECKER,
+    summary for Time & Total Koli, and 3-column signature block."""
+    template_html = """<div class="ps-print-format">
+<style>
+    @page {
+        size: A4 portrait;
+        margin: 10mm;
+    }
+
+    .ps-print-format {
+        font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+        color: #111111;
+        font-size: 13px;
+        background: #ffffff;
+        padding: 0;
+        line-height: 1.4;
+    }
+    .ps-print-format table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    /* HEADER */
+    .ps-header {
+        margin-bottom: 12px;
+    }
+    .ps-header td {
+        vertical-align: top;
+    }
+    .ps-header td.logo-cell {
+        width: 50%;
+        text-align: left;
+    }
+    .ps-header td.info-cell {
+        width: 50%;
+        text-align: right;
+    }
+    .ps-logo-wrap {
+        display: inline-block;
+        max-width: 105px;
+        margin-bottom: 6px;
+    }
+    .ps-print-format .ps-logo-img,
+    .ps-logo-img {
+        max-height: 50px !important;
+        max-width: 105px !important;
+        width: auto !important;
+        height: auto !important;
+        object-fit: contain !important;
+        display: block !important;
+    }
+    .company-name {
+        font-weight: bold;
+        font-size: 15px;
+        margin-bottom: 4px;
+        color: #1a1a1a;
+    }
+    .company-phone {
+        font-size: 11.5px;
+        color: #333333;
+        line-height: 1.5;
+    }
+    .ps-title {
+        font-size: 22px;
+        font-weight: bold;
+        text-align: right;
+        margin: 0 0 10px 0;
+        line-height: 1.1;
+        color: #1a1a1a;
+    }
+    .ps-meta {
+        text-align: right;
+        font-size: 11.5px;
+    }
+    .ps-meta .meta-row {
+        margin-bottom: 6px;
+        white-space: nowrap;
+    }
+    .ps-meta .ps-label {
+        display: inline-block;
+        width: 110px;
+        color: #666666;
+        font-size: 11.5px;
+        text-align: right;
+        margin-right: 10px;
+        vertical-align: middle;
+    }
+    .ps-meta .ps-val {
+        display: inline-block;
+        font-weight: 600;
+        font-size: 11.5px;
+        text-align: left;
+        min-width: 130px;
+        color: #1a1a1a;
+        vertical-align: middle;
+    }
+
+    .ps-divider {
+        border-top: 1.8px solid #111111;
+        margin: 12px 0 16px 0;
+    }
+
+    /* CUSTOMER & DETAILS */
+    .ps-parties {
+        margin-bottom: 14px;
+    }
+    .ps-parties td {
+        width: 50%;
+        vertical-align: top;
+        padding-right: 20px;
+    }
+    .ps-section-title {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: #4b5563;
+        margin-bottom: 3px;
+        letter-spacing: 0.04em;
+    }
+    .ps-party-name {
+        font-weight: 700;
+        font-size: 14px;
+        color: #111111;
+        margin-bottom: 2px;
+    }
+    .ps-party-sub {
+        font-size: 12px;
+        color: #4b5563;
+    }
+    .ps-order-val {
+        font-size: 13px;
+        font-weight: 700;
+        color: #111111;
+        margin-bottom: 8px;
+    }
+
+    /* TABLE */
+    .ps-items-table {
+        width: 100%;
+        border-collapse: collapse;
+        border-top: 1.8px solid #111111;
+        border-bottom: 1.8px solid #111111;
+        margin-top: 14px;
+    }
+    .ps-items-table th {
+        font-size: 11.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #111111;
+        padding: 8px 6px;
+        border-bottom: 1px solid #111111;
+    }
+    .ps-items-table td {
+        padding: 9px 6px;
+        font-size: 12.5px;
+        border-bottom: 1px solid #e5e7eb;
+        vertical-align: middle;
+    }
+    .ps-items-table tr:last-child td {
+        border-bottom: none;
+    }
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .text-left { text-align: left; }
+
+    /* SUMMARY */
+    .ps-summary-wrap {
+        margin-top: 16px;
+        margin-bottom: 30px;
+        display: table;
+        width: 100%;
+    }
+    .ps-summary-spacer {
+        display: table-cell;
+        width: 60%;
+    }
+    .ps-summary-box {
+        display: table-cell;
+        width: 40%;
+        text-align: right;
+    }
+    .ps-summary-row {
+        margin-bottom: 8px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #111111;
+    }
+    .ps-dotted-line {
+        display: inline-block;
+        width: 150px;
+        border-bottom: 1px dotted #888888;
+        vertical-align: bottom;
+        height: 14px;
+        margin-left: 6px;
+    }
+
+    /* SIGNATURES */
+    .ps-signatures {
+        margin-top: 40px;
+        width: 100%;
+    }
+    .ps-signatures td {
+        width: 33.33%;
+        text-align: center;
+        vertical-align: top;
+        padding: 0 10px;
+    }
+    .sig-role {
+        font-size: 12.5px;
+        font-weight: 700;
+        color: #111111;
+        margin-bottom: 48px;
+    }
+    .sig-name {
+        font-size: 12px;
+        color: #222222;
+    }
+    .sig-date {
+        font-size: 11px;
+        color: #666666;
+        margin-bottom: 24px;
+    }
+
+    .ps-page {
+        page-break-after: always;
+        break-after: page;
+    }
+    .ps-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+    }
+</style>
+
+{% set dn_doc = frappe.get_doc("Delivery Note", doc.delivery_note) if doc.delivery_note else None %}
+{% set company_name = (dn_doc.company if dn_doc else "") or "PT. JUARA ROTI INDONESIA" %}
+{% set company_doc = frappe.get_doc("Company", company_name) if company_name else None %}
+{% set total_pkgs = dn_doc.custom_total_packages if dn_doc and dn_doc.custom_total_packages else (doc.to_case_no or 1) %}
+{% set displayed_customer = (dn_doc.customer_name if dn_doc else "") or (dn_doc.customer if dn_doc else "") or "Internal / Outlet" %}
+{% set displayed_status = "Draft" if doc.docstatus == 0 else "Submitted" %}
+
+{# Referensi Sales Order dari Delivery Note #}
+{% set sales_order_ref = "" %}
+{% if dn_doc and dn_doc.items %}
+    {% for it in dn_doc.items %}
+        {% if it.against_sales_order and not sales_order_ref %}
+            {% set sales_order_ref = it.against_sales_order %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+
+<div class="ps-page">
+    <div class="ps-header">
+        <table>
+            <tr>
+                <td class="logo-cell">
+                    {% if company_doc and company_doc.company_logo and company_doc.company_logo.strip() %}
+                        <div class="ps-logo-wrap">
+                            <img src="{{ company_doc.company_logo }}" class="ps-logo-img">
+                        </div>
+                    {% endif %}
+                    <div class="company-name">{{ company_name }}</div>
+                    <div class="company-phone">Phone: {{ (company_doc.phone_no if company_doc else "") or "08114232789" }}</div>
+                    {% if company_doc and company_doc.email %}<div class="company-phone">Email: {{ company_doc.email }}</div>{% endif %}
+                    {% if company_doc and company_doc.website %}<div class="company-phone">WEB: {{ company_doc.website }}</div>{% endif %}
+                </td>
+                <td class="info-cell">
+                    <div class="ps-title">PACKING LIST</div>
+                    <div class="ps-meta">
+                        <div class="meta-row">
+                            <span class="ps-label">Status</span>
+                            <span class="ps-val">{{ "Draft" if (dn_doc and dn_doc.docstatus == 0) else displayed_status }}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="ps-label">Delivery Note No.</span>
+                            <span class="ps-val">{{ doc.delivery_note }}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="ps-label">Koli / Kemasan</span>
+                            <span class="ps-val">Koli {{ doc.from_case_no }}{% if total_pkgs %} / {{ total_pkgs }}{% endif %}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="ps-label">Date</span>
+                            <span class="ps-val">{{ frappe.utils.formatdate(dn_doc.posting_date if (dn_doc and dn_doc.posting_date) else doc.creation) }}</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="ps-label">Purpose</span>
+                            <span class="ps-val">Delivery</span>
+                        </div>
+                        <div class="meta-row">
+                            <span class="ps-label">Page</span>
+                            <span class="ps-val">1 / 1</span>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="ps-divider"></div>
+
+    <div class="ps-parties">
+        <table>
+            <tr>
+                <td>
+                    <div class="ps-section-title">CUSTOMER DETAILS</div>
+                    <div class="ps-party-name">{{ displayed_customer }}</div>
+                    {% if dn_doc and dn_doc.customer and dn_doc.customer != displayed_customer %}
+                        <div class="ps-party-sub">{{ dn_doc.customer }}</div>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="ps-section-title">SALES ORDER</div>
+                    <div class="ps-order-val">{{ sales_order_ref or "-" }}</div>
+                    <div class="ps-section-title">WAREHOUSE</div>
+                    <div class="ps-order-val">{{ (dn_doc.set_warehouse if dn_doc else "") or "Gudang Barang Jadi - JURI" }}</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <table class="ps-items-table">
+        <thead>
+            <tr>
+                <th class="text-center" style="width: 6%;">NO</th>
+                <th class="text-left" style="width: 44%;">ITEM</th>
+                <th class="text-right" style="width: 10%;">QTY</th>
+                <th class="text-center" style="width: 10%;">SATUAN</th>
+                <th class="text-center" style="width: 10%;">PICKER</th>
+                <th class="text-center" style="width: 10%;">PACKER</th>
+                <th class="text-center" style="width: 10%;">CHECKER</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in doc.items %}
+            <tr>
+                <td class="text-center">{{ loop.index }}</td>
+                <td class="text-left">
+                    <span style="font-weight: 600;">{{ row.item_name or row.item_code }}</span>
+                    {% if row.batch_no %}
+                        <div style="font-size: 11px; color: #555;">Batch: {{ row.batch_no }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-right">{{ row.qty | int if row.qty == row.qty | int else row.qty }}</td>
+                <td class="text-center">{{ row.stock_uom or row.uom or "Pack" }}</td>
+                <td class="text-center"></td>
+                <td class="text-center"></td>
+                <td class="text-center"></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="ps-summary-wrap">
+        <div class="ps-summary-spacer"></div>
+        <div class="ps-summary-box">
+            <div class="ps-summary-row">
+                Time: <span class="ps-dotted-line"></span>
+            </div>
+            <div class="ps-summary-row">
+                Total Koli: <span class="ps-dotted-line"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="ps-signatures">
+        <table>
+            <tr>
+                <td>
+                    <div class="sig-role">Picker Name</div>
+                    <div class="sig-name">( .................... )</div>
+                </td>
+                <td>
+                    <div class="sig-role">Packer Name</div>
+                    <div class="sig-name">( .................... )</div>
+                </td>
+                <td>
+                    <div class="sig-role" style="margin-bottom: 12px;">Checker Name</div>
+                    <div class="sig-date">....../....../..........</div>
+                    <div class="sig-name">( .................... )</div>
+                </td>
+            </tr>
+        </table>
+    </div>
+</div>
+</div>"""
+
+    name = "Format Print Packing Slip"
+    if not frappe.db.exists("Print Format", name):
+        doc = frappe.get_doc({
+            "doctype": "Print Format",
+            "name": name,
+            "doc_type": "Packing Slip",
+            "module": "Stock",
+            "standard": "No",
+            "custom_format": 1,
+            "print_format_type": "Jinja",
+            "html": template_html,
+        })
+        doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        return "created"
+
+    doc = frappe.get_doc("Print Format", name)
+    doc.html = template_html
+    doc.custom_format = 1
+    doc.print_format_type = "Jinja"
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return "updated"
+
+
+def backfill_run_short_pick_snapshot():
+    """F3/F4: only PLANNING Runs with no snapshot follow their Profile value.
+    Reviewed Runs (any short_pick_status other than None) and every other
+    status stay untouched, so a later Profile change cannot rewrite history."""
+    frappe.db.sql(
+        """
+        UPDATE `tabWarehouse Fulfillment Run` run
+        LEFT JOIN `tabWarehouse Fulfillment Profile` profile ON profile.name = run.profile
+        SET run.short_pick_approval_required_snapshot =
+            IFNULL(profile.short_pick_approval_required, 1)
+        WHERE run.status = 'PLANNING'
+            AND IFNULL(run.short_pick_approval_required_snapshot, 0) = 0
+            AND IFNULL(run.short_pick_status, 'None') = 'None'
+        """
+    )
+    frappe.db.commit()
+
+
+def _ensure_custom_field(spec):
+    """Upsert Custom Field idempoten: drift spec diperbarui via save (tanpa
+    insert_after — penempatan sudah final, meniru pola production_app)."""
+    name = frappe.db.get_value(
+        "Custom Field", {"dt": spec["dt"], "fieldname": spec["fieldname"]}, "name"
+    )
+    if name:
+        doc = frappe.get_doc("Custom Field", name)
+        changed = []
+        for key, val in spec.items():
+            if key in ("dt", "fieldname", "insert_after"):
+                continue
+            if doc.get(key) != val:
+                doc.set(key, val)
+                changed.append(key)
+        if not changed:
+            return "unchanged"
+        doc.flags.ignore_permissions = 1
+        doc.save()
+        return "updated"
+    doc = frappe.get_doc(dict(spec, doctype="Custom Field"))
+    doc.flags.ignore_permissions = 1
+    doc.insert()
+    return "created"
+
+
+def retire_client_scripts():
+    """Pensiunkan Client Script versi lama: docs yang skripsnya masih memuat
+    marker yang sudah dihapus dari CLIENT_SCRIPTS (W25 list-view "Import Stock
+    Count" diganti W26 form-view). Idempoten — tanpa docs lama = no-op."""
+    names = frappe.get_all(
+        "Client Script",
+        filters={"script": ("like", "%" + SR_LIST_SCRIPT_MARKER + "%")},
+        pluck="name",
+    )
+    retired = 0
+    for name in names:
+        try:
+            frappe.delete_doc(
+                "Client Script", name, force=1, ignore_permissions=1, ignore_missing=True
+            )
+            retired += 1
+        except Exception:
+            # satu doc macet (mis. hook pihak ketiga) tak boleh menjatuhkan migrate
+            frappe.log_error(
+                title="warehouse_app.upgrade",
+                message=f"Gagal retire Client Script {name!r}.",
+            )
     if retired:
         frappe.clear_cache(doctype="Stock Reconciliation")
         frappe.db.commit()
