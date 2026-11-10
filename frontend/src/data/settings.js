@@ -4,6 +4,24 @@ export async function fetchWarehouseOptions() {
 	return callGet('warehouse_app.warehouse_app.gudang_settings.warehouse_options')
 }
 
+export function fetchFulfillmentSettings(company) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_fulfillment_settings', {
+		company: company || undefined,
+	})
+}
+
+export function saveFulfillmentSettings(payload) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.save_fulfillment_settings', {
+		payload: JSON.stringify(payload),
+	})
+}
+
+export function fetchFulfillmentOptions(company) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.fulfillment_settings_options', {
+		company: company || undefined,
+	})
+}
+
 export async function fetchHandoverSettings() {
 	return call('warehouse_app.warehouse_app.gudang_settings.get_handover_settings')
 }

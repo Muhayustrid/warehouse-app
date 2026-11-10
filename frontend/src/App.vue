@@ -8,6 +8,7 @@ import { initials } from '@/lib/format'
 import {
 	Boxes,
 	ChevronDown,
+	ClipboardList,
 	LayoutGrid,
 	ListChecks,
 	Settings,
@@ -99,6 +100,14 @@ watch(
 			<RouterLink to="/" class="bnav-item" :class="{ on: route.path === '/' }">
 				<span class="bnav-ic"><ListChecks :size="20" :stroke-width="1.9" /></span>
 				<span class="bnav-label">Requests</span>
+			</RouterLink>
+			<RouterLink
+				to="/fulfillment"
+				class="bnav-item"
+				:class="{ on: route.path.startsWith('/fulfillment') }"
+			>
+				<span class="bnav-ic"><ClipboardList :size="20" :stroke-width="1.9" /></span>
+				<span class="bnav-label">Fulfillment</span>
 			</RouterLink>
 			<RouterLink to="/inventory" class="bnav-item" :class="{ on: route.path === '/inventory' }">
 				<span class="bnav-ic"><Boxes :size="20" :stroke-width="1.9" /></span>

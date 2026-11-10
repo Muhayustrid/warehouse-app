@@ -34,7 +34,9 @@ async function onPrimary() {
 	<Teleport to="body">
 		<dialog ref="dlg" class="dialog" :aria-label="options.title" @cancel.prevent="onCancel">
 			<header class="dlg-head">
-				<div class="dlg-ico dlg-ico-danger"><TriangleAlert :size="17" :stroke-width="2" /></div>
+				<div class="dlg-ico" :class="options.theme === 'warning' ? 'dlg-ico-warning' : 'dlg-ico-danger'">
+					<TriangleAlert :size="17" :stroke-width="2" />
+				</div>
 				<div class="dlg-hgroup">
 					<h3>{{ options.title }}</h3>
 				</div>
@@ -42,7 +44,12 @@ async function onPrimary() {
 			<p class="dlg-note">{{ options.message }}</p>
 			<div class="dlg-actions">
 				<button type="button" class="btn" @click="show = false">Cancel</button>
-				<button type="button" class="btn btn-danger" @click="onPrimary">
+				<button
+					type="button"
+					class="btn"
+					:class="options.confirmClass || (options.theme === 'primary' ? 'btn-primary' : 'btn-danger')"
+					@click="onPrimary"
+				>
 					{{ options.confirmLabel || 'Confirm' }}
 				</button>
 			</div>
@@ -53,6 +60,7 @@ async function onPrimary() {
 <style scoped>
 .dlg-note { color: var(--muted, inherit); font-size: 13.5px; margin: 0; }
 .dlg-ico-danger { background: var(--bad-bg, #f6e1dc); color: var(--bad-ink, #9c4736); }
+.dlg-ico-warning { background: var(--warn-bg, #f7ecd2); color: var(--warn-ink, #7a5a14); }
 .btn-danger { background: var(--bad-bg, #f6e1dc); border-color: transparent; color: var(--bad-ink, #9c4736); }
 .btn-danger:hover:not(:disabled) { background: var(--bad-ink, #9c4736); color: #fff; }
 </style>

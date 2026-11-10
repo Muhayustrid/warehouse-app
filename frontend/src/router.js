@@ -9,6 +9,19 @@ export default createRouter({
 			component: () => import('@/pages/BoardPage.vue'),
 		},
 		{
+			path: '/fulfillment',
+			name: 'fulfillment',
+			component: () => import('@/pages/FulfillmentPage.vue'),
+			meta: { wide: true },
+		},
+		{
+			path: '/fulfillment/:id',
+			name: 'fulfillment-workspace',
+			alias: ['/fulfillment/run/:id'],
+			component: () => import('@/pages/FulfillmentWorkspacePage.vue'),
+			meta: { wide: true },
+		},
+		{
 			path: '/inventory',
 			name: 'inventory',
 			component: () => import('@/pages/InventoryPage.vue'),
