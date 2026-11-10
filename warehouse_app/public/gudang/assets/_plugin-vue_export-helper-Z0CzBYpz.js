@@ -1,4 +1,4 @@
-import{c as p,b5 as f}from"./index-BGU1EtAc.js";/**
+import{c as p,bc as f}from"./index-CjCvL9AQ.js";/**
  * @license lucide-vue-next v0.544.0 - ISC
  *
  * This source code is licensed under the ISC license.
