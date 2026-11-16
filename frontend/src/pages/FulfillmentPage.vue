@@ -109,6 +109,19 @@ const activeFilterCount = computed(() => {
 	return c
 })
 
+// Tab Packing: tombol Filter di toolbar membuka panel filter ala ERPNext
+// pada list Packing Slip (komunikasi lewat ref + defineExpose).
+const packingRef = ref(null)
+const packingFilterCount = ref(0)
+
+function onFilterClick() {
+	if (activeTab.value === 'packing') {
+		packingRef.value?.toggleFilter()
+	} else {
+		filterOpen.value = !filterOpen.value
+	}
+}
+
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageLength.value)))
 const rangeStart = computed(() => (total.value ? (page.value - 1) * pageLength.value + 1 : 0))
 const rangeEnd = computed(() => Math.min(page.value * pageLength.value, total.value))
@@ -355,21 +368,21 @@ function statusLabel(row) {
 							<span>Cetak Label Gabungan</span>
 						</button>
 					</template>
-					<!-- Filter Dropdown Popover Anchor (bukan di tab Packing: di sana pakai filter ala ERPNext pada list) -->
-					<div v-if="activeTab !== 'packing'" ref="filterPopoverRef" class="ff-filter-popover-wrap">
-						<button
-							type="button"
-							class="btn ff-filter-btn"
-							:class="{ 'has-filters': activeFilterCount > 0, 'is-open': filterOpen }"
-							@click.stop="filterOpen = !filterOpen"
-						>
-							<Filter :size="14" :stroke-width="2" />
-							<span>Filter</span>
-							<span v-if="activeFilterCount" class="ff-filter-badge">{{ activeFilterCount }}</span>
-						</button>
+					<!-- Filter: di tab Packing membuka panel filter ala ERPNext pada list Packing Slip -->
+				<div ref="filterPopoverRef" class="ff-filter-popover-wrap">
+					<button
+						type="button"
+						class="btn ff-filter-btn"
+						:class="{ 'has-filters': activeFilterCount > 0 || (activeTab === 'packing' && packingFilterCount > 0), 'is-open': filterOpen }"
+						@click.stop="onFilterClick"
+					>
+						<Filter :size="14" :stroke-width="2" />
+						<span>Filter</span>
+						<span v-if="activeFilterCount" class="ff-filter-badge">{{ activeFilterCount }}</span>
+					</button>
 
-						<!-- Floating Filter Popover -->
-						<div v-if="filterOpen" class="ff-floating-popover" role="dialog" aria-label="Filter antrean">
+					<!-- Floating Filter Popover (bukan tab Packing: di sana pakai filter ala ERPNext pada list) -->
+					<div v-if="filterOpen && activeTab !== 'packing'" class="ff-floating-popover" role="dialog" aria-label="Filter antrean">
 							<div class="popover-head">
 								<span class="popover-title">Filter Lanjutan</span>
 								<button v-if="activeFilterCount" type="button" class="popover-reset-btn" @click="clearFilters">
@@ -573,7 +586,7 @@ function statusLabel(row) {
 				</div>
 			</div>
 			</template>
-			<PackingSlipPage v-else :date="pickDate" embedded @closed="loadPackingSummary" />
+			<PackingSlipPage v-else ref="packingRef" :date="pickDate" embedded @closed="loadPackingSummary" @filters-changed="packingFilterCount = $event" />
 		</div>
 
 		<PrintPreviewModal
@@ -587,7 +600,7 @@ function statusLabel(row) {
 
 <style scoped>
 .ff-page-container {
-	max-width: 1152px;
+	max-width: 1400px; /* sama lebar dengan halaman Inventory Report (.content) */
 	margin: 0 auto;
 	padding: 24px 28px;
 	display: flex;

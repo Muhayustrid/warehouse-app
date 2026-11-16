@@ -601,7 +601,7 @@ def _slip_label_divs(name: str) -> str:
 			f"""<div class='label'>
 <div class='co'>PT. JUARA ROTI INDONESIA</div>
 <div class='body'>
-<div class='left'><div class='ratio'><span class='n'>{n}</span><span class='tot'>/{total}</span></div><div class='bw'>BERAT</div><div class='kg'>{escape_html(str(weight))}</div></div>
+<div class='left'><div class='ratio'><span class='n'>{n}</span><span class='tot'>/{total}</span></div><div class='wgrp'><div class='bw'>BERAT</div><div class='kg'>{escape_html(str(weight)) if str(weight).strip() else '—'}</div></div></div>
 <div class='right'>
 <div class='cust'>{escape_html(header.get('customer_name') or '')}</div>
 <div class='items'>{items}</div>
@@ -619,13 +619,14 @@ def _labels_page(body: str, title: str) -> str:
 @page{{size:60mm 40mm;margin:1.5mm}}
 body{{font-family:Arial,Helvetica,sans-serif;font-size:7px;margin:0}}
 .label{{width:57mm;height:37mm;border:1px solid #333;page-break-after:always;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;margin:0 auto;background:#fff}}
-.co{{text-align:center;font-size:8px;letter-spacing:.18em;border-bottom:1.5px solid #333;padding:1mm 0 0.8mm}}
+.co{{text-align:center;font-size:8.5px;font-weight:bold;letter-spacing:.15em;border-bottom:1.5px solid #333;padding:1mm 0 0.8mm}}
 .body{{flex:1;display:flex;min-height:0}}
-.left{{width:38%;border-right:1.5px solid #333;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}}
-.ratio .n{{font-size:16px;font-weight:bold}}
+.left{{width:38%;border-right:1.5px solid #333;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:1.6mm}}
+.ratio .n{{font-size:18px;font-weight:bold}}
 .ratio .tot{{font-size:8px;color:#333}}
-.bw{{font-size:6.5px;letter-spacing:.14em;color:#666;margin-top:0.8mm}}
-.kg{{font-size:20px;font-weight:bold;line-height:1}}
+.wgrp{{display:flex;flex-direction:column;align-items:center}}
+.bw{{font-size:6.5px;letter-spacing:.14em;color:#666}}
+.kg{{font-size:20px;font-weight:bold;line-height:1.05;min-height:1em}}
 .right{{flex:1;padding-left:1.8mm;display:flex;flex-direction:column;justify-content:center}}
 .cust{{font-size:10px;font-weight:bold;line-height:1.2;text-transform:uppercase}}
 .items{{font-size:7.5px;line-height:1.3;margin-top:0.6mm}}

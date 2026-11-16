@@ -26,7 +26,7 @@ const props = defineProps({
 	date: { type: String, default: '' },
 })
 
-const emit = defineEmits(['closed', 'editing'])
+const emit = defineEmits(['closed', 'editing', 'filters-changed'])
 
 const route = useRoute()
 
@@ -64,6 +64,7 @@ const OPERATORS = [
 const showFilter = ref(false)
 const filterDraft = ref([]) // { field, operator, value }
 const appliedFilters = ref([])
+watch(appliedFilters, (v) => emit('filters-changed', v.length))
 const filteredSlips = computed(() => {
 	let rows = slips.value
 	for (const f of appliedFilters.value) {
@@ -82,6 +83,11 @@ const filteredSlips = computed(() => {
 function addFilterRow() {
 	filterDraft.value.push({ field: 'customer_name', operator: 'like', value: '' })
 }
+// Toolbar Fulfillment (tombol Filter) buka/tutup panel ini.
+function toggleFilter() {
+	showFilter.value = !showFilter.value
+}
+defineExpose({ toggleFilter })
 function applyFilters() {
 	appliedFilters.value = filterDraft.value.filter((f) => f.field && f.value)
 	showFilter.value = false
@@ -363,8 +369,9 @@ function fmtQty(value) {
 					<input v-model="fromDate" class="input input-sm" type="date" aria-label="Dari tanggal" @change="load" />
 					<input v-model="toDate" class="input input-sm" type="date" aria-label="Sampai tanggal" @change="load" />
 				</div>
-				<div class="ps-filter-wrap">
-					<button type="button" class="btn btn-sm" :class="{ 'btn-secondary': appliedFilters.length }" @click="showFilter = !showFilter">
+				<!-- Di mode embedded tombol Filter ada di toolbar Fulfillment -->
+				<div :class="{ 'ps-filter-wrap': !embedded }" style="width:100%">
+					<button v-if="!embedded" type="button" class="btn btn-sm" :class="{ 'btn-secondary': appliedFilters.length }" @click="showFilter = !showFilter">
 						<Filter :size="13" :stroke-width="2" />
 						<span>Filter{{ appliedFilters.length ? ` (${appliedFilters.length})` : '' }}</span>
 					</button>
