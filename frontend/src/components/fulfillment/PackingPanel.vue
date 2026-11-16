@@ -105,6 +105,7 @@ function simulateSequentialBins(items, numPackages, startCaseNo, categoryLabel) 
 			{
 				case_no: startCaseNo,
 				category: categoryLabel,
+				box_size: '',
 				total_qty: items.reduce((acc, it) => acc + Number(it.qty || 0), 0),
 				items: items.map((it) => ({
 					item_code: it.item_code,
@@ -122,6 +123,7 @@ function simulateSequentialBins(items, numPackages, startCaseNo, categoryLabel) 
 	const packages = Array.from({ length: numPackages }, (_, i) => ({
 		case_no: startCaseNo + i,
 		category: categoryLabel,
+		box_size: '',
 		total_qty: 0,
 		items: [],
 	}))
@@ -619,6 +621,11 @@ function onConfirmReset() {
 											<span class="badge" :class="koli.category === 'Frozen' ? 'b-frozen' : 'b-dry'">
 												{{ koli.category }}
 											</span>
+											<select v-model="koli.box_size" class="koli-box-select" title="Ukuran box (B/K)" aria-label="Ukuran box">
+												<option value="">—</option>
+												<option value="B">B</option>
+												<option value="K">K</option>
+											</select>
 										</div>
 										<span class="koli-sim-count">{{ koli.items?.length || 0 }} Item · {{ koli.total_qty }} Unit</span>
 									</div>
@@ -1222,6 +1229,16 @@ function onConfirmReset() {
 	color: #ffffff;
 	padding: 2px 8px;
 	border-radius: 4px;
+}
+
+.koli-box-select {
+	font-size: 12px;
+	font-weight: 700;
+	padding: 2px 4px;
+	border: 1px solid #cbd5e1;
+	border-radius: 4px;
+	background: #ffffff;
+	color: #1e293b;
 }
 
 .koli-sim-count {
