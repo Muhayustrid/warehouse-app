@@ -14,6 +14,7 @@ import {
 import { fetchCombinedPickListHtml, fetchDeliverySummaryHtml, fetchOrderQueue } from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
+import ManifestDialog from '@/components/fulfillment/ManifestDialog.vue'
 
 const router = useRouter()
 
@@ -60,6 +61,21 @@ const pickPrinting = ref(false)
 const printModalOpen = ref(false)
 const printModalTitle = ref('')
 const printModalItems = ref([])
+
+const manifestOpen = ref(false)
+
+function openManifestDialog() {
+	manifestOpen.value = true
+}
+
+function onManifestSaved(name) {
+	manifestOpen.value = false
+	printModalTitle.value = 'Packing List Harian'
+	printModalItems.value = [
+		{ label: 'Packing List', doctype: 'Delivery Manifest', name, format: 'Format Print Packing List' },
+	]
+	printModalOpen.value = true
+}
 
 // Tab "Semua" hilang: aktif tab = filter stage. Counts per tab dihitung dari
 // counts per stage backend.
@@ -318,6 +334,10 @@ function statusLabel(row) {
 							<FileText :size="14" :stroke-width="2" />
 							<span>Cetak Ringkasan Kirim</span>
 						</button>
+						<button type="button" class="btn ff-manifest-btn" @click="openManifestDialog()">
+							<FileText :size="14" :stroke-width="2" />
+							<span>Packing List Harian</span>
+						</button>
 					</template>
 					<!-- Filter Dropdown Popover Anchor -->
 					<div ref="filterPopoverRef" class="ff-filter-popover-wrap">
@@ -526,6 +546,13 @@ function statusLabel(row) {
 			:title="printModalTitle"
 			:items="printModalItems"
 			@close="printModalOpen = false"
+		/>
+
+		<ManifestDialog
+			:open="manifestOpen"
+			:company="company"
+			@close="manifestOpen = false"
+			@saved="onManifestSaved"
 		/>
 	</div>
 </template>
