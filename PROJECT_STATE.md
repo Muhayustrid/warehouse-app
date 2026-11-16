@@ -1,6 +1,6 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-11-16 — **feat/fulfillment-stage-tabs (14 commits, unpushed)**: 4 tab tahap (Order/Picking/Packing/Delivery) + cetak Pick List Gabungan & Ringkasan Kirim per tanggal kirim di tab Packing + **port penuh Delivery Manifest dari branch lama** (doctype manifest/region/outlet, 4 endpoint, ManifestDialog, print format "Format Print Packing List" + "Format Label Koli" 60x40mm, custom_box_size B/K per koli, tombol "Packing List Harian"). Fix permission: query internal role-gated pakai `frappe.get_all` bukan `get_list` (user gudang Stock User tanpa izin Delivery Note — commit 13176fe). Tests: 120/120 OK (docker). Migrate berjalan, probe get_manifest_candidates 2026-10-01 → 24 kandidat. Branch backup lama: `backup-main-lokal-20261116`.
+Head: 2026-11-16 — **feat/fulfillment-stage-tabs (15 commits, unpushed)**: 4 tab tahap + cetak Pick List Gabungan & Ringkasan Kirim + port Delivery Manifest (doctype, 4 endpoint, ManifestDialog, print format) + fix permission gudang (`frappe.get_all` utk query internal role-gated, commit 13176fe) + **halaman baru /gudang/packing-list** (PackingListPage.vue: per tanggal kirim, per customer Dry/Frozen, editable koli/berat/B-K/picker, simpan ke Delivery Manifest `page_state`, cetak A4 + label koli 60x40mm, tombol "Buka Packing List" di tab Packing). Tests: 129/129 OK (docker). Probe runtime gudang user sofyanbudiluhur OK (load/save/print).
 
 ## Current
 
