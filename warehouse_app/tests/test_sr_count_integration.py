@@ -25,6 +25,7 @@ from erpnext.stock.doctype.stock_reconciliation.stock_reconciliation import (
     EmptyStockReconciliationItemsError,
 )
 from warehouse_app.sr_uom import (
+    _ledger_mark,
     SR_AFTER_FIELD,
     SR_BEFORE_FIELD,
     SR_CONFIRMATION_FIELD,
@@ -33,7 +34,6 @@ from warehouse_app.sr_uom import (
     SR_UOM_FIELD,
     apply_to_doc,
     confirm_count_rows,
-    count_confirmation,
 )
 
 
@@ -707,64 +707,26 @@ class TestSrCountIntegration(FrappeTestCase):
         self.assertEqual(getdate(sle.posting_date), getdate("2026-11-09"))
         self.assertEqual(sle.qty_after_transaction, 6336.0)
 
-    def test_08_explicit_mode_same_day_time_change_invalid(self):
-        """In explicit mode (set_posting_time=1), altering posting_time invalidates confirmation."""
+    def test_08_posting_time_change_reconverts_without_confirmation(self):
+        """Changing posting time (explicit mode) or toggling the mode just re-converts on save."""
         item = self.make_test_item("C08", stock_uom="Pcs", pack_factor=6.0)
-        sr = frappe.get_doc({
-            "doctype": "Stock Reconciliation",
-            "company": self.company,
-            "purpose": "Stock Reconciliation",
-            "posting_date": "2026-11-10",
-            "posting_time": "10:00:00",
-            "set_posting_time": 1,
-            "items": [{
-                "item_code": item,
-                "warehouse": self.warehouse,
-                "custom_uom": "Pack",
-                "custom_qty_after": 50.0,
-                "valuation_rate": 1000.0,
-            }],
-        })
-        confirm_count_rows(sr)
+        self.make_stock_entry(item, 600.0, 1000.0, posting_date="2026-11-01")
+        sr = self._pack_sr(item, 50.0)
+        sr.posting_date, sr.posting_time = "2026-11-10", "10:00:00"
         sr.insert()
         self.track_sr(sr)
         frappe.db.commit()
 
-        # Same-day time change
         sr.posting_time = "11:00:00"
-        with self.assertRaises(frappe.ValidationError):
-            sr.save()
+        sr.save()
+        sr.set_posting_time = 0
+        sr.save()
+        sr.reload()
+        self.assertEqual(sr.items[0].custom_qty_after, 50.0)
+        self.assertEqual(sr.items[0].qty, 300.0)
 
-    def test_09_toggle_set_posting_time_invalid(self):
-        """Toggling set_posting_time invalidates confirmation."""
-        item = self.make_test_item("C09", stock_uom="Pcs", pack_factor=6.0)
-        sr = frappe.get_doc({
-            "doctype": "Stock Reconciliation",
-            "company": self.company,
-            "purpose": "Stock Reconciliation",
-            "posting_date": "2026-11-10",
-            "posting_time": "10:00:00",
-            "set_posting_time": 0,
-            "items": [{
-                "item_code": item,
-                "warehouse": self.warehouse,
-                "custom_uom": "Pack",
-                "custom_qty_after": 50.0,
-                "valuation_rate": 1000.0,
-            }],
-        })
-        confirm_count_rows(sr)
-        sr.insert()
-        self.track_sr(sr)
-        frappe.db.commit()
-
-        # Toggle to explicit mode
-        sr.set_posting_time = 1
-        with self.assertRaises(frappe.ValidationError):
-            sr.save()
-
-    def test_10_intervening_transaction_does_not_rewrite_count(self):
-        """Intervening stock movement between Save and Submit does not rewrite user count target."""
+    def test_10_intervening_transaction_blocks_submit_until_resave(self):
+        """Stock moved between Save and Submit: submit refuses, re-save accepts, count never rewritten."""
         item = self.make_test_item("C10", stock_uom="Pcs", pack_factor=6.0)
         self.make_stock_entry(item, 6000.0, 1000.0, posting_date="2026-11-01")
 
@@ -799,6 +761,16 @@ class TestSrCountIntegration(FrappeTestCase):
 
         with self.mock_now(t2):
             sr.reload()
+            # Ledger moved since the save: submit refuses until the count is re-checked.
+            with self.assertRaisesRegex(frappe.ValidationError, "berubah sejak disimpan"):
+                sr.submit()
+            frappe.db.rollback()
+        # Microseconds avoid a frozen-clock timestamp string mismatch in check_if_latest.
+        with self.mock_now(datetime(2026, 11, 11, 11, 5, 0, 123456)):
+            sr = frappe.get_doc("Stock Reconciliation", sr.name)
+            self.assertEqual(sr.docstatus, 0)
+            sr.save()
+            self.assertEqual(sr.items[0].get(SR_CONFIRMATION_FIELD), _ledger_mark(sr.items[0], 6120.0, 6))
             sr.submit()
             frappe.db.commit()
 
@@ -815,38 +787,18 @@ class TestSrCountIntegration(FrappeTestCase):
         )
         self.assertEqual(sle.qty_after_transaction, 6336.0)
 
-    def test_11_explicit_fingerprint_stable_after_reload(self):
-        """Explicit confirmation token is persisted and stable across doc reloads."""
+    def test_11_no_confirmation_step_needed(self):
+        """A counted row saves and submits without any confirmation step; the checked ledger qty is kept."""
         item = self.make_test_item("C11", stock_uom="Pcs", pack_factor=6.0)
-        sr = frappe.get_doc({
-            "doctype": "Stock Reconciliation",
-            "company": self.company,
-            "purpose": "Stock Reconciliation",
-            "posting_date": "2026-11-12",
-            "posting_time": "14:00:00",
-            "set_posting_time": 1,
-            "items": [{
-                "item_code": item,
-                "warehouse": self.warehouse,
-                "custom_uom": "Pack",
-                "custom_qty_after": 200.0,
-                "valuation_rate": 1000.0,
-            }],
-        })
-        confirm_count_rows(sr)
-        expected_token = sr.items[0].custom_count_confirmation
-        self.assertTrue(expected_token)
+        self.make_stock_entry(item, 600.0, 1000.0, posting_date="2026-11-01")
+        sr = self._pack_sr(item, 200.0)
         sr.insert()
         self.track_sr(sr)
+        sr.submit()
         frappe.db.commit()
-
         sr.reload()
-        reloaded_token = sr.items[0].custom_count_confirmation
-        self.assertEqual(reloaded_token, expected_token)
-
-        # Save again without changes succeeds
-        sr.save()
-        self.assertEqual(sr.items[0].custom_count_confirmation, expected_token)
+        self.assertEqual(sr.items[0].qty, 1200.0)
+        self.assertEqual(sr.items[0].get(SR_CONFIRMATION_FIELD), _ledger_mark(sr.items[0], 600.0, 6))
 
     def test_12_native_only_and_mixed_rows(self):
         """Mixed SR: custom row converts one-way, native row preserves native behavior."""
@@ -877,8 +829,7 @@ class TestSrCountIntegration(FrappeTestCase):
             ],
         })
         confirm_count_rows(sr)
-        self.assertIsNotNone(sr.items[0].custom_count_confirmation)
-        self.assertIsNone(getattr(sr.items[1], "custom_count_confirmation", None))
+        self.assertEqual(sr.items[0].get(SR_FACTOR_FIELD), 6.0)
 
         sr.insert()
         self.track_sr(sr)
@@ -1008,7 +959,8 @@ class TestSrCountIntegration(FrappeTestCase):
         sr.reload()
         self.assertEqual(sr.modified, mod_before)
 
-        # Non-mutating apply_to_doc simulation
+        # Non-mutating apply_to_doc simulation on a freshly loaded doc (what a refresh sees)
+        sr = frappe.get_doc("Stock Reconciliation", sr.name)
         apply_to_doc(sr)
         self.assertEqual(sr.modified, mod_before)
 
@@ -1100,21 +1052,13 @@ class TestSrCountIntegration(FrappeTestCase):
         item = self.make_test_item("C17", stock_uom="Pcs", pack_factor=6.0)
         self.make_stock_entry(item, 6000.0, 1000.0, posting_date="2026-11-01")
 
-        # Forged token minted for factor 1 (what a lying stock_uom used to produce) is rejected.
+        # A forged factor 1 on the row never converts: it differs from the master (6) and is rejected.
         forged = self._pack_sr(item, 1056.0, stock_uom="Pack")
         forged.items[0].set(SR_FACTOR_FIELD, 1.0)
-        forged.items[0].set(SR_CONFIRMATION_FIELD, count_confirmation(
-            company=self.company, item_code=item, warehouse=self.warehouse,
-            posting_date="2026-11-05", posting_time="12:00:00", set_posting_time=1,
-            uom="Pack", factor=1.0,
-        ))
-        try:
-            with self.assertRaises(frappe.ValidationError):
-                forged.insert()
-        finally:
-            if forged.name and frappe.db.exists("Stock Reconciliation", forged.name):
-                self.track_sr(forged)
-            frappe.db.rollback()
+        with self.assertRaisesRegex(frappe.ValidationError, "tidak cocok dengan konteks"):
+            forged.insert()
+        self.assertFalse(forged.name and frappe.db.exists("Stock Reconciliation", forged.name))
+        frappe.db.rollback()
 
         # Helper path: confirm with the lying payload still derives the master factor.
         sr = self._pack_sr(item, 1056.0, stock_uom="Pack")
@@ -1159,3 +1103,105 @@ class TestSrCountIntegration(FrappeTestCase):
             "Stock Ledger Entry", {"voucher_no": sr.name, "is_cancelled": 0}, "qty_after_transaction"
         )
         self.assertEqual(flt(sle_qty, 6), expected_qty)
+
+    def test_19_unchanged_row_in_stock_uom_is_dropped_on_submit(self):
+        """Count equal to system stock (stock UOM, same rate) is dropped; changed rows post."""
+        same = self.make_test_item("C19S", stock_uom="Pcs", pack_factor=6.0)
+        moved = self.make_test_item("C19M", stock_uom="Pcs", pack_factor=6.0)
+        self.make_stock_entry(same, 6000.0, 1000.3, posting_date="2026-11-01")
+        self.make_stock_entry(moved, 6000.0, 1000.0, posting_date="2026-11-01")
+        sr = self._pack_sr(same, 1000.0, valuation_rate=None)
+        sr.append("items", {
+            "item_code": moved, "warehouse": self.warehouse, "custom_uom": "Pack",
+            "custom_qty_after": 1056.0, "valuation_rate": 1000.0,
+        })
+        sr.insert()
+        self.track_sr(sr)
+        sr.submit()
+        frappe.db.commit()
+        sr.reload()
+        self.assertEqual([r.item_code for r in sr.items], [moved])
+        self.assertFalse(frappe.db.exists(
+            "Stock Ledger Entry", {"voucher_no": sr.name, "item_code": same, "is_cancelled": 0}
+        ))
+
+    def test_20_same_qty_new_rate_is_kept(self):
+        """Same stock qty but a different rate per UOM is a revaluation and is kept."""
+        item = self.make_test_item("C20", stock_uom="Pcs", pack_factor=6.0)
+        self.make_stock_entry(item, 6000.0, 1000.0, posting_date="2026-11-01")
+        sr = self._pack_sr(item, 1000.0, valuation_rate=None, custom_valuation_rate_per_uom=7200.0)
+        sr.insert()
+        self.track_sr(sr)
+        sr.submit()
+        frappe.db.commit()
+        sr.reload()
+        self.assertEqual(len(sr.items), 1)
+        self.assertEqual(sr.items[0].valuation_rate, 1200.0)
+
+    def test_21_per_uom_rounding_is_not_treated_as_unchanged(self):
+        """1072 Kg shows as Before 1.43 Pack; counting 1.43 Pack is 1072.5 Kg: a real change, kept."""
+        item = self.make_test_item("C21", stock_uom="Kg", pack_factor=750.0)
+        self.make_stock_entry(item, 1072.0, 100.0, posting_date="2026-11-01")
+        sr = self._pack_sr(item, 1.43, valuation_rate=None)
+        sr.insert()
+        self.track_sr(sr)
+        sr.submit()
+        frappe.db.commit()
+        sr.reload()
+        self.assertEqual(len(sr.items), 1)
+        self.assertEqual(sr.items[0].qty, 1072.5)
+
+    def test_22_desk_save_drops_unchanged_rows(self):
+        """Desk form save (savedocs) by a stock viewer drops no-change rows on the draft."""
+        same = self.make_test_item("C22S", stock_uom="Pcs", pack_factor=6.0)
+        moved = self.make_test_item("C22M", stock_uom="Pcs", pack_factor=6.0)
+        self.make_stock_entry(same, 6000.0, 1000.0, posting_date="2026-11-01")
+        self.make_stock_entry(moved, 6000.0, 1000.0, posting_date="2026-11-01")
+
+        def build():
+            sr = self._pack_sr(same, 1000.0)
+            sr.append("items", {
+                "item_code": moved, "warehouse": self.warehouse, "custom_uom": "Pack",
+                "custom_qty_after": 1056.0, "valuation_rate": 1000.0,
+            })
+            return sr
+
+        api_sr = build().insert()  # API / POSNext path keeps every row on draft
+        self.track_sr(api_sr)
+        self.assertEqual(len(api_sr.items), 2)
+
+        with patch.dict(frappe.form_dict, {"cmd": "frappe.desk.form.save.savedocs"}):
+            desk_sr = build().insert()
+        self.track_sr(desk_sr)
+        frappe.db.commit()
+        self.assertEqual([r.item_code for r in desk_sr.items], [moved])
+
+    def test_23_desk_save_by_outlet_user_keeps_rows_blind(self):
+        """POSNext outlet user (no HQ role) saving via Desk keeps no-change rows on the draft."""
+        if "pos_next" not in frappe.get_installed_apps():
+            self.skipTest("pos_next not installed")
+        item = self.make_test_item("C23", stock_uom="Pcs", pack_factor=6.0)
+        self.make_stock_entry(item, 6000.0, 1000.0, posting_date="2026-11-01")
+        email = f"_t_outlet_{frappe.generate_hash(length=6)}@example.com"
+        user = frappe.get_doc({
+            "doctype": "User", "email": email, "first_name": "Outlet", "send_welcome_email": 0,
+            "roles": [{"role": "POSNext Cashier"}],
+        }).insert(ignore_permissions=True)
+        self._created_docs.append(("User", user.name))
+        frappe.db.commit()
+
+        from warehouse_app.overrides.stock_reconciliation import _desk_save_by_stock_viewer
+
+        try:
+            frappe.set_user(email)
+            with patch.dict(frappe.form_dict, {"cmd": "frappe.desk.form.save.savedocs"}):
+                self.assertFalse(_desk_save_by_stock_viewer())
+        finally:
+            frappe.set_user("Administrator")
+        with patch.dict(frappe.form_dict, {"cmd": "frappe.desk.form.save.savedocs"}):
+            self.assertTrue(_desk_save_by_stock_viewer())
+            with patch("warehouse_app.overrides.stock_reconciliation._desk_save_by_stock_viewer", return_value=False):
+                sr = self._pack_sr(item, 1000.0).insert()
+        self.track_sr(sr)
+        frappe.db.commit()
+        self.assertEqual(len(sr.items), 1)

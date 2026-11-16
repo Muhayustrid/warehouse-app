@@ -59,8 +59,9 @@
 	const BALANCE_METHOD =
 		"erpnext.stock.doctype.stock_reconciliation.stock_reconciliation.get_stock_balance_for";
 	let form_input_generation = 0;
-	// Bumped on posting/company changes; drops in-flight compute_row replies (and their tokens)
-	// without touching the per-row ids the native posting refresh depends on.
+	// Bumped on posting/company changes; drops in-flight compute_row replies without touching the
+	// per-row ids the native posting refresh depends on. Older balance replies are dropped by their
+	// context snapshot, so no re-sync is needed.
 	let context_generation = 0;
 
 	function typed_key(row_name, fieldname) {
@@ -303,10 +304,6 @@
 			!posting_date ||
 			!posting_time
 		) {
-			// Incomplete context: clear confirmation token, keep user inputs
-			if (row.custom_count_confirmation) {
-				frappe.model.set_value(cdt, cdn, "custom_count_confirmation", null);
-			}
 			return;
 		}
 
@@ -340,7 +337,6 @@
 			allow_zero_valuation_rate: snapshot.allow_zero,
 			valuation_rate: snapshot.valuation_rate,
 			qty: snapshot.qty,
-			omit_confirmation: (opts && opts.omit_confirmation) ? 1 : 0,
 		};
 		if (!opts || !opts.omit_qty_after) {
 			args.qty_after = snapshot.qty_after;
@@ -358,6 +354,23 @@
 				const live = locals[cdt] && locals[cdt][cdn];
 				if (!live || live !== captured_row) return;
 				if (!snapshot_matches(live, frm, snapshot, opts)) return;
+
+				// A refresh that is not a count/UOM edit must not re-scale a counted row whose master
+				// factor changed: keep the row as is so the server save rejects it until re-entered.
+				if (
+					opts && opts.keep_factor &&
+					!is_empty(live.custom_conversion_factor) &&
+					reply && !is_empty(reply.custom_conversion_factor) &&
+					values_differ(live.custom_conversion_factor, reply.custom_conversion_factor)
+				) {
+					frappe.show_alert({
+						message: __("Baris #{0} ({1}): faktor konversi {2} berubah di master item. Pilih ulang UOM atau isi ulang Qty After.", [
+							live.idx, live.item_code, live.custom_uom,
+						]),
+						indicator: "orange",
+					}, 8);
+					return;
+				}
 
 				syncing_rows.add(cdn);
 				const promises = [];
@@ -378,8 +391,6 @@
 				if (request_ids.get(cdn) !== req_id || context_generation !== ctx_gen) return;
 				const live = locals[cdt] && locals[cdt][cdn];
 				if (!live || live !== captured_row) return;
-				// Invalidate confirmation token, preserve user's typed After and UOM
-				frappe.model.set_value(cdt, cdn, "custom_count_confirmation", null);
 				if (err && err.message) {
 					frappe.msgprint({
 						title: __("Kesalahan Konversi Baris"),
@@ -431,7 +442,7 @@
 		}
 		return Promise.all(updates)
 			.finally(() => syncing_rows.delete(cdn))
-			.then(() => sync_row(frm, cdt, cdn, { omit_confirmation: true }));
+			.then(() => sync_row(frm, cdt, cdn, { keep_factor: true }));
 	}
 
 	// Native-equivalent writes, mirroring the installed ERPNext callback field for field and in order.
@@ -525,42 +536,14 @@
 		};
 	}
 
-	// Per-row request ids are not bumped: the native posting handlers already issued fresh balance
-	// requests, and older balance replies are dropped by their context snapshot.
-	function invalidate_all_confirmations(frm) {
-		if (!frm || !frm.doc || !frm.doc.items) return;
-		context_generation++;
-		for (const row of frm.doc.items) {
-			if (row.custom_uom && row.custom_count_confirmation) {
-				frappe.model.set_value(row.doctype, row.name, "custom_count_confirmation", null);
-			}
-		}
-	}
-
-	function confirm_unconfirmed_rows(frm) {
-		frm = frm || (typeof cur_frm !== "undefined" ? cur_frm : null);
-		if (!frm || !frm.doc || frm.doc.docstatus > 0) return Promise.resolve();
-		const items = frm.doc.items || [];
-		const promises = [];
-		for (const row of items) {
-			if (!row.custom_uom || skip_row(row)) continue;
-			if (row.custom_qty_after != null && row.custom_qty_after !== "") {
-				promises.push(sync_row(frm, row.doctype, row.name));
-			}
-		}
-		return Promise.all(promises);
-	}
-
 	frappe.ui.form.on("Stock Reconciliation", {
 		setup(frm) {
 			if (!enabled()) return;
 			install_valuation_adapter(frm);
-			frm.confirm_count_rows = () => confirm_unconfirmed_rows(frm);
 		},
 		onload(frm) {
 			if (!enabled()) return;
 			install_valuation_adapter(frm);
-			frm.confirm_count_rows = () => confirm_unconfirmed_rows(frm);
 		},
 		refresh(frm) {
 			if (!enabled()) return;
@@ -572,12 +555,10 @@
 				(frm.doc.items || []).forEach((row) => next_request_id(row.name));
 			}
 			install_valuation_adapter(frm);
-			frm.confirm_count_rows = () => confirm_unconfirmed_rows(frm);
 			update_posting_indicator(frm);
 
 			if (frm.doc.docstatus === 0) {
 				frm.add_custom_button(__("Import Stock Count"), () => open_import_dialog(frm));
-				frm.add_custom_button(__("Konfirmasi Hitungan"), () => frm.confirm_count_rows());
 			}
 			apply_row_qty_protection(frm);
 		},
@@ -588,33 +569,25 @@
 		company(frm) {
 			if (!enabled()) return;
 			form_input_generation++;
-			if (frm.doc.docstatus === 0) {
-				invalidate_all_confirmations(frm);
-			}
+			context_generation++;
 		},
 		posting_date(frm) {
 			if (!enabled()) return;
 			form_input_generation++;
+			context_generation++;
 			update_posting_indicator(frm);
-			if (frm.doc.docstatus === 0) {
-				invalidate_all_confirmations(frm);
-			}
 		},
 		posting_time(frm) {
 			if (!enabled()) return;
 			form_input_generation++;
+			context_generation++;
 			update_posting_indicator(frm);
-			if (frm.doc.docstatus === 0) {
-				invalidate_all_confirmations(frm);
-			}
 		},
 		set_posting_time(frm) {
 			if (!enabled()) return;
 			form_input_generation++;
+			context_generation++;
 			update_posting_indicator(frm);
-			if (frm.doc.docstatus === 0) {
-				invalidate_all_confirmations(frm);
-			}
 		},
 		scan_mode(frm) {
 			if (!enabled()) return;
@@ -653,7 +626,7 @@
 					frappe.validated = false;
 					return false;
 				}
-				return check_custom_row_confirmations(frm);
+				return check_custom_rows(frm);
 			}
 
 			// Save barrier: wait for any pending sync calls
@@ -667,7 +640,7 @@
 		},
 	});
 
-	function check_custom_row_confirmations(frm) {
+	function check_custom_rows(frm) {
 		const items = frm.doc.items || [];
 		for (let i = 0; i < items.length; i++) {
 			const row = items[i];
@@ -708,20 +681,6 @@
 				frappe.validated = false;
 				return false;
 			}
-
-			// Check confirmation token
-			if (!row.custom_count_confirmation) {
-				frappe.msgprint({
-					title: __("Konfirmasi Hitungan Diperlukan"),
-					indicator: "red",
-					message: __(
-						"Baris #{0} ({1}): Konfirmasi hitungan belum valid untuk konteks saat ini. Mohon periksa kembali.",
-						[row.idx || i + 1, row.item_code]
-					),
-				});
-				frappe.validated = false;
-				return false;
-			}
 		}
 	}
 
@@ -749,7 +708,6 @@
 				frappe.model.set_value(cdt, cdn, "custom_qty_before", ""),
 				frappe.model.set_value(cdt, cdn, "custom_qty_difference_per_uom", ""),
 				frappe.model.set_value(cdt, cdn, "custom_valuation_rate_per_uom", ""),
-				frappe.model.set_value(cdt, cdn, "custom_count_confirmation", null),
 			];
 
 			return Promise.all(reset_promises)
@@ -783,12 +741,11 @@
 					frappe.model.set_value(cdt, cdn, "custom_qty_before", ""),
 					frappe.model.set_value(cdt, cdn, "custom_qty_difference_per_uom", ""),
 					frappe.model.set_value(cdt, cdn, "custom_valuation_rate_per_uom", ""),
-					frappe.model.set_value(cdt, cdn, "custom_count_confirmation", null),
 					frappe.model.set_value(cdt, cdn, "qty", null),
 					frappe.model.set_value(cdt, cdn, "valuation_rate", null),
 				]);
 			}
-			return sync_row(frm, cdt, cdn, { omit_qty_after: true, omit_rate_per_uom: true, omit_confirmation: true });
+			return sync_row(frm, cdt, cdn, { omit_qty_after: true, omit_rate_per_uom: true });
 		},
 		custom_qty_after(frm, cdt, cdn) {
 			forget_committed_input(cdn, "custom_qty_after");
@@ -800,22 +757,22 @@
 			forget_committed_input(cdn, "custom_valuation_rate_per_uom");
 			if (!enabled() || syncing_rows.has(cdn) || frm.doc.docstatus > 0) return;
 			form_input_generation++;
-			return sync_row(frm, cdt, cdn, { omit_confirmation: true });
+			return sync_row(frm, cdt, cdn, { keep_factor: true });
 		},
 		warehouse(frm, cdt, cdn) {
 			if (!enabled() || syncing_rows.has(cdn) || frm.doc.docstatus > 0) return;
 			form_input_generation++;
-			return sync_row(frm, cdt, cdn, { omit_confirmation: true });
+			return sync_row(frm, cdt, cdn, { keep_factor: true });
 		},
 		batch_no(frm, cdt, cdn) {
 			if (!enabled() || syncing_rows.has(cdn) || frm.doc.docstatus > 0) return;
 			form_input_generation++;
-			return sync_row(frm, cdt, cdn, { omit_confirmation: true });
+			return sync_row(frm, cdt, cdn, { keep_factor: true });
 		},
 		current_qty(frm, cdt, cdn) {
 			if (!enabled() || syncing_rows.has(cdn) || frm.doc.docstatus > 0) return;
 			form_input_generation++;
-			return sync_row(frm, cdt, cdn, { omit_confirmation: true });
+			return sync_row(frm, cdt, cdn, { keep_factor: true });
 		},
 		qty(frm, cdt, cdn) {
 			if (!enabled() || syncing_rows.has(cdn) || frm.doc.docstatus > 0) return;
@@ -1068,9 +1025,5 @@
 			],
 		});
 		d.show();
-	}
-
-	if (typeof cur_frm !== "undefined" && cur_frm) {
-		cur_frm.confirm_count_rows = () => confirm_unconfirmed_rows(cur_frm);
 	}
 })();

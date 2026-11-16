@@ -157,7 +157,7 @@ def compute_row(
 	batch_no=None,
 	company=None,
 	set_posting_time=0,
-	omit_confirmation=0,
+	omit_confirmation=0,  # ignored; kept so older cached clients do not fail
 ) -> dict:
 	"""Compute per-UOM conversion and native values for a single Stock Reconciliation row."""
 	assert_sr_access("write", warehouse=warehouse, company=company, require_warehouse=True)
@@ -217,18 +217,4 @@ def compute_row(
 	)
 	res[SR_UOM_FIELD] = uom
 
-	confirmation = None
-	if qty_after is not None and not cint(omit_confirmation):
-		confirmation = sr_uom.count_confirmation(
-			company=company,
-			item_code=item_code,
-			warehouse=warehouse,
-			posting_date=posting_date,
-			posting_time=posting_time,
-			set_posting_time=set_posting_time,
-			uom=uom,
-			factor=factor,
-			batch_no=clean_batch,
-		)
-	res[sr_uom.SR_CONFIRMATION_FIELD] = confirmation
 	return res

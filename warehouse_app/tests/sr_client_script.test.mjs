@@ -474,7 +474,6 @@ test("late_native_balance_preserves_count_1056", async () => {
 				custom_valuation_rate_per_uom: 60,
 				qty: derived_qty,
 				valuation_rate: 10,
-				custom_count_confirmation: "token123",
 			};
 		}
 		return {};
@@ -649,7 +648,7 @@ test("barcode scan on custom row blocked, derives native qty from custom_qty_aft
 	assert.match(env.msgprintCalls[0].message, /Barcode scanning tidak didukung/);
 });
 
-test("endpoint rejection preserves user custom_uom and custom_qty_after, clears confirmation", async () => {
+test("endpoint rejection preserves user custom_uom and custom_qty_after and reports the error", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -661,7 +660,6 @@ test("endpoint rejection preserves user custom_uom and custom_qty_after, clears 
 		warehouse: "Stores - RR",
 		custom_uom: "InvalidUOM",
 		custom_qty_after: 1.0,
-		custom_count_confirmation: "old_token",
 		qty: 12,
 	};
 
@@ -675,8 +673,8 @@ test("endpoint rejection preserves user custom_uom and custom_qty_after, clears 
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_uom, "InvalidUOM");
 	assert.equal(row.custom_qty_after, 2.0);
-	assert.equal(row.custom_count_confirmation, null);
 	assert.ok(env.msgprintCalls.length > 0);
+	assert.equal(env.msgprintCalls[0].message, "Invalid UOM");
 });
 
 test("cleared UOM blanks derived fields and unsets qty/valuation_rate", async () => {
@@ -961,6 +959,35 @@ test("current_qty event triggers refresh on complete row", async () => {
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_qty_before, 5.0);
 	assert.equal(row.custom_qty_difference_per_uom, -4.0);
+});
+
+test("balance refresh never re-scales a counted row whose master factor changed", async () => {
+	const env = setupEnvironment();
+	const cdt = "Stock Reconciliation Item";
+	const cdn = "row1";
+	env.locals[cdt][cdn] = {
+		name: cdn, doctype: cdt, idx: 1, item_code: "ITEM-001", warehouse: "Stores - RR",
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 10, qty: 60,
+	};
+	// Master changed Pack 6 -> 12 since the count was entered.
+	env.setXcallHandler(async () => ({
+		custom_uom: "Pack", custom_conversion_factor: 12, custom_qty_before: 5,
+		custom_qty_after: 10, custom_qty_difference_per_uom: 5, qty: 120, valuation_rate: 10,
+	}));
+
+	for (const handler of ["current_qty", "warehouse", "batch_no", "custom_valuation_rate_per_uom"]) {
+		await env.childHandlers[handler](env.frm, cdt, cdn);
+		await new Promise((r) => setTimeout(r, 10));
+		const row = env.locals[cdt][cdn];
+		assert.equal(row.custom_conversion_factor, 6, `${handler}: factor must stay as entered`);
+		assert.equal(row.qty, 60, `${handler}: stock qty must not be re-scaled`);
+	}
+
+	// Re-entering the count is the explicit re-confirmation: the new factor applies.
+	await env.childHandlers.custom_qty_after(env.frm, cdt, cdn);
+	await new Promise((r) => setTimeout(r, 10));
+	assert.equal(env.locals[cdt][cdn].custom_conversion_factor, 12);
+	assert.equal(env.locals[cdt][cdn].qty, 120);
 });
 
 test("incomplete row does not call endpoint or clear user values", async () => {
@@ -1377,7 +1404,7 @@ test("F2: UOM transition with native 0 valuation_rate, allow_zero=1, current_val
 	assert.equal(row.valuation_rate, 0);
 });
 
-test("reversed_responses_drops_older_token", async () => {
+test("reversed_responses_drops_older_reply", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -1413,7 +1440,6 @@ test("reversed_responses_drops_older_token", async () => {
 			custom_qty_difference_per_uom: 1.0,
 			custom_valuation_rate_per_uom: 120,
 			qty: 24,
-			custom_count_confirmation: "token_newer_2",
 		});
 	});
 
@@ -1430,9 +1456,8 @@ test("reversed_responses_drops_older_token", async () => {
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.qty, 24);
 	assert.equal(row.custom_qty_after, 2.0);
-	assert.equal(row.custom_count_confirmation, "token_newer_2");
 
-	// Old request 1 resolves late with token_older_1
+	// Old request 1 resolves late with the older 1.5 conversion
 	resolveOld({
 		custom_uom: "Pack",
 		custom_conversion_factor: 12,
@@ -1441,17 +1466,16 @@ test("reversed_responses_drops_older_token", async () => {
 		custom_qty_difference_per_uom: 0.5,
 		custom_valuation_rate_per_uom: 120,
 		qty: 18,
-		custom_count_confirmation: "token_older_1",
 	});
 	await new Promise((r) => setTimeout(r, 20));
 
-	// Newer values and newer token MUST survive
+	// Newer values MUST survive
 	assert.equal(row.qty, 24);
 	assert.equal(row.custom_qty_after, 2.0);
-	assert.equal(row.custom_count_confirmation, "token_newer_2");
+	assert.equal(row.custom_qty_difference_per_uom, 1.0);
 });
 
-test("same_value_zero_dom_input sends explicit 0 and acquires confirmation", async () => {
+test("same_value_zero_dom_input sends explicit 0 and applies the reply", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -1479,7 +1503,6 @@ test("same_value_zero_dom_input sends explicit 0 and acquires confirmation", asy
 			custom_valuation_rate_per_uom: 120,
 			qty: 0,
 			valuation_rate: 10,
-			custom_count_confirmation: "token_zero_confirmed",
 		};
 	});
 
@@ -1489,7 +1512,6 @@ test("same_value_zero_dom_input sends explicit 0 and acquires confirmation", asy
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_qty_after, 0);
 	assert.equal(row.qty, 0);
-	assert.equal(row.custom_count_confirmation, "token_zero_confirmed");
 });
 
 test("active_editor_save flushes editor, waits for sync promise, and validates", async () => {
@@ -1531,7 +1553,7 @@ test("active_editor_save flushes editor, waits for sync promise, and validates",
 	// Validate should still be waiting on the pending sync promise
 	assert.equal(validateFinished, false);
 
-	// Sync finishes with confirmed token
+	// Sync finishes with the converted values
 	resolveSync({
 		custom_uom: "Pack",
 		custom_conversion_factor: 12,
@@ -1541,14 +1563,12 @@ test("active_editor_save flushes editor, waits for sync promise, and validates",
 		custom_valuation_rate_per_uom: 120,
 		qty: 60,
 		valuation_rate: 10,
-		custom_count_confirmation: "token_save_5",
 	});
 
 	await valPromise;
 	assert.equal(validateFinished, true);
 	assert.equal(env.frappe.validated, true);
-	const row = env.locals[cdt][cdn];
-	assert.equal(row.custom_count_confirmation, "token_save_5");
+	assert.equal(env.locals[cdt][cdn].qty, 60);
 });
 
 test("uncounted_row_blocks_save with descriptive message", async () => {
@@ -1565,7 +1585,6 @@ test("uncounted_row_blocks_save with descriptive message", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 12,
 		custom_qty_after: "",
-		custom_count_confirmation: null,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
 
@@ -1576,11 +1595,12 @@ test("uncounted_row_blocks_save with descriptive message", async () => {
 	assert.match(env.msgprintCalls[0].message, /Qty After belum diisi/);
 });
 
-test("unconfirmed_row_blocks_save with descriptive message", async () => {
+test("counted_custom_row_without_token_passes_validate", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
 
+	// Server-side save no longer produces or requires a per-row confirmation token.
 	env.locals[cdt][cdn] = {
 		name: cdn,
 		doctype: cdt,
@@ -1590,18 +1610,16 @@ test("unconfirmed_row_blocks_save with descriptive message", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 12,
 		custom_qty_after: 5.0,
-		custom_count_confirmation: null,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
 
 	await env.frm.trigger("validate");
 
-	assert.equal(env.frappe.validated, false);
-	assert.ok(env.msgprintCalls.length > 0);
-	assert.match(env.msgprintCalls[0].message, /Konfirmasi hitungan belum valid/);
+	assert.equal(env.frappe.validated, true, "the server validates the count; no client token is required");
+	assert.equal(env.msgprintCalls.length, 0);
 });
 
-test("context_change_invalidates_confirmation and preserves inputs", async () => {
+test("context_change_preserves_inputs", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -1614,7 +1632,6 @@ test("context_change_invalidates_confirmation and preserves inputs", async () =>
 		custom_uom: "Pack",
 		custom_conversion_factor: 12,
 		custom_qty_after: 10.0,
-		custom_count_confirmation: "token_prior",
 		qty: 120,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -1626,7 +1643,7 @@ test("context_change_invalidates_confirmation and preserves inputs", async () =>
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_qty_after, 10.0);
 	assert.equal(row.custom_uom, "Pack");
-	assert.equal(row.custom_count_confirmation, null);
+	assert.equal(row.qty, 120);
 });
 
 test("row_delete_and_re_add does not corrupt new row with old response", async () => {
@@ -1677,7 +1694,6 @@ test("row_delete_and_re_add does not corrupt new row with old response", async (
 		custom_conversion_factor: 12,
 		custom_qty_after: 1.0,
 		qty: 12,
-		custom_count_confirmation: "token_row1",
 	});
 	await new Promise((r) => setTimeout(r, 20));
 
@@ -1721,14 +1737,12 @@ test("form_navigation drops in-flight response when active form changed", async 
 		custom_conversion_factor: 12,
 		custom_qty_after: 1.0,
 		qty: 999,
-		custom_count_confirmation: "token_sr1",
 	});
 	await new Promise((r) => setTimeout(r, 20));
 
 	// Response dropped, qty not updated to 999
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.qty, 12);
-	assert.equal(row.custom_count_confirmation, undefined);
 });
 
 test("submitted_and_cancelled_refresh is non-mutating", async () => {
@@ -1821,7 +1835,7 @@ test("posting_mode_headline_replaces_previous_and_auto_hides", async () => {
 	assert.deepEqual(shown.map((s) => s.msg), ["other app message"], "ours hides itself, others stay");
 });
 
-test("finding_1_warehouse_change_on_unconfirmed_zero_row_does_not_confirm", async () => {
+test("finding_1_warehouse_change_on_unconfirmed_zero_row_does_not_derive_qty", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -1834,7 +1848,6 @@ test("finding_1_warehouse_change_on_unconfirmed_zero_row_does_not_confirm", asyn
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 0,
-		custom_count_confirmation: null,
 		qty: null,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -1845,11 +1858,10 @@ test("finding_1_warehouse_change_on_unconfirmed_zero_row_does_not_confirm", asyn
 	await new Promise((r) => setTimeout(r, 20));
 
 	const row = env.locals[cdt][cdn];
-	assert.equal(row.custom_count_confirmation, null, "Warehouse change must not generate confirmation token");
 	assert.equal(row.qty, null, "Warehouse change must not derive qty 0 without explicit count");
 });
 
-test("finding_2_posting_time_change_leaves_confirmation_invalid_until_explicit_action", async () => {
+test("finding_2_posting_time_change_keeps_row_saveable", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -1862,26 +1874,23 @@ test("finding_2_posting_time_change_leaves_confirmation_invalid_until_explicit_a
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 1056,
-		custom_count_confirmation: "token_at_10am",
 		qty: 6336,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
 	env.frm.doc.set_posting_time = 1;
 	env.frm.doc.posting_time = "10:00:00";
 
-	// User changes posting_time to 12:00:00
+	// User changes posting_time to 12:00:00; the server recomputes the row on save.
 	env.frm.doc.posting_time = "12:00:00";
 	await env.frm.trigger("posting_time");
 	await new Promise((r) => setTimeout(r, 20));
 
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_qty_after, 1056, "Visible count must be preserved");
-	assert.equal(row.custom_count_confirmation, null, "Confirmation must be invalidated and NOT auto-reacquired");
 
-	// Save attempt without reconfirming must be blocked
 	env.frappe.validated = true;
 	await env.formHandlers.validate[0](env.frm);
-	assert.equal(env.frappe.validated, false, "Save must be blocked when confirmation was invalidated by time change");
+	assert.equal(env.frappe.validated, true, "a posting time change must not block save");
 });
 
 test("finding_3_uom_change_preserves_visible_qty_after", async () => {
@@ -1897,7 +1906,6 @@ test("finding_3_uom_change_preserves_visible_qty_after", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 1056,
-		custom_count_confirmation: "token123",
 		qty: 6336,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -1911,7 +1919,6 @@ test("finding_3_uom_change_preserves_visible_qty_after", async () => {
 				custom_qty_after: null,
 				custom_qty_difference_per_uom: null,
 				qty: null,
-				custom_count_confirmation: null,
 			};
 		}
 		return {};
@@ -1924,7 +1931,6 @@ test("finding_3_uom_change_preserves_visible_qty_after", async () => {
 
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_qty_after, 1056, "Visible custom_qty_after must be preserved when UOM changes");
-	assert.equal(row.custom_count_confirmation, null, "Confirmation must be cleared on UOM change");
 });
 
 test("finding_3_item_change_preserves_visible_qty_after", async () => {
@@ -1940,7 +1946,6 @@ test("finding_3_item_change_preserves_visible_qty_after", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 1056,
-		custom_count_confirmation: "token123",
 		qty: 6336,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -1952,7 +1957,6 @@ test("finding_3_item_change_preserves_visible_qty_after", async () => {
 
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_qty_after, 1056, "Item change must preserve visible custom_qty_after");
-	assert.equal(row.custom_count_confirmation, null, "Item change must invalidate confirmation");
 });
 
 test("finding_5_input_change_during_save_barrier_aborts_save", async () => {
@@ -1968,7 +1972,6 @@ test("finding_5_input_change_during_save_barrier_aborts_save", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 1056,
-		custom_count_confirmation: "token_1056",
 		qty: 6336,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -1996,60 +1999,10 @@ test("finding_5_input_change_during_save_barrier_aborts_save", async () => {
 		custom_conversion_factor: 6,
 		custom_qty_after: 1056,
 		qty: 6336,
-		custom_count_confirmation: "token_1056",
 	});
 
 	await savePromise;
 	assert.equal(env.frappe.validated, false, "Save must abort if input changed while waiting for sync barrier");
-});
-
-test("finding_6_explicit_confirmation_action_for_unchanged_zero_count", async () => {
-	const env = setupEnvironment();
-	const cdt = "Stock Reconciliation Item";
-	const cdn = "row1";
-
-	// Draft reloaded with After 0 and empty confirmation
-	env.locals[cdt][cdn] = {
-		name: cdn,
-		doctype: cdt,
-		item_code: "ITEM-001",
-		warehouse: "Stores - RR",
-		custom_uom: "Pack",
-		custom_conversion_factor: 6,
-		custom_qty_after: 0,
-		custom_count_confirmation: null,
-		qty: null,
-	};
-	env.frm.doc.items = [env.locals[cdt][cdn]];
-
-	env.setXcallHandler(async (method, args) => {
-		if (method === "warehouse_app.warehouse_app.stock_reconciliation.compute_row") {
-			return {
-				custom_uom: "Pack",
-				custom_conversion_factor: 6,
-				custom_qty_before: 10,
-				custom_qty_after: args.qty_after,
-				custom_qty_difference_per_uom: -10,
-				qty: 0,
-				custom_count_confirmation: "zero_confirmed_token",
-			};
-		}
-		return {};
-	});
-
-	// Trigger explicit confirmation action
-	assert.ok(typeof env.frm.confirm_count_rows === "function", "frm.confirm_count_rows must be exposed");
-	await env.frm.confirm_count_rows();
-	await new Promise((r) => setTimeout(r, 20));
-
-	const row = env.locals[cdt][cdn];
-	assert.equal(row.custom_count_confirmation, "zero_confirmed_token");
-	assert.equal(row.qty, 0);
-
-	// Now validate should pass
-	env.frappe.validated = true;
-	await env.formHandlers.validate[0](env.frm);
-	assert.equal(env.frappe.validated, true);
 });
 
 test("finding_7_refresh_draft_does_not_add_custom_uom_to_native_row", async () => {
@@ -2121,14 +2074,12 @@ test("finding_8_navigation_to_other_form_instance_drops_in_flight_response", asy
 		custom_conversion_factor: 12,
 		custom_qty_after: 1.0,
 		qty: 999,
-		custom_count_confirmation: "token_sr1",
 	});
 	await new Promise((r) => setTimeout(r, 20));
 
 	// Response must be dropped because active form is now otherFrm
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.qty, 12, "Response must not mutate document after navigation to another form instance");
-	assert.equal(row.custom_count_confirmation, undefined);
 });
 
 test("finding_9_adapter_balance_callback_with_current_request_id_does_not_write_qty_or_after", async () => {
@@ -2280,7 +2231,7 @@ test("defect_c_balance_callback_aborts_if_docstatus_is_submitted_or_cancelled", 
 	);
 });
 
-test("defect_d_toggle_posting_time_mode_drops_old_response_from_reinstalling_token", async () => {
+test("defect_d_toggle_posting_time_mode_drops_old_response", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -2293,7 +2244,6 @@ test("defect_d_toggle_posting_time_mode_drops_old_response_from_reinstalling_tok
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 10,
-		custom_count_confirmation: null,
 		qty: 60,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -2318,18 +2268,14 @@ test("defect_d_toggle_posting_time_mode_drops_old_response_from_reinstalling_tok
 	resolveOld({
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
-		custom_qty_after: 10,
-		qty: 60,
-		custom_count_confirmation: "old_token_0",
+		custom_qty_after: 7,
+		qty: 42,
 	});
 	await new Promise((r) => setTimeout(r, 20));
 
 	const row = env.locals[cdt][cdn];
-	assert.equal(
-		row.custom_count_confirmation,
-		null,
-		"Old response must NOT reinstall confirmation token after toggle 0->1->0"
-	);
+	assert.equal(row.custom_qty_after, 10, "old response must NOT be applied after toggle 0->1->0");
+	assert.equal(row.qty, 60);
 });
 
 test("defect_d_reload_of_same_named_doc_drops_pre_reload_response_by_object_identity", async () => {
@@ -2360,7 +2306,7 @@ test("defect_d_reload_of_same_named_doc_drops_pre_reload_response_by_object_iden
 	env.childHandlers.custom_qty_after(env.frm, cdt, cdn);
 
 	// Reload happens: same docname "SR-TEST", but new doc object instance
-	const reloadedRow = { ...env.locals[cdt][cdn], custom_qty_after: 99, qty: 594, custom_count_confirmation: null };
+	const reloadedRow = { ...env.locals[cdt][cdn], custom_qty_after: 99, qty: 594 };
 	const newDoc = {
 		name: "SR-TEST",
 		doctype: "Stock Reconciliation",
@@ -2382,7 +2328,6 @@ test("defect_d_reload_of_same_named_doc_drops_pre_reload_response_by_object_iden
 		custom_conversion_factor: 6,
 		custom_qty_after: 10,
 		qty: 60,
-		custom_count_confirmation: "stale_token",
 	});
 	await new Promise((r) => setTimeout(r, 20));
 
@@ -2391,10 +2336,19 @@ test("defect_d_reload_of_same_named_doc_drops_pre_reload_response_by_object_iden
 	assert.equal(newDoc.items[0].qty, 594);
 	assert.equal(reloadedRow.custom_qty_after, 99);
 	assert.equal(reloadedRow.qty, 594);
-	assert.equal(reloadedRow.custom_count_confirmation, null);
 });
 
-test("defect_e_confirm_unconfirmed_rows_reconfirms_stale_token_row", async () => {
+test("defect_e_refresh_does_not_add_confirmation_button", async () => {
+	const env = setupEnvironment();
+	env.frm.doc.items = [];
+
+	await env.frm.trigger("refresh");
+
+	assert.equal(env.customButtons["Import Stock Count"] !== undefined, true, "import button stays");
+	assert.equal(env.customButtons["Konfirmasi Hitungan"], undefined, "confirmation button is gone");
+});
+
+test("defect_e_company_change_drops_in_flight_reply", async () => {
 	const env = setupEnvironment();
 	const cdt = "Stock Reconciliation Item";
 	const cdn = "row1";
@@ -2407,57 +2361,24 @@ test("defect_e_confirm_unconfirmed_rows_reconfirms_stale_token_row", async () =>
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 10,
-		custom_count_confirmation: "stale_token_due_to_factor_change",
 		qty: 60,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
 
-	env.setXcallHandler(async (method, args) => {
-		if (method === "warehouse_app.warehouse_app.stock_reconciliation.compute_row") {
-			return {
-				custom_uom: "Pack",
-				custom_conversion_factor: 12,
-				custom_qty_after: 10,
-				qty: 120,
-				custom_count_confirmation: "fresh_token_120",
-			};
-		}
-		return {};
-	});
+	let resolveOld;
+	env.setXcallHandler(() => new Promise((resolve) => (resolveOld = resolve)));
+	env.childHandlers.custom_qty_after(env.frm, cdt, cdn);
 
-	await env.frm.trigger("setup");
-	await env.frm.confirm_count_rows();
-	await new Promise((r) => setTimeout(r, 20));
-
-	const row = env.locals[cdt][cdn];
-	assert.equal(row.custom_count_confirmation, "fresh_token_120", "Konfirmasi Hitungan must re-confirm stale token rows");
-	assert.equal(row.qty, 120);
-});
-
-test("defect_e_company_change_invalidates_all_confirmations", async () => {
-	const env = setupEnvironment();
-	const cdt = "Stock Reconciliation Item";
-	const cdn = "row1";
-
-	env.locals[cdt][cdn] = {
-		name: cdn,
-		doctype: cdt,
-		item_code: "ITEM-001",
-		warehouse: "Stores - RR",
-		custom_uom: "Pack",
-		custom_conversion_factor: 6,
-		custom_qty_after: 10,
-		custom_count_confirmation: "valid_token_for_co1",
-		qty: 60,
-	};
-	env.frm.doc.items = [env.locals[cdt][cdn]];
-
-	// User changes company
+	// User changes company while the reply is in flight
 	env.frm.doc.company = "Company 2";
 	await env.frm.trigger("company");
+	const writes_before = env.setValueCalls.length;
 
-	const row = env.locals[cdt][cdn];
-	assert.equal(row.custom_count_confirmation, null, "Company change must invalidate confirmations");
+	resolveOld({ custom_uom: "Pack", custom_conversion_factor: 12, custom_qty_after: 10, qty: 120 });
+	await new Promise((r) => setTimeout(r, 20));
+
+	assert.equal(env.setValueCalls.length, writes_before, "old-context reply must write nothing");
+	assert.equal(env.locals[cdt][cdn].qty, 60);
 });
 
 test("defect_f_clearing_uom_preserves_visible_after_and_blocks_save", async () => {
@@ -2473,7 +2394,6 @@ test("defect_f_clearing_uom_preserves_visible_after_and_blocks_save", async () =
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 10,
-		custom_count_confirmation: "token123",
 		qty: 60,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -2484,7 +2404,6 @@ test("defect_f_clearing_uom_preserves_visible_after_and_blocks_save", async () =
 
 	const row = env.locals[cdt][cdn];
 	assert.equal(row.custom_qty_after, 10, "Clearing UOM must preserve visible custom_qty_after");
-	assert.equal(row.custom_count_confirmation, null, "Clearing UOM must clear confirmation token");
 
 	// Attempt save: must be blocked because row has count without UOM
 	env.frappe.validated = true;
@@ -2581,7 +2500,6 @@ test("defect_a_unflushed_count_editor_in_inline_grid_aborts_save", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
-		custom_count_confirmation: null,
 		qty: 30,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -2616,7 +2534,6 @@ test("defect_a_unflushed_count_editor_in_inline_grid_aborts_save", async () => {
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
 		qty: 30,
-		custom_count_confirmation: "token_for_5",
 	});
 
 	// Save is attempted without prior blur
@@ -2640,7 +2557,6 @@ test("defect_a_unflushed_count_editor_in_row_form_aborts_save", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
-		custom_count_confirmation: null,
 		qty: 30,
 	};
 	env.frm.doc.items = [env.locals[cdt][cdn]];
@@ -2672,7 +2588,6 @@ test("defect_a_unflushed_count_editor_in_row_form_aborts_save", async () => {
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
 		qty: 30,
-		custom_count_confirmation: "token_for_5",
 	});
 
 	env.frappe.validated = true;
@@ -3085,7 +3000,6 @@ test("r3a_typed_after_with_focus_left_save_aborts", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5",
 		qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
@@ -3116,7 +3030,6 @@ test("r3a_typed_after_with_focus_left_submit_aborts", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5",
 		qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
@@ -3147,7 +3060,6 @@ test("r3a_typed_rate_with_focus_left_save_aborts", async () => {
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
 		custom_valuation_rate_per_uom: 60,
-		custom_count_confirmation: "token_for_5",
 		qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
@@ -3176,7 +3088,6 @@ test("r3a_committed_typed_value_does_not_abort_save", async () => {
 		custom_uom: "Pack",
 		custom_conversion_factor: 6,
 		custom_qty_after: 5,
-		custom_count_confirmation: "token_for_6",
 		qty: 36,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
@@ -3291,8 +3202,7 @@ function r6_expressionEditor(rowName, value) {
 test("r6_committed_float_expression_does_not_block_save", async () => {
 	const env = setupEnvironment();
 	env.locals[R5_CDT].row1 = r5_newRow({
-		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5", qty: 30,
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5, qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
 	await env.frm.trigger("setup");
@@ -3309,8 +3219,7 @@ test("r6_committed_float_expression_does_not_block_save", async () => {
 test("r6_uncommitted_float_expression_still_blocks_save", async () => {
 	const env = setupEnvironment();
 	env.locals[R5_CDT].row1 = r5_newRow({
-		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 4,
-		custom_count_confirmation: "token_for_4", qty: 24,
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 4, qty: 24,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
 	await env.frm.trigger("setup");
@@ -3389,7 +3298,6 @@ test("r6b_balance_with_known_factor_uses_server_precision_and_keeps_rate", async
 		custom_valuation_rate_per_uom: 6000.024,
 		qty: 6336,
 		valuation_rate: args.valuation_rate,
-		custom_count_confirmation: null,
 	}));
 	env.locals[R5_CDT].row1 = r5_newRow({
 		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 1056, qty: 6336, valuation_rate: null,
@@ -3429,14 +3337,11 @@ test("r6b_stale_compute_row_rejection_after_context_change_is_ignored", async ()
 	// Company change: the native script issues no balance request, so request ids stay unchanged.
 	env.frm.doc.company = "Other Co";
 	await env.frm.trigger("company");
-	// A token issued for the new context without a new compute_row (e.g. save reply synced in place).
-	env.locals[R5_CDT].row1.custom_count_confirmation = "token-new-context";
 	const before_msgs = env.msgprintCalls.length;
 
 	rejectOld(new Error("old context failure"));
 	await tick();
 
-	assert.equal(env.locals[R5_CDT].row1.custom_count_confirmation, "token-new-context", "stale rejection must not clear a newer token");
 	assert.equal(env.msgprintCalls.length, before_msgs, "stale rejection must not show an error for the old context");
 });
 
@@ -3450,8 +3355,7 @@ const COMPUTE_ROW = "warehouse_app.warehouse_app.stock_reconciliation.compute_ro
 test("m4_undo_to_confirmed_value_does_not_block_save", async () => {
 	const env = setupEnvironment();
 	env.locals[R5_CDT].row1 = r5_newRow({
-		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5", qty: 30,
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5, qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
 	env.setXcallHandler(async (method, args) => ({
@@ -3460,7 +3364,6 @@ test("m4_undo_to_confirmed_value_does_not_block_save", async () => {
 		custom_qty_after: args.qty_after,
 		custom_valuation_rate_per_uom: null,
 		qty: flt(args.qty_after) * 6,
-		custom_count_confirmation: "token_for_" + args.qty_after,
 	}));
 	await env.frm.trigger("setup");
 
@@ -3473,7 +3376,6 @@ test("m4_undo_to_confirmed_value_does_not_block_save", async () => {
 	await env.childHandlers.custom_qty_after(env.frm, R5_CDT, "row1");
 	await tick();
 	assert.equal(env.locals[R5_CDT].row1.custom_qty_after, 6, "committed model value is 6");
-	assert.equal(env.locals[R5_CDT].row1.custom_count_confirmation, "token_for_6");
 
 	// Native Undo restores model After to the confirmed 5 via set_value (no DOM input event).
 	await env.frappe.model.set_value(R5_CDT, "row1", "custom_qty_after", 5);
@@ -3489,8 +3391,7 @@ test("m4_undo_to_confirmed_value_does_not_block_save", async () => {
 test("m4_typed_uncommitted_value_still_blocks_save", async () => {
 	const env = setupEnvironment();
 	env.locals[R5_CDT].row1 = r5_newRow({
-		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5", qty: 30,
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5, qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
 	env.setXcallHandler(async (method, args) => ({
@@ -3498,7 +3399,6 @@ test("m4_typed_uncommitted_value_still_blocks_save", async () => {
 		custom_conversion_factor: 6,
 		custom_qty_after: args.qty_after,
 		qty: flt(args.qty_after) * 6,
-		custom_count_confirmation: "token_for_" + args.qty_after,
 	}));
 	await env.frm.trigger("setup");
 
@@ -3517,8 +3417,7 @@ test("m4_typed_uncommitted_value_still_blocks_save", async () => {
 test("m4_input_typed_during_inflight_sync_still_blocks_save", async () => {
 	const env = setupEnvironment();
 	env.locals[R5_CDT].row1 = r5_newRow({
-		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5", qty: 30,
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5, qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
 	let resolveSync;
@@ -3545,8 +3444,7 @@ test("m5_item_change_to_native_row_unlocks_qty_and_rate", async () => {
 	const locks = [];
 	env.frm.set_df_property = (table, prop, value, docname, field, row) => locks.push([row, field, value]);
 	env.locals[R5_CDT].row1 = r5_newRow({
-		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5", qty: 30,
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5, qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
 	await env.frm.trigger("refresh");
@@ -3581,7 +3479,6 @@ test("m5_import_bulk_fill_locks_custom_rows", async () => {
 							custom_qty_after: 5,
 							qty: 30,
 							valuation_rate: 10,
-							custom_count_confirmation: "token_for_5",
 						},
 					],
 				},
@@ -3612,8 +3509,7 @@ test("m5_import_bulk_fill_locks_custom_rows", async () => {
 test("m4_same_value_retype_then_undo_does_not_block_save", async () => {
 	const env = setupEnvironment();
 	env.locals[R5_CDT].row1 = r5_newRow({
-		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5,
-		custom_count_confirmation: "token_for_5", qty: 30,
+		custom_uom: "Pack", custom_conversion_factor: 6, custom_qty_after: 5, qty: 30,
 	});
 	env.frm.doc.items = [env.locals[R5_CDT].row1];
 	env.setXcallHandler(async (method, args) => ({
@@ -3622,7 +3518,6 @@ test("m4_same_value_retype_then_undo_does_not_block_save", async () => {
 		custom_qty_after: args.qty_after,
 		custom_valuation_rate_per_uom: null,
 		qty: flt(args.qty_after) * 6,
-		custom_count_confirmation: "token_for_" + args.qty_after,
 	}));
 	await env.frm.trigger("setup");
 

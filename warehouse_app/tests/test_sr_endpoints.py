@@ -96,7 +96,6 @@ class MockDoc(frappe._dict):
 
 frappe.new_doc = MagicMock(side_effect=lambda dt="Stock Reconciliation Item": MockDoc())
 
-from warehouse_app import sr_uom
 from warehouse_app.warehouse_app import stock_reconciliation
 
 
@@ -211,7 +210,6 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
         self.assertEqual(row["custom_conversion_factor"], 12.0)
         # Revision 3.1: Fetch Items must NOT prefill After from balance
         self.assertIsNone(row.get("custom_qty_after"))
-        self.assertIsNone(row.get("custom_count_confirmation"))
         self.assertEqual(row["qty"], 10.0)
         self.assertEqual(row["valuation_rate"], 1234.5678)
         self.assertEqual(row["custom_valuation_rate_per_uom"], 14814.81)
@@ -458,7 +456,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
             self.assertEqual(res1["custom_uom"], "Pack")
             self.assertEqual(res1["custom_qty_before"], 7.0)
             self.assertIsNone(res1["custom_qty_after"])
-            self.assertIsNone(res1.get("custom_count_confirmation"))
+            self.assertNotIn("custom_count_confirmation", res1)
             self.assertEqual(res1["qty"], 84.0)
             self.assertIsNone(res1["custom_qty_difference_per_uom"])
 
@@ -477,9 +475,9 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
             self.assertEqual(res2["custom_qty_after"], 2.5)
             self.assertEqual(res2["qty"], 30.0)
             self.assertEqual(res2["custom_qty_difference_per_uom"], -4.5)
-            self.assertTrue(res2.get("custom_count_confirmation"))
+            self.assertNotIn("custom_count_confirmation", res2)
 
-    def test_endpoint_returns_confirmation_for_explicit_count(self):
+    def test_endpoint_reply_has_no_confirmation_field(self):
         def mock_get_all(doctype, filters=None, fields=None):
             if doctype == "UOM Conversion Detail":
                 return [
@@ -508,17 +506,7 @@ class TestStockReconciliationEndpoints(unittest.TestCase):
             )
             self.assertEqual(res["custom_qty_after"], 1056)
             self.assertEqual(res["qty"], 6336.0)
-            expected_token = sr_uom.count_confirmation(
-                company="Test Company",
-                item_code="ITEM-1",
-                warehouse="Stores - C",
-                posting_date="2026-11-05",
-                posting_time="14:30:00",
-                set_posting_time=0,
-                uom="Pack",
-                factor=6.0,
-            )
-            self.assertEqual(res.get("custom_count_confirmation"), expected_token)
+            self.assertNotIn("custom_count_confirmation", res)
 
     def test_endpoint_rate_handling(self):
         def mock_get_all(doctype, filters=None, fields=None):

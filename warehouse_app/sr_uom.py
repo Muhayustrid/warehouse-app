@@ -10,45 +10,13 @@ and document submission.
 
 from decimal import Decimal, InvalidOperation
 import hashlib
-import json
+import hmac
 import math
 from typing import Iterable
 
 import frappe
 from frappe import _
-from frappe.utils import cint, flt
-
-try:
-    from frappe.utils import getdate, get_time
-except ImportError:
-    import datetime
-
-    def getdate(string_date):
-        if isinstance(string_date, datetime.datetime):
-            return string_date.date()
-        if isinstance(string_date, datetime.date):
-            return string_date
-        return datetime.date.fromisoformat(str(string_date)[:10])
-
-    def get_time(string_time):
-        if isinstance(string_time, datetime.datetime):
-            return string_time.time()
-        if isinstance(string_time, datetime.time):
-            return string_time
-        if isinstance(string_time, datetime.timedelta):
-            total_seconds = int(string_time.total_seconds())
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            seconds = total_seconds % 60
-            return datetime.time(hours, minutes, seconds, string_time.microseconds)
-        s = str(string_time).strip()
-        parts = s.split(":")
-        sec_parts = parts[2].split(".") if len(parts) > 2 else ["0"]
-        sec = int(sec_parts[0])
-        microsec = int(sec_parts[1].ljust(6, "0")[:6]) if len(sec_parts) > 1 else 0
-        return datetime.time(
-            int(parts[0]), int(parts[1]), sec, microsec
-        )
+from frappe.utils import flt
 
 SR_UOM_FIELD = "custom_uom"
 SR_FACTOR_FIELD = "custom_conversion_factor"
@@ -56,6 +24,9 @@ SR_BEFORE_FIELD = "custom_qty_before"
 SR_AFTER_FIELD = "custom_qty_after"
 SR_RATE_FIELD = "custom_valuation_rate_per_uom"
 SR_DIFF_FIELD = "custom_qty_difference_per_uom"
+# Holds a hash of the ledger stock-UOM qty the count was checked against at the last save
+# (hashed so blind-count outlet users cannot read system stock; field name kept from the
+# retired confirmation token, whose old values simply never match).
 SR_CONFIRMATION_FIELD = "custom_count_confirmation"
 QTY_UOM_DECIMALS = 3
 
@@ -291,84 +262,17 @@ def validate_representable_qty(qty_after, factor, stock_uom=None, prec_qty=6) ->
     return float(target)
 
 
-def count_confirmation(
-    *,
-    company=None,
-    item_code=None,
-    warehouse=None,
-    posting_date=None,
-    posting_time=None,
-    set_posting_time=0,
-    uom=None,
-    factor=None,
-    batch_no=None,
-) -> str:
-    """Generate a deterministic bounded fingerprint of confirmed count context.
+def _validated_custom_rows(doc):
+    """Validate every custom-UOM count row; return (custom_rows, master factors).
 
-    Context rules:
-    - set_posting_time=0: posting_context token is 'now' (timestamps changing on save/submit do not invalidate).
-    - set_posting_time=1: normalized explicit date and time string.
-    - Toggling set_posting_time invalidates.
-    - Never stores After or native Qty.
-    """
-    if factor is None or flt(factor) <= 0 or not math.isfinite(flt(factor)):
-        frappe.throw(
-            _("Faktor konversi tidak valid untuk konfirmasi hitungan: {0}").format(factor)
-        )
-
-    clean_company = (company or "").strip()
-    clean_item = (item_code or "").strip()
-    clean_wh = (warehouse or "").strip()
-    clean_uom = (uom or "").strip()
-    clean_batch = (batch_no or "").strip() if batch_no else ""
-
-    factor_str = f"{flt(factor):.9f}".rstrip("0").rstrip(".")
-
-    is_explicit_time = bool(cint(set_posting_time))
-    if is_explicit_time:
-        if posting_date in (None, "") or posting_time in (None, ""):
-            frappe.throw(
-                _("Posting Date dan Posting Time wajib diisi untuk explicit posting time.")
-            )
-        d_str = getdate(posting_date).isoformat()
-        t_str = get_time(posting_time).isoformat()
-        posting_ctx = f"{d_str} {t_str}"
-    else:
-        posting_ctx = "now"
-
-    canonical_payload = json.dumps(
-        [
-            clean_company,
-            clean_item,
-            clean_wh,
-            posting_ctx,
-            clean_uom,
-            factor_str,
-            clean_batch,
-        ],
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()[:32]
-
-
-def confirm_count_rows(doc) -> None:
-    """Internal helper to validate explicit count rows and set custom_count_confirmation.
-
-    Validates explicit non-empty custom_qty_after, resolves master factor,
-    verifies precision representability, and sets custom_count_confirmation.
-    Never returns balances or rates.
+    Rejects serial/bundle rows, empty After, a UOM without a master factor and
+    an After or stock-UOM qty that cannot be stored exactly.
     """
     rows = _get_val(doc, "items") or []
     custom_rows = [r for r in rows if _get_val(r, SR_UOM_FIELD)]
     if not custom_rows:
-        return
+        return [], {}
 
-    company = _get_val(doc, "company")
-    set_posting_time = _get_val(doc, "set_posting_time", 0)
-    posting_date = _get_val(doc, "posting_date")
-    posting_time = _get_val(doc, "posting_time")
-
-    # Check unsupported serial / bundle combinations on custom rows
     for row in custom_rows:
         if _get_val(row, "serial_no") or _get_val(row, "serial_and_batch_bundle"):
             frappe.throw(
@@ -377,24 +281,20 @@ def confirm_count_rows(doc) -> None:
                 ).format(_get_val(row, "idx") or "", _get_val(row, "item_code"))
             )
 
-    # Check explicit non-empty custom_qty_after
     for row in custom_rows:
-        qa = _get_val(row, SR_AFTER_FIELD)
-        if qa in (None, ""):
+        if _get_val(row, SR_AFTER_FIELD) in (None, ""):
             frappe.throw(
                 _("Baris {0} ({1}) belum dihitung: Qty After wajib diisi.").format(
                     _get_val(row, "idx") or "", _get_val(row, "item_code")
                 )
             )
 
-    # Resolve master factors
-    pairs = []
-    for row in custom_rows:
-        item_code = _get_val(row, "item_code")
-        uom = _get_val(row, SR_UOM_FIELD)
-        pairs.append((item_code, uom, _master_stock_uom(item_code)))
-
-    factors = resolve_factors(pairs)
+    factors = resolve_factors(
+        [
+            (_get_val(r, "item_code"), _get_val(r, SR_UOM_FIELD), _master_stock_uom(_get_val(r, "item_code")))
+            for r in custom_rows
+        ]
+    )
 
     for row in custom_rows:
         item_code = _get_val(row, "item_code")
@@ -408,30 +308,23 @@ def confirm_count_rows(doc) -> None:
                     "tersebut."
                 ).format(frappe.bold(uom), frappe.bold(item_code))
             )
-
         qa = _get_val(row, SR_AFTER_FIELD)
-        prec = precisions(row)
         validate_representable_after(row, qa)
         validate_representable_qty(
-            qa,
-            factor,
-            stock_uom=_master_stock_uom(item_code),
-            prec_qty=prec["qty"],
+            qa, factor, stock_uom=_master_stock_uom(item_code), prec_qty=precisions(row)["qty"]
         )
 
-        token = count_confirmation(
-            company=company,
-            item_code=item_code,
-            warehouse=_get_val(row, "warehouse"),
-            posting_date=posting_date,
-            posting_time=posting_time,
-            set_posting_time=set_posting_time,
-            uom=uom,
-            factor=factor,
-            batch_no=_get_val(row, "batch_no"),
-        )
-        _set_val(row, SR_CONFIRMATION_FIELD, token)
-        _set_val(row, SR_FACTOR_FIELD, factor)
+    return custom_rows, factors
+
+
+def confirm_count_rows(doc) -> None:
+    """Validate custom count rows and stamp the master factor (kept for POSNext callers).
+
+    No confirmation step is needed any more: apply_to_doc validates on every save.
+    """
+    custom_rows, factors = _validated_custom_rows(doc)
+    for row in custom_rows:
+        _set_val(row, SR_FACTOR_FIELD, factors[(_get_val(row, "item_code"), _get_val(row, SR_UOM_FIELD))])
 
 
 def compute_row(
@@ -502,9 +395,100 @@ def compute_row(
     }
 
 
-def apply_to_doc(doc) -> None:
-    """Convert every custom row in doc.items after validating confirmation against doc context.
+def _ledger_rate(item_code, warehouse, posting_date, posting_time) -> float:
+    """Valuation rate of the last SLE at the posting timestamp (what native compares)."""
+    from erpnext.stock.stock_ledger import get_previous_sle
 
+    prev = get_previous_sle(
+        {"item_code": item_code, "warehouse": warehouse, "posting_date": posting_date, "posting_time": posting_time}
+    )
+    return flt(prev.get("valuation_rate")) if prev else 0.0
+
+
+def _dimension_fields() -> list[str]:
+    from erpnext.stock.doctype.inventory_dimension.inventory_dimension import get_inventory_dimensions
+
+    return [d.get("fieldname") for d in get_inventory_dimensions() if d.get("fieldname")]
+
+
+def _match_unchanged_to_ledger(res, l_qty, l_rate, factor, prec) -> None:
+    """Snap a no-change row onto the exact ledger values so the native filter removes it.
+
+    Compared in stock UOM at qty precision. The rate counts as unchanged only when it is
+    empty or equal to the ledger rate at valuation precision, so any revaluation is kept.
+    Zero stock is left to native, which keeps rows that must clear a residual stock value.
+    """
+    if not flt(l_qty, prec["qty"]) or flt(res["qty"], prec["qty"]) != flt(l_qty, prec["qty"]):
+        return
+    rate = res["valuation_rate"]
+    if rate not in (None, "") and flt(rate, prec["valuation_rate"]) != flt(l_rate, prec["valuation_rate"]):
+        return
+    res["qty"] = l_qty
+    res["valuation_rate"] = l_rate
+
+
+def _assert_factor_current(row, factor) -> None:
+    """Reject a row converted with a factor that no longer matches the Item master.
+
+    The row carries the factor its count was entered with (compute_row, Fetch Items, import,
+    confirm_count_rows). A master change since then fails clearly instead of silently
+    re-scaling the stock qty (e.g. at HQ approval); re-entering the UOM or After, or the
+    POSNext outlet re-confirm, stamps the current factor.
+    """
+    entered = _get_val(row, SR_FACTOR_FIELD)
+    if entered in (None, "") or not flt(entered) or abs(flt(entered) - flt(factor)) < 1e-9:
+        return
+    frappe.throw(
+        _(
+            "Konfirmasi hitungan untuk baris {0} ({1}) tidak cocok dengan konteks dokumen saat ini: "
+            "faktor konversi {2} berubah dari {3} menjadi {4} di master item. "
+            "Pilih ulang UOM atau isi ulang Qty After, lalu simpan lagi."
+        ).format(
+            _get_val(row, "idx") or "",
+            _get_val(row, "item_code"),
+            _get_val(row, SR_UOM_FIELD),
+            flt(entered),
+            flt(factor),
+        )
+    )
+
+
+def _ledger_mark(row, l_qty, prec_qty) -> str:
+    """Opaque mark of the ledger qty a row was checked against (no stock value exposed)."""
+    payload = f"{_get_val(row, 'item_code')}|{_get_val(row, 'warehouse')}|{flt(l_qty, prec_qty):.9f}"
+    # Keyed with the site secret so a small qty range cannot be brute-forced back.
+    conf = getattr(getattr(frappe, "local", None), "conf", None) or {}
+    key = str(conf.get("encryption_key") or "warehouse_app").encode("utf-8")
+    return "L" + hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()[:31]
+
+
+def _assert_ledger_unchanged(row, prev_row, l_qty, prec_qty) -> None:
+    """Submit guard: the count was checked against the ledger at the last save."""
+    saved = _get_val(prev_row, SR_CONFIRMATION_FIELD) if prev_row else None
+    if not saved or not str(saved).startswith("L"):
+        return  # legacy token or never saved by this version
+    if saved == _ledger_mark(row, l_qty, prec_qty):
+        return
+    frappe.throw(
+        _(
+            "Stok sistem baris {0} ({1}) berubah sejak disimpan (sekarang {2} {3}). "
+            "Periksa ulang hitungan, lalu Simpan lagi sebelum Submit."
+        ).format(
+            _get_val(row, "idx") or "",
+            _get_val(row, "item_code"),
+            flt(l_qty, prec_qty),
+            _master_stock_uom(_get_val(row, "item_code")) or "",
+        )
+    )
+
+
+def apply_to_doc(doc) -> None:
+    """Validate and convert every custom row in doc.items (After x master factor -> stock qty).
+
+    Stock-UOM qty is the source of truth: a row whose converted qty and rate equal the
+    ledger is normalised to the exact ledger values so native remove_items_with_no_change
+    drops it. A row whose entered factor no longer matches the master is rejected on any
+    save; on submit, a row whose ledger qty changed since the last save is rejected.
     Native-only rows are left untouched.
     """
     rows = _get_val(doc, "items") or []
@@ -515,6 +499,7 @@ def apply_to_doc(doc) -> None:
     # a previously saved counted row is not a silent fallback to native.
     get_before = getattr(doc, "get_doc_before_save", None)
     prev_doc = get_before() if callable(get_before) else None
+    prev_rows = {}
     if prev_doc:
         prev_items = _get_val(prev_doc, "items") or []
         prev_rows = {
@@ -536,96 +521,14 @@ def apply_to_doc(doc) -> None:
                         ).format(_get_val(row, "idx") or "", _get_val(row, "item_code"))
                     )
 
-    custom_rows = [r for r in rows if _get_val(r, SR_UOM_FIELD)]
+    custom_rows, factors = _validated_custom_rows(doc)
     if not custom_rows:
         return
 
-    company = _get_val(doc, "company")
-    set_posting_time = _get_val(doc, "set_posting_time", 0)
     posting_date = _get_val(doc, "posting_date")
     posting_time = _get_val(doc, "posting_time")
-
-    # Check unsupported serial / bundle combinations on custom rows
-    for row in custom_rows:
-        if _get_val(row, "serial_no") or _get_val(row, "serial_and_batch_bundle"):
-            frappe.throw(
-                _(
-                    "Baris {0} ({1}) menggunakan custom UOM dengan serial number atau bundle yang belum didukung."
-                ).format(_get_val(row, "idx") or "", _get_val(row, "item_code"))
-            )
-
-    # Check uncounted custom rows
-    for row in custom_rows:
-        qa = _get_val(row, SR_AFTER_FIELD)
-        if qa in (None, ""):
-            frappe.throw(
-                _("Baris {0} ({1}) belum dihitung: Qty After wajib diisi.").format(
-                    _get_val(row, "idx") or "", _get_val(row, "item_code")
-                )
-            )
-
-    # Check missing confirmation on custom rows
-    for row in custom_rows:
-        conf = _get_val(row, SR_CONFIRMATION_FIELD)
-        if not conf:
-            frappe.throw(
-                _(
-                    "Baris {0} ({1}) belum dikonfirmasi. Periksa dan konfirmasi hitungan fisik terlebih dahulu."
-                ).format(_get_val(row, "idx") or "", _get_val(row, "item_code"))
-            )
-
-    # Resolve master factors atomically
-    pairs = []
-    for row in custom_rows:
-        item_code = _get_val(row, "item_code")
-        uom = _get_val(row, SR_UOM_FIELD)
-        pairs.append((item_code, uom, _master_stock_uom(item_code)))
-
-    factors = resolve_factors(pairs)
-
-    # Validate master factors and confirmation matches current context
-    for row in custom_rows:
-        item_code = _get_val(row, "item_code")
-        uom = _get_val(row, SR_UOM_FIELD)
-        factor = factors.get((item_code, uom))
-        if not factor or factor <= 0:
-            frappe.throw(
-                _(
-                    "UOM {0} untuk Item {1} pada Stock Reconciliation tidak valid: harus sama "
-                    "dengan Stock UOM, atau ditambahkan dulu ke tabel UOM Conversion item "
-                    "tersebut."
-                ).format(frappe.bold(uom), frappe.bold(item_code))
-            )
-
-        expected_conf = count_confirmation(
-            company=company,
-            item_code=item_code,
-            warehouse=_get_val(row, "warehouse"),
-            posting_date=posting_date,
-            posting_time=posting_time,
-            set_posting_time=set_posting_time,
-            uom=uom,
-            factor=factor,
-            batch_no=_get_val(row, "batch_no"),
-        )
-        current_conf = _get_val(row, SR_CONFIRMATION_FIELD)
-        if current_conf != expected_conf:
-            frappe.throw(
-                _(
-                    "Konfirmasi hitungan untuk baris {0} ({1}) tidak cocok dengan konteks dokumen saat ini "
-                    "(konteks atau faktor master berubah). Periksa dan konfirmasi ulang hitungan fisik."
-                ).format(_get_val(row, "idx") or "", item_code)
-            )
-
-        qa = _get_val(row, SR_AFTER_FIELD)
-        prec = precisions(row)
-        validate_representable_after(row, qa)
-        validate_representable_qty(
-            qa,
-            factor,
-            stock_uom=_master_stock_uom(item_code),
-            prec_qty=prec["qty"],
-        )
+    is_submit = getattr(doc, "_action", None) == "submit"
+    dim_fields = _dimension_fields()
 
     # All custom rows validated! Now compute and apply atomically
     ledger_cache = {}
@@ -663,9 +566,22 @@ def apply_to_doc(doc) -> None:
             prec=prec,
             stock_uom=stock_uom,
         )
-        computed.append((row, res))
+        # shortcut: ledger_qty/_ledger_rate are warehouse-level, so inventory-dimension rows skip
+        # the ledger guard and the snap (native still matches them); add dimension filters if used.
+        has_dim = any(_get_val(row, f) for f in dim_fields)
+        _assert_factor_current(row, factor)
+        if is_submit and prev_doc and not has_dim:
+            _assert_ledger_unchanged(row, prev_rows.get(_get_val(row, "name")), l_qty, prec["qty"])
+        # The ledger rate is only looked up when the stock qty already matches (one query saved per changed row).
+        if not batch_no and not has_dim and flt(res["qty"], prec["qty"]) == flt(l_qty, prec["qty"]):
+            _match_unchanged_to_ledger(
+                res, l_qty, _ledger_rate(item_code, warehouse, posting_date, posting_time),
+                factor, prec,
+            )
+        computed.append((row, res, l_qty))
 
-    for row, res in computed:
+    for row, res, l_qty in computed:
+        _set_val(row, SR_CONFIRMATION_FIELD, _ledger_mark(row, l_qty, precisions(row)["qty"]))
         _set_val(row, SR_FACTOR_FIELD, res["custom_conversion_factor"])
         _set_val(row, SR_BEFORE_FIELD, res["custom_qty_before"])
         _set_val(row, SR_AFTER_FIELD, res["custom_qty_after"])

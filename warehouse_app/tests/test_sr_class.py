@@ -100,7 +100,29 @@ class PosNextSR(FakeStockReconciliation):
         super().remove_items_with_no_change()
 
 
-from warehouse_app.overrides.stock_reconciliation import StockReconciliationUOM
+# pos_next stubs: the Desk-save guard imports these lazily when pos_next is installed.
+for mod_name in [
+    "pos_next",
+    "pos_next.overrides",
+    "pos_next.overrides.stock_reconciliation",
+    "pos_next.stock_opname_setup",
+]:
+    if mod_name not in sys.modules:
+        m = ModuleType(mod_name)
+        m.__path__ = []
+        sys.modules[mod_name] = m
+_pos_next_sr = sys.modules["pos_next.overrides.stock_reconciliation"]
+if not hasattr(_pos_next_sr, "is_hq_user"):
+    _pos_next_sr.is_hq_user = MagicMock(return_value=True)
+sys.modules["pos_next.stock_opname_setup"].OUTLET_ROLES = ["POSNext Outlet User"]
+
+# The override reads frappe.local.form_dict / frappe.form_dict; the stub creates neither.
+frappe.local = getattr(frappe, "local", frappe._dict())
+frappe.form_dict = getattr(frappe, "form_dict", frappe._dict())
+if not hasattr(frappe, "get_installed_apps"):
+    frappe.get_installed_apps = MagicMock(return_value=[])
+
+from warehouse_app.overrides.stock_reconciliation import DESK_SAVE, StockReconciliationUOM
 from warehouse_app.sr_uom import confirm_count_rows
 
 
@@ -113,6 +135,11 @@ class MockRow(frappe._dict):
 
 
 class TestStockReconciliationClass(unittest.TestCase):
+    def setUp(self):
+        # Default: not a Desk form save, so the no-change filter follows the normal MRO.
+        frappe.local = frappe._dict()
+        frappe.form_dict = frappe._dict()
+
     def test_converts_after_posting_time_before_bundle_and_native_filter(self):
         with patch(
             "warehouse_app.overrides.stock_reconciliation.apply_to_doc",
@@ -211,6 +238,48 @@ class TestStockReconciliationClass(unittest.TestCase):
         self.assertEqual(row.qty, 0.0)
         self.assertEqual(doc.bundle_qty, 0.0)
         self.assertEqual(row.serial_and_batch_bundle, "SABB-0001")
+
+    def _set_desk_save(self, cmd=DESK_SAVE):
+        frappe.local = frappe._dict(form_dict=frappe._dict(cmd=cmd))
+        frappe.form_dict = frappe._dict(cmd=cmd)
+
+    def _pos_next_doc(self):
+        cls = type("TestSR", (StockReconciliationUOM, PosNextSR), {})
+        doc = cls()
+        doc.docstatus = 0
+        return doc
+
+    def test_desk_save_by_non_outlet_user_bypasses_pos_next_draft_skip(self):
+        doc = self._pos_next_doc()
+        self._set_desk_save()
+
+        with patch("frappe.get_installed_apps", return_value=["frappe", "erpnext", "pos_next"]), patch(
+            "frappe.get_roles", return_value=["Stock User"]
+        ), patch.object(_pos_next_sr, "is_hq_user", return_value=False):
+            doc.remove_items_with_no_change()
+
+        self.assertEqual(doc.calls, ["native_remove_items_with_no_change"])
+
+    def test_desk_save_by_outlet_user_keeps_pos_next_draft_skip(self):
+        doc = self._pos_next_doc()
+        self._set_desk_save()
+
+        with patch("frappe.get_installed_apps", return_value=["frappe", "erpnext", "pos_next"]), patch(
+            "frappe.get_roles", return_value=["POSNext Outlet User"]
+        ), patch.object(_pos_next_sr, "is_hq_user", return_value=False):
+            doc.remove_items_with_no_change()
+
+        self.assertEqual(doc.calls, ["pos_next_remove_items_with_no_change"])
+
+    def test_no_desk_cmd_keeps_pos_next_draft_skip(self):
+        doc = self._pos_next_doc()
+        self._set_desk_save(cmd="pos_next.api.stock")
+
+        with patch("frappe.get_installed_apps", return_value=["frappe", "erpnext", "pos_next"]) as installed:
+            doc.remove_items_with_no_change()
+
+        self.assertEqual(doc.calls, ["pos_next_remove_items_with_no_change"])
+        installed.assert_not_called()
 
     def test_hooks_registration(self):
         import warehouse_app.hooks as hooks

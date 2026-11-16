@@ -80,7 +80,6 @@ from warehouse_app.sr_uom import (
     SR_RATE_FIELD,
     SR_UOM_FIELD,
     compute_row,
-    count_confirmation,
     precisions,
 )
 from warehouse_app.warehouse_app.sr_import import build_count_rows, validate_count_rows
@@ -362,8 +361,8 @@ class TestSrImportUom(unittest.TestCase):
         self.assertEqual(res["rows"], [])
         self.assertIn("All counts match", res.get("message", ""))
 
-    def test_import_zero_count_gets_confirmation(self):
-        """Explicit counted 0.0 gets qty 0.0 and valid custom_count_confirmation token."""
+    def test_import_zero_count_yields_zero_qty(self):
+        """Explicit counted 0.0 gets qty 0.0; the grid row carries no confirmation token."""
         parsed = {
             "rows": [
                 {
@@ -391,22 +390,10 @@ class TestSrImportUom(unittest.TestCase):
         row = res["rows"][0]
         self.assertEqual(row["qty"], 0.0)
         self.assertEqual(row[SR_AFTER_FIELD], 0.0)
-        self.assertIsNotNone(row.get(SR_CONFIRMATION_FIELD))
-        expected_token = count_confirmation(
-            company="Test Company",
-            item_code="ITEM-1",
-            warehouse="WH-1",
-            posting_date="2026-11-03",
-            posting_time="10:00:00",
-            set_posting_time=0,
-            uom="Pack",
-            factor=12.0,
-            batch_no=None,
-        )
-        self.assertEqual(row[SR_CONFIRMATION_FIELD], expected_token)
+        self.assertNotIn(SR_CONFIRMATION_FIELD, row)
 
     def test_import_non_integer_factor(self):
-        """Counted 2 Bags (factor 2.5) -> row qty == 5.0 Kg with confirmation token."""
+        """Counted 2 Bags (factor 2.5) -> row qty == 5.0 Kg without a confirmation token."""
         parsed = {
             "rows": [
                 {
@@ -433,7 +420,7 @@ class TestSrImportUom(unittest.TestCase):
         row = res["rows"][0]
         self.assertEqual(row["qty"], 5.0)
         self.assertEqual(row[SR_FACTOR_FIELD], 2.5)
-        self.assertIsNotNone(row.get(SR_CONFIRMATION_FIELD))
+        self.assertNotIn(SR_CONFIRMATION_FIELD, row)
 
     def test_import_removal_of_0005_matched_strip(self):
         """Revision 3.1: counted 0.833 Pack * 12 = 9.996 != 10.0 ledger is NOT stripped as matched."""
@@ -554,45 +541,6 @@ class TestSrImportUom(unittest.TestCase):
         self.assertIn("ITEM-1", item_codes)
         # ITEM-FRACTION had 0 Pcs historically -> MUST be excluded
         self.assertNotIn("ITEM-FRACTION", item_codes)
-
-    def test_upload_accepts_set_posting_time(self):
-        """set_posting_time=1 generates confirmation token using explicit normalized ISO datetime."""
-        parsed = {
-            "rows": [
-                {
-                    "row_no": 2,
-                    "item_code": "ITEM-1",
-                    "warehouse": "WH-1",
-                    "uom": "Pack",
-                    "counted": 1.0,
-                    "rate": None,
-                }
-            ],
-            "skipped": 0,
-        }
-
-        with patch("frappe.get_all", side_effect=self._mock_get_all):
-            res = validate_count_rows(
-                parsed,
-                company="Test Company",
-                posting_date="2026-11-01",
-                posting_time="14:00:00",
-                set_posting_time=1,
-            )
-
-        row = res["rows"][0]
-        expected_token = count_confirmation(
-            company="Test Company",
-            item_code="ITEM-1",
-            warehouse="WH-1",
-            posting_date="2026-11-01",
-            posting_time="14:00:00",
-            set_posting_time=1,
-            uom="Pack",
-            factor=12.0,
-            batch_no=None,
-        )
-        self.assertEqual(row[SR_CONFIRMATION_FIELD], expected_token)
 
     def test_import_zero_stock_warning_and_none_rate(self):
         """Zero stock item without explicit rate gets warning and None valuation_rate."""

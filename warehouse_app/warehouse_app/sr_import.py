@@ -56,13 +56,11 @@ from warehouse_app.sr_uom import (
 	QTY_UOM_DECIMALS,
 	SR_AFTER_FIELD,
 	SR_BEFORE_FIELD,
-	SR_CONFIRMATION_FIELD,
 	SR_DIFF_FIELD,
 	SR_FACTOR_FIELD,
 	SR_RATE_FIELD,
 	SR_UOM_FIELD,
 	compute_row,
-	count_confirmation,
 	precisions,
 	resolve_factors,
 )
@@ -701,21 +699,8 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None, s
 				).format(r["row_no"], frappe.bold(escape_html(r["item_code"])))
 			)
 
-		token = count_confirmation(
-			company=company,
-			item_code=r["item_code"],
-			warehouse=r["warehouse"],
-			posting_date=posting_date,
-			posting_time=posting_time,
-			set_posting_time=set_posting_time,
-			uom=r["uom"],
-			factor=factor,
-			batch_no=r.get("batch_no"),
-		)
-
 		r["_snapshot"] = (current, system_rate)
 		r["_computed"] = computed
-		r["_token"] = token
 		kept.append(r)
 
 	stats = {
@@ -753,7 +738,6 @@ def validate_count_rows(parsed, company, posting_date=None, posting_time=None, s
 			"qty": computed["qty"],
 			"valuation_rate": computed["valuation_rate"],
 			"use_serial_batch_fields": use_serial_batch_fields,
-			SR_CONFIRMATION_FIELD: r["_token"],
 		}
 		if computed[SR_RATE_FIELD] is not None:
 			row[SR_RATE_FIELD] = computed[SR_RATE_FIELD]
