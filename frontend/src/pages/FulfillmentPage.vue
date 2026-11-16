@@ -355,8 +355,8 @@ function statusLabel(row) {
 							<span>Cetak Label Gabungan</span>
 						</button>
 					</template>
-					<!-- Filter Dropdown Popover Anchor -->
-					<div ref="filterPopoverRef" class="ff-filter-popover-wrap">
+					<!-- Filter Dropdown Popover Anchor (bukan di tab Packing: di sana pakai filter ala ERPNext pada list) -->
+					<div v-if="activeTab !== 'packing'" ref="filterPopoverRef" class="ff-filter-popover-wrap">
 						<button
 							type="button"
 							class="btn ff-filter-btn"

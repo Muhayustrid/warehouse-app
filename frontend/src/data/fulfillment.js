@@ -201,3 +201,13 @@ export function fetchPackingSlipLabelsHtml(name) {
 export function fetchPackingSlipsLabelsHtml(company, date) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slips_labels_html', { company, date })
 }
+
+// Driver + no. mobil dipakai bersama oleh semua packing pada `date`.
+export function savePackingDriver(company, date, driver, vehicleNo) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.save_packing_driver', {
+		company,
+		date,
+		driver: driver || '',
+		vehicle_no: vehicleNo || '',
+	})
+}

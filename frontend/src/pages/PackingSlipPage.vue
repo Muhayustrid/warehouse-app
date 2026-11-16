@@ -13,6 +13,7 @@ import {
 	fetchPackingSlipLabelsHtml,
 	fetchPackingSlipPrintHtml,
 	fetchPackingSlips,
+	savePackingDriver,
 	savePackingSlip,
 } from '@/data/fulfillment'
 
@@ -35,6 +36,7 @@ const toDate = ref(route.query.to_date || route.query.from_date || '')
 const slips = ref([])
 const loading = ref(false)
 const saving = ref(false)
+const savingDriver = ref(false)
 const error = ref('')
 const notice = ref('')
 
@@ -141,6 +143,9 @@ async function load() {
 		const res = await fetchPackingSlips(company.value, fromDate.value, toDate.value)
 		company.value = res.company || company.value
 		slips.value = res.slips || []
+		// Driver per hari: prefill dari data existing, jangan menimpa yang sedang diedit.
+		if (typeof res.driver === 'string' && res.driver && !driver.value) driver.value = res.driver
+		if (typeof res.vehicle_no === 'string' && res.vehicle_no && !vehicleNo.value) vehicleNo.value = res.vehicle_no
 	} catch (e) {
 		error.value = e.message || 'Gagal memuat daftar packing slip.'
 	} finally {
@@ -329,6 +334,20 @@ function openPrint(title, items) {
 	printModalOpen.value = true
 }
 
+async function saveDriver() {
+	savingDriver.value = true
+	notice.value = ''
+	error.value = ''
+	try {
+		const res = await savePackingDriver(company.value, fromDate.value, driver.value, vehicleNo.value)
+		notice.value = `Driver & No. Mobil tersimpan untuk ${res.updated} packing slip.`
+	} catch (e) {
+		error.value = e.message || 'Gagal menyimpan driver.'
+	} finally {
+		savingDriver.value = false
+	}
+}
+
 function fmtQty(value) {
 	const n = Number(value) || 0
 	return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
@@ -373,6 +392,22 @@ function fmtQty(value) {
 						</div>
 					</div>
 				</div>
+			</div>
+
+			<!-- Driver + No. Mobil: dipakai bersama oleh semua packing hari ini -->
+			<div class="ps-driver-row">
+				<label>
+					<span>Driver</span>
+					<input v-model="driver" class="input input-sm" type="text" placeholder="Nama driver" />
+				</label>
+				<label>
+					<span>No. Mobil</span>
+					<input v-model="vehicleNo" class="input input-sm" type="text" placeholder="B 1234 XYZ" />
+				</label>
+				<button type="button" class="btn btn-sm btn-primary" :disabled="savingDriver" @click="saveDriver">
+					Simpan Driver
+				</button>
+				<span class="muted">Berlaku untuk semua packing tanggal {{ fromDate }}</span>
 			</div>
 
 			<p v-if="error" class="ps-error">{{ error }}</p>
@@ -455,19 +490,6 @@ function fmtQty(value) {
 					<div class="ps-to">PO No : <strong>{{ editing.header.po_no || '-' }}</strong></div>
 					<div class="ps-to">Delivery date : <strong>{{ editing.header.delivery_date || '-' }}</strong></div>
 				</header>
-
-				<!-- Driver + No. Mobil -->
-				<div class="ps-driver-row">
-					<label>
-						<span>Driver</span>
-						<input v-model="driver" class="input input-sm" type="text" :disabled="!editing.editable" placeholder="Nama driver" />
-					</label>
-					<label>
-						<span>No. Mobil</span>
-						<input v-model="vehicleNo" class="input input-sm" type="text" :disabled="!editing.editable" placeholder="B 1234 XYZ" />
-					</label>
-					<span v-if="editing.name" class="muted ps-no">No: {{ editing.name }}</span>
-				</div>
 
 				<div class="ps-cols">
 					<!-- FROZEN kiri -->
@@ -669,7 +691,7 @@ function fmtQty(value) {
 .ps-ro-note { font-size: 12px; color: #64748b; }
 
 /* Paper — gaya Excel image 2 */
-.ps-paper { background: #fff; border: 1px solid #ddd; padding: 0; max-width: 1150px; margin: 0 auto; }
+.ps-paper { background: #fff; border: 1px solid #ddd; padding: 0; max-width: 100%; margin: 0 auto; }
 .ps-paper-head { background: #f7a600; color: #fff; padding: 14px; text-align: center; }
 .ps-paper-head h1 { font-size: 26px; letter-spacing: 0.12em; margin: 0 0 6px; font-weight: 800; }
 .ps-to { font-size: 14px; margin: 2px 0; }
@@ -678,7 +700,7 @@ function fmtQty(value) {
 .ps-driver-row input { width: 180px; }
 .ps-no { margin-left: auto; }
 .ps-cols { display: flex; gap: 12px; padding: 14px; }
-.ps-col { flex: 1; min-width: 0; }
+.ps-col { flex: 1; min-width: 0; overflow-x: auto; }
 .ps-colh { padding: 4px 8px; font-weight: bold; font-size: 13px; border: 1px solid #999; border-bottom: none; text-align: center; }
 .ps-colh-frozen { background: #bfe3f7; color: #0b5e86; }
 .ps-colh-dry { background: #ffe2a8; color: #8a5a00; }

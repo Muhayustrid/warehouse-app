@@ -203,7 +203,28 @@ def load_packing_slips(company: str, from_date: str, to_date: str) -> dict:
 				)),
 			}
 		)
-	return {"company": company, "slips": slips}
+	# Driver/vehicle are per delivery day (shared by all packings of the date).
+	day_driver = next((s["packing"]["driver"] for s in slips if s["packing"]["driver"]), "")
+	day_vehicle = next((s["packing"]["vehicle_no"] for s in slips if s["packing"]["vehicle_no"]), "")
+	return {"company": company, "slips": slips, "driver": day_driver, "vehicle_no": day_vehicle}
+
+
+def save_packing_driver(company: str, date: str, driver: str, vehicle_no: str) -> dict:
+	"""Apply one driver + vehicle number to every draft Packing Slip of the
+	given delivery date (driver is shared across packings, not per slip)."""
+	require_read()
+	res = load_packing_slips(company, date or "", date or "")
+	updated = 0
+	for row in res["slips"]:
+		if not row.get("editable"):
+			continue
+		for sib in frappe.get_all(
+			"Packing Slip", filters={"delivery_note": row["delivery_note"], "docstatus": 0}, pluck="name", limit_page_length=0
+		):
+			frappe.db.set_value("Packing Slip", sib, {"custom_driver": driver or "", "custom_vehicle_no": vehicle_no or ""})
+			updated += 1
+	frappe.db.commit()
+	return {"updated": updated}
 
 
 def load_packing_slip(name: str) -> dict:
@@ -578,12 +599,14 @@ def _slip_label_divs(name: str) -> str:
 		items = "<br>".join(escape_html(i) for i in koli_items[n])
 		labels.append(
 			f"""<div class='label'>
-<div class='left'><div class='ratio'>{n}/{total}</div><div class='bw'>BERAT</div><div class='kg'>{escape_html(str(weight))}</div></div>
+<div class='co'>PT. JUARA ROTI INDONESIA</div>
+<div class='body'>
+<div class='left'><div class='ratio'><span class='n'>{n}</span><span class='tot'>/{total}</span></div><div class='bw'>BERAT</div><div class='kg'>{escape_html(str(weight))}</div></div>
 <div class='right'>
-<div class='company'>PT. JUARA ROTI INDONESIA</div>
 <div class='cust'>{escape_html(header.get('customer_name') or '')}</div>
 <div class='items'>{items}</div>
 <span class='badge'>{category}</span>
+</div>
 </div>
 </div>"""
 		)
@@ -595,15 +618,17 @@ def _labels_page(body: str, title: str) -> str:
 <style>
 @page{{size:60mm 40mm;margin:1.5mm}}
 body{{font-family:Arial,Helvetica,sans-serif;font-size:7px;margin:0}}
-.label{{width:57mm;height:37mm;border:1px solid #333;padding:1.5mm;page-break-after:always;box-sizing:border-box;display:flex;overflow:hidden;margin:0 auto;background:#fff}}
-.left{{width:40%;border-right:1px dashed #666;padding-right:1.5mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}}
-.ratio{{font-size:11px;font-weight:bold}}
-.bw{{font-size:7px;margin-top:1mm;letter-spacing:.12em;color:#555}}
-.kg{{font-size:16px;font-weight:bold;line-height:1.1}}
-.right{{flex:1;padding-left:1.5mm;display:flex;flex-direction:column;justify-content:center}}
-.company{{border-top:1px solid #333;font-size:6.5px;padding-top:0.6mm;letter-spacing:.05em}}
-.cust{{font-size:9px;font-weight:bold;margin:0.8mm 0;line-height:1.25}}
-.items{{font-size:7px;line-height:1.35}}
+.label{{width:57mm;height:37mm;border:1px solid #333;page-break-after:always;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;margin:0 auto;background:#fff}}
+.co{{text-align:center;font-size:8px;letter-spacing:.18em;border-bottom:1.5px solid #333;padding:1mm 0 0.8mm}}
+.body{{flex:1;display:flex;min-height:0}}
+.left{{width:38%;border-right:1.5px solid #333;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}}
+.ratio .n{{font-size:16px;font-weight:bold}}
+.ratio .tot{{font-size:8px;color:#333}}
+.bw{{font-size:6.5px;letter-spacing:.14em;color:#666;margin-top:0.8mm}}
+.kg{{font-size:20px;font-weight:bold;line-height:1}}
+.right{{flex:1;padding-left:1.8mm;display:flex;flex-direction:column;justify-content:center}}
+.cust{{font-size:10px;font-weight:bold;line-height:1.2;text-transform:uppercase}}
+.items{{font-size:7.5px;line-height:1.3;margin-top:0.6mm}}
 .badge{{align-self:flex-start;display:inline-block;background:#ffe07a;border:1px solid #d9a300;border-radius:2px;padding:0.3mm 2mm;font-size:8px;font-weight:bold;margin-top:1mm}}
 </style></head><body>
 {body or "<div class='label'>Tidak ada label.</div>"}

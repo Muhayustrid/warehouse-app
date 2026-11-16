@@ -51,6 +51,7 @@ from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
 	packing_slip_print_html,
 	packing_slips_labels_html,
 	save_packing_slip as _save_packing_slip,
+	save_packing_driver as _save_packing_driver,
 )
 from warehouse_app.warehouse_app.fulfillment.permissions import (
 	require_manifest_write,
@@ -452,6 +453,13 @@ def save_packing_slip(name=None, lines=None, driver=None, vehicle_no=None):
 	if not name:
 		frappe.throw("Packing Slip name is required.", frappe.ValidationError)
 	return _save_packing_slip(name, lines, driver=driver or "", vehicle_no=vehicle_no or "")
+
+
+@frappe.whitelist(methods=["POST"])
+def save_packing_driver(company=None, date=None, driver=None, vehicle_no=None):
+	if not company or not date:
+		frappe.throw("Company and date are required.", frappe.ValidationError)
+	return _save_packing_driver(company, date, driver=driver or "", vehicle_no=vehicle_no or "")
 
 
 @frappe.whitelist(methods=["GET"])
