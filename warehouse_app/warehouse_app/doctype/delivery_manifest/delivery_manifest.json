@@ -1,0 +1,109 @@
+{
+ "actions": [],
+ "autoname": "DM-.YYYY.-.#####",
+ "creation": "2026-11-12 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "delivery_date",
+  "box_big_depart",
+  "box_small_depart",
+  "box_big_return",
+  "box_small_return",
+  "delivery_trip",
+  "regions",
+  "outlets"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "delivery_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Delivery Date",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "box_big_depart",
+   "fieldtype": "Int",
+   "label": "Box Besar (B) Berangkat"
+  },
+  {
+   "default": "0",
+   "fieldname": "box_small_depart",
+   "fieldtype": "Int",
+   "label": "Box Kecil (K) Berangkat"
+  },
+  {
+   "default": "0",
+   "fieldname": "box_big_return",
+   "fieldtype": "Int",
+   "label": "Box Besar (B) Pulang"
+  },
+  {
+   "default": "0",
+   "fieldname": "box_small_return",
+   "fieldtype": "Int",
+   "label": "Box Kecil (K) Pulang"
+  },
+  {
+   "fieldname": "delivery_trip",
+   "fieldtype": "Link",
+   "label": "Delivery Trip",
+   "options": "Delivery Trip",
+   "read_only": 1
+  },
+  {
+   "fieldname": "regions",
+   "fieldtype": "Table",
+   "label": "Wilayah",
+   "options": "Delivery Manifest Region"
+  },
+  {
+   "fieldname": "outlets",
+   "fieldtype": "Table",
+   "label": "Outlets",
+   "options": "Delivery Manifest Outlet"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-11-12 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Warehouse App",
+ "name": "Delivery Manifest",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "Stock User"
+  },
+  {
+   "create": 1,
+   "read": 1,
+   "role": "Stock Manager",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
