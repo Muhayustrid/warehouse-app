@@ -4,7 +4,7 @@
 // kolom + resize lebar kolom (HTML5, tanpa dependensi), add row mendukung
 // 1 item di banyak koli dan 1 koli campuran, input Driver + No. Mobil.
 // Edit terkunci setelah Delivery Note disubmit.
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, GripVertical, Plus, Printer, Save, Tag, X } from 'lucide-vue-next'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
@@ -21,6 +21,8 @@ const props = defineProps({
 	embedded: { type: Boolean, default: false },
 	// Nama SO yang langsung dibuka editor-nya saat mount.
 	autoOpen: { type: String, default: '' },
+	// Tanggal kirim tunggal (dari toolbar Fulfillment); menggantikan rentang lokal.
+	date: { type: String, default: '' },
 })
 
 const emit = defineEmits(['closed'])
@@ -63,7 +65,23 @@ const colWidths = ref({
 })
 const COL_LABELS = { item: 'Item', qty: 'Qty', uom: 'Unit', koli: 'Koli', berat: 'Weight (Kg)' }
 
+// Tanggal tunggal dari toolbar Fulfillment: paksa rentang = hari itu saja.
+watch(
+	() => props.date,
+	(d) => {
+		if (!d) return
+		fromDate.value = d
+		toDate.value = d
+		load()
+	},
+)
+
 onMounted(async () => {
+	// Tanggal dari toolbar Fulfillment menang sebelum muat pertama.
+	if (props.date) {
+		fromDate.value = props.date
+		toDate.value = props.date
+	}
 	await load()
 	// Langsung buka editor: dari prop embedded atau query ?open=<SO>.
 	const target = props.autoOpen || route.query.open
@@ -279,7 +297,7 @@ function fmtQty(value) {
 		<!-- ================= List ================= -->
 		<template v-if="!editing">
 			<div class="ps-toolbar">
-				<div class="ps-filters">
+				<div v-if="!embedded" class="ps-filters">
 					<input v-model="fromDate" class="input input-sm" type="date" aria-label="Dari tanggal" @change="load" />
 					<input v-model="toDate" class="input input-sm" type="date" aria-label="Sampai tanggal" @change="load" />
 				</div>

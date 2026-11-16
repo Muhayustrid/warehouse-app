@@ -4,6 +4,7 @@
 import unittest
 
 from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
+	_labels_page,
 	packing_summary,
 	slip_lines_from_ps_items,
 	slip_totals,
@@ -21,6 +22,17 @@ def _item(**overrides):
 	}
 	row.update(overrides)
 	return row
+
+
+class TestLabelsPage(unittest.TestCase):
+	def test_layout_centered_60x40(self):
+		html = _labels_page("<div class='label'>x</div>", "Label Koli X")
+		self.assertIn("@page{size:60mm 40mm", html)
+		self.assertIn("margin:0 auto", html)
+		self.assertIn("<div class='label'>x</div>", html)
+
+	def test_empty_body_fallback(self):
+		self.assertIn("Tidak ada label.", _labels_page("", "T"))
 
 
 class TestSlipLinesFromPsItems(unittest.TestCase):

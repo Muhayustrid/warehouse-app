@@ -196,3 +196,8 @@ export function fetchPackingSlipPrintHtml(name) {
 export function fetchPackingSlipLabelsHtml(name) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip_labels_html', { name })
 }
+
+// Semua label koli untuk packing slip yang sudah diinput pada `date` (per company).
+export function fetchPackingSlipsLabelsHtml(company, date) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slips_labels_html', { company, date })
+}

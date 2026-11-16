@@ -533,6 +533,28 @@ def packing_slip_labels_html(name: str) -> str:
 	"""One 60x40mm label per koli: left n/total + BERAT big; right company on
 	top line, customer bold, item, yellow FROZEN/DRY badge."""
 	require_read()
+	return _labels_page(_slip_label_divs(name), f"Label Koli {escape_html(name)}")
+
+
+def packing_slips_labels_html(company: str | None = None, date: str | None = None) -> str:
+	"""All koli labels for packing slips packed on `date` (company-wide),
+	concatenated in one print run."""
+	require_read()
+	company = company or frappe.defaults.get_user_default("Company")
+	if not company:
+		frappe.throw("Company is required.", frappe.ValidationError)
+	res = load_packing_slips(company, date or "", date or "")
+	divs = []
+	for row in res["slips"]:
+		if not (row.get("packing") or {}).get("packed"):
+			continue
+		divs.append(_slip_label_divs(row["name"]))
+	title = f"Label Koli {company} {date or ''}".strip()
+	return _labels_page("".join(divs), title)
+
+
+def _slip_label_divs(name: str) -> str:
+	"""Label <div>s for one packing slip, in koli order (1/total first)."""
 	data = load_packing_slip(name)
 	header = data["header"]
 	lines = data["lines"]
@@ -565,20 +587,24 @@ def packing_slip_labels_html(name: str) -> str:
 </div>
 </div>"""
 		)
-	return f"""<!doctype html><html><head><meta charset='utf-8'><title>Label Koli {escape_html(name)}</title>
+	return "".join(labels)
+
+
+def _labels_page(body: str, title: str) -> str:
+	return f"""<!doctype html><html><head><meta charset='utf-8'><title>{title}</title>
 <style>
 @page{{size:60mm 40mm;margin:1.5mm}}
 body{{font-family:Arial,Helvetica,sans-serif;font-size:7px;margin:0}}
-.label{{width:57mm;height:37mm;border:1px solid #333;padding:1mm;page-break-after:always;box-sizing:border-box;display:flex;overflow:hidden}}
-.left{{width:40%;border-right:1px dashed #666;padding-right:1mm;display:flex;flex-direction:column;justify-content:center;align-items:center}}
-.ratio{{font-size:10px;font-weight:bold}}
-.bw{{font-size:8px;margin-top:1mm;letter-spacing:.1em}}
-.kg{{font-size:14px;font-weight:bold}}
-.right{{flex:1;padding-left:1.5mm}}
-.company{{border-top:1px solid #333;font-size:6.5px;padding-top:0.5mm}}
-.cust{{font-size:9px;font-weight:bold;margin:0.5mm 0}}
-.items{{font-size:7px;line-height:1.3}}
-.badge{{display:inline-block;background:#ffe07a;border:1px solid #d9a300;border-radius:2px;padding:0 2mm;font-size:8px;font-weight:bold;margin-top:1mm}}
+.label{{width:57mm;height:37mm;border:1px solid #333;padding:1.5mm;page-break-after:always;box-sizing:border-box;display:flex;overflow:hidden;margin:0 auto;background:#fff}}
+.left{{width:40%;border-right:1px dashed #666;padding-right:1.5mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}}
+.ratio{{font-size:11px;font-weight:bold}}
+.bw{{font-size:7px;margin-top:1mm;letter-spacing:.12em;color:#555}}
+.kg{{font-size:16px;font-weight:bold;line-height:1.1}}
+.right{{flex:1;padding-left:1.5mm;display:flex;flex-direction:column;justify-content:center}}
+.company{{border-top:1px solid #333;font-size:6.5px;padding-top:0.6mm;letter-spacing:.05em}}
+.cust{{font-size:9px;font-weight:bold;margin:0.8mm 0;line-height:1.25}}
+.items{{font-size:7px;line-height:1.35}}
+.badge{{align-self:flex-start;display:inline-block;background:#ffe07a;border:1px solid #d9a300;border-radius:2px;padding:0.3mm 2mm;font-size:8px;font-weight:bold;margin-top:1mm}}
 </style></head><body>
-{''.join(labels) or "<div class='label'>Tidak ada label.</div>"}
+{body or "<div class='label'>Tidak ada label.</div>"}
 <script>window.print()</script></body></html>"""

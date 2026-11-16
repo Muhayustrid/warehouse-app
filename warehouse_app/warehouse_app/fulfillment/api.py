@@ -49,6 +49,7 @@ from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
 	load_packing_slips,
 	packing_slip_labels_html,
 	packing_slip_print_html,
+	packing_slips_labels_html,
 	save_packing_slip as _save_packing_slip,
 )
 from warehouse_app.warehouse_app.fulfillment.permissions import (
@@ -465,5 +466,10 @@ def get_packing_slip_labels_html(name=None):
 	if not name:
 		frappe.throw("Packing Slip name is required.", frappe.ValidationError)
 	return packing_slip_labels_html(name)
+
+
+@frappe.whitelist(methods=["GET"])
+def get_packing_slips_labels_html(company=None, date=None):
+	return packing_slips_labels_html(company=company, date=date)
 
 

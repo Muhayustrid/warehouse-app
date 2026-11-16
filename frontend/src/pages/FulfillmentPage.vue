@@ -9,9 +9,15 @@ import {
 	Inbox,
 	RefreshCw,
 	Search,
+	Tag,
 	X,
 } from 'lucide-vue-next'
-import { fetchCombinedPickListHtml, fetchOrderQueue, fetchPackingSlips } from '@/data/fulfillment'
+import {
+	fetchCombinedPickListHtml,
+	fetchOrderQueue,
+	fetchPackingSlips,
+	fetchPackingSlipsLabelsHtml,
+} from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
 import PackingSlipPage from '@/pages/PackingSlipPage.vue'
@@ -209,6 +215,23 @@ async function printCombinedPickList() {
 	}
 }
 
+// Semua label koli untuk packing slip yang sudah diinput pada tanggal kirim terpilih.
+const labelPrinting = ref(false)
+async function printAllLabels() {
+	if (labelPrinting.value) return
+	labelPrinting.value = true
+	try {
+		const res = await fetchPackingSlipsLabelsHtml(company.value, pickDate.value)
+		printModalTitle.value = 'Label Koli Gabungan'
+		printModalItems.value = [{ label: 'Label Koli', name: pickDate.value, html: res }]
+		printModalOpen.value = true
+	} catch (e) {
+		error.value = e.message || 'Gagal memuat label gabungan.'
+	} finally {
+		labelPrinting.value = false
+	}
+}
+
 function setPageSize(n) {
 	if (pageLength.value === n) return
 	pageLength.value = n
@@ -325,10 +348,11 @@ function statusLabel(row) {
 						<button
 							type="button"
 							class="btn ff-manifest-btn"
-							@click="router.push({ path: '/packing-slips', query: { company: company } })"
+							:disabled="labelPrinting"
+							@click="printAllLabels"
 						>
-							<FileText :size="14" :stroke-width="2" />
-							<span>Packing Slips</span>
+							<Tag :size="14" :stroke-width="2" />
+							<span>Cetak Label Gabungan</span>
 						</button>
 					</template>
 					<!-- Filter Dropdown Popover Anchor -->
@@ -549,7 +573,7 @@ function statusLabel(row) {
 				</div>
 			</div>
 			</template>
-			<PackingSlipPage v-else embedded @closed="loadPackingSummary" />
+			<PackingSlipPage v-else :date="pickDate" embedded @closed="loadPackingSummary" />
 		</div>
 
 		<PrintPreviewModal
