@@ -1,6 +1,6 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-11-16 — **feat/fulfillment-stage-tabs (18 commits, unpushed)**: redesign editor Packing List bergaya Excel (commit 0e9e430). Editor /gudang/packing-slips: header oranye penuh PACKING LIST, tabel Frozen kiri / Dry kanan, drag baris + drag kolom + resize lebar kolom (HTML5 manual), add-row (1 item banyak koli & koli campuran), input Driver + No. Mobil (custom field PS `custom_driver`/`custom_vehicle_no`, ikut tercetak A4). Tab Packing Fulfillment: ringkasan hasil packing per SO (koli dry/frozen + berat + driver dari PS), klik langsung buka editor (?open=<SO>). Tests: 131/131 OK. Probe runtime LOLOS (save koli campuran + driver, persist, validasi item-not-in-DN, restore, paper/labels).
+Head: 2026-11-16 — **feat/fulfillment-stage-tabs (20 commits, unpushed)**: daftar Packing Slip pindah ke tab Packing Fulfillment (commit fix(packing)). Tab Packing = daftar image 1 (klik baris → editor Excel embedded langsung di Fulfillment, tanpa pindah URL; route /packing-slips tetap ada). **Fix cetak label/paper "ga respon"**: endpoint get_packing_slip_print_html & get_packing_slip_labels_html di-whitelist methods=["GET"], frontend lama kirim POST via `call` → 403; diganti `callGet`. PackingSlipPage kini terima props `embedded`/`auto-open` + emit `closed` (fallback bila SO tak ada di daftar: buka editor langsung). Tests: 131/131 OK; build sukses.
 
 ## Current
 

@@ -16,6 +16,15 @@ import {
 	savePackingSlip,
 } from '@/data/fulfillment'
 
+const props = defineProps({
+	// Embedded di tab Packing Fulfillment: daftar disembunyikan, Kembali = emit closed.
+	embedded: { type: Boolean, default: false },
+	// Nama SO yang langsung dibuka editor-nya saat mount.
+	autoOpen: { type: String, default: '' },
+})
+
+const emit = defineEmits(['closed'])
+
 const route = useRoute()
 
 const company = ref(route.query.company || '')
@@ -56,10 +65,11 @@ const COL_LABELS = { item: 'Item', qty: 'Qty', uom: 'Unit', koli: 'Koli', berat:
 
 onMounted(async () => {
 	await load()
-	// Dari tab Packing: ?open=<SO> langsung buka editor SO tersebut.
-	if (route.query.open) {
-		const row = slips.value.find((s) => s.sales_order === route.query.open)
-		if (row) await openSlip(row)
+	// Langsung buka editor: dari prop embedded atau query ?open=<SO>.
+	const target = props.autoOpen || route.query.open
+	if (target) {
+		const row = slips.value.find((s) => s.sales_order === target)
+		await openSlip(row || { name: target })
 	}
 })
 
@@ -94,6 +104,11 @@ function closeSlip() {
 	colOrder.value = {
 		frozen: ['item', 'qty', 'uom', 'koli', 'berat'],
 		dry: ['item', 'qty', 'uom', 'koli', 'berat'],
+	}
+	// Embedded di Fulfillment: tutup editor = kembali ke daftar tab Packing.
+	if (props.embedded) {
+		emit('closed')
+		return
 	}
 	load()
 }
@@ -262,7 +277,7 @@ function fmtQty(value) {
 <template>
 	<div class="ps-page">
 		<!-- ================= List ================= -->
-		<template v-if="!editing">
+		<template v-if="!editing && !embedded">
 			<div class="ps-toolbar">
 				<div class="ps-filters">
 					<input v-model="fromDate" class="input input-sm" type="date" aria-label="Dari tanggal" @change="load" />

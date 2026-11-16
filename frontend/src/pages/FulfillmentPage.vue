@@ -14,6 +14,7 @@ import {
 import { fetchCombinedPickListHtml, fetchOrderQueue, fetchPackingSlips } from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
+import PackingSlipPage from '@/pages/PackingSlipPage.vue'
 
 const router = useRouter()
 
@@ -63,6 +64,8 @@ const printModalItems = ref([])
 
 // Tab Packing: ringkasan hasil packing per SO (dari Packing Slip), klik buka editor.
 const packingBySo = ref({})
+const packingEditorSo = ref(null) // SO yang editor Packing Slip-nya terbuka
+const editorOpen = computed(() => activeTab.value === 'packing' && !!packingEditorSo.value)
 
 async function loadPackingSummary() {
 	try {
@@ -84,10 +87,7 @@ function packingStatus(row) {
 }
 
 function openPackingEditor(row) {
-	router.push({
-		path: '/packing-slips',
-		query: { company: company.value || undefined, open: row.sales_order },
-	})
+	packingEditorSo.value = row.sales_order
 }
 
 // Tab "Semua" hilang: aktif tab = filter stage. Counts per tab dihitung dari
@@ -396,6 +396,8 @@ function statusLabel(row) {
 				</div>
 			</div>
 
+			<!-- Editor Packing Slip embedded (tab Packing) -->
+			<template v-if="!editorOpen">
 			<!-- Error State -->
 			<div v-if="error" class="ff-state ff-error" role="alert">
 				<AlertTriangle :size="22" :stroke-width="1.8" />
@@ -552,6 +554,13 @@ function statusLabel(row) {
 					</button>
 				</div>
 			</div>
+			</template>
+			<PackingSlipPage
+				v-else
+				:auto-open="packingEditorSo"
+				embedded
+				@closed="packingEditorSo = null"
+			/>
 		</div>
 
 		<PrintPreviewModal

@@ -189,9 +189,10 @@ export function savePackingSlip(name, lines, driver, vehicleNo) {
 }
 
 export function fetchPackingSlipPrintHtml(name) {
-	return call('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip_print_html', { name })
+	// GET: endpoint di-whitelist methods=["GET"] — POST ditolak Frappe.
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip_print_html', { name })
 }
 
 export function fetchPackingSlipLabelsHtml(name) {
-	return call('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip_labels_html', { name })
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip_labels_html', { name })
 }
