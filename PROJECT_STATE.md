@@ -1,6 +1,6 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-11-16 — **feat/fulfillment-stage-tabs (20 commits, unpushed)**: daftar Packing Slip pindah ke tab Packing Fulfillment (commit fix(packing)). Tab Packing = daftar image 1 (klik baris → editor Excel embedded langsung di Fulfillment, tanpa pindah URL; route /packing-slips tetap ada). **Fix cetak label/paper "ga respon"**: endpoint get_packing_slip_print_html & get_packing_slip_labels_html di-whitelist methods=["GET"], frontend lama kirim POST via `call` → 403; diganti `callGet`. PackingSlipPage kini terima props `embedded`/`auto-open` + emit `closed` (fallback bila SO tak ada di daftar: buka editor langsung). Tests: 131/131 OK; build sukses.
+Head: 2026-11-16 — **feat/fulfillment-stage-tabs (23 commits, unpushed)**: tab Packing = daftar Packing Slip (bukan antrean order); list hanya tanggal di toolbar (`pickDate`, prop `date` → fromDate=toDate), filter tanggal lokal disembunyikan saat embedded; tombol redirect "Packing Slips" dihapus; **Cetak Label Gabungan** (endpoint GET `get_packing_slips_labels_html` company+date → semua label koli yang sudah diinput hari itu, satu print run). Label 60x40mm dipoles (centered margin:0 auto, urutan koli n/total + BERAT besar, right block vertikal center). Edit tetap terkunci hanya setelah DN disubmit (backend `editable = draft DN ada`). Tests 133/133 OK; build sukses; probe combined LOLOS (20 label @2026-11-10).
 
 ## Current
 

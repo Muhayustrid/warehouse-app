@@ -6,7 +6,7 @@
 // Edit terkunci setelah Delivery Note disubmit.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowLeft, GripVertical, Plus, Printer, Save, Tag, X } from 'lucide-vue-next'
+import { ArrowLeft, Filter, GripVertical, Plus, Printer, Save, Tag, X } from 'lucide-vue-next'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
 import {
 	fetchPackingSlip,
@@ -45,6 +45,49 @@ const vehicleNo = ref('')
 const printModalOpen = ref(false)
 const printModalTitle = ref('')
 const printModalItems = ref([])
+
+// Filter ala ERPNext: panel dropdown, baris filter bisa ditambah bebas.
+const FIELDS = [
+	{ value: 'sales_order', label: 'No. SO' },
+	{ value: 'customer_name', label: 'Customer' },
+	{ value: 'po_no', label: 'PO No.' },
+	{ value: 'status', label: 'Status' },
+]
+const OPERATORS = [
+	{ value: 'like', label: 'Like' },
+	{ value: 'not like', label: 'Not Like' },
+	{ value: '=', label: 'Is' },
+	{ value: '!=', label: 'Is Not' },
+]
+const showFilter = ref(false)
+const filterDraft = ref([]) // { field, operator, value }
+const appliedFilters = ref([])
+const filteredSlips = computed(() => {
+	let rows = slips.value
+	for (const f of appliedFilters.value) {
+		if (!f.field || !f.value) continue
+		const needle = String(f.value).toLowerCase()
+		rows = rows.filter((r) => {
+			const val = String(r[f.field] ?? '').toLowerCase()
+			if (f.operator === 'like') return val.includes(needle)
+			if (f.operator === 'not like') return !val.includes(needle)
+			if (f.operator === '=') return val === needle
+			return val !== needle
+		})
+	}
+	return rows
+})
+function addFilterRow() {
+	filterDraft.value.push({ field: 'customer_name', operator: 'like', value: '' })
+}
+function applyFilters() {
+	appliedFilters.value = filterDraft.value.filter((f) => f.field && f.value)
+	showFilter.value = false
+}
+function clearFilters() {
+	filterDraft.value = []
+	appliedFilters.value = []
+}
 
 // add-row state: table category + pilihan item + qty + nomor koli
 const addRow = ref(null) // { category, item_code, qty, koli_no }
@@ -301,6 +344,35 @@ function fmtQty(value) {
 					<input v-model="fromDate" class="input input-sm" type="date" aria-label="Dari tanggal" @change="load" />
 					<input v-model="toDate" class="input input-sm" type="date" aria-label="Sampai tanggal" @change="load" />
 				</div>
+				<div class="ps-filter-wrap">
+					<button type="button" class="btn btn-sm" :class="{ 'btn-secondary': appliedFilters.length }" @click="showFilter = !showFilter">
+						<Filter :size="13" :stroke-width="2" />
+						<span>Filter{{ appliedFilters.length ? ` (${appliedFilters.length})` : '' }}</span>
+					</button>
+					<div v-if="showFilter" class="ps-filter-panel">
+						<div class="ps-filter-head">
+							<strong>Filter</strong>
+							<button type="button" class="ps-filter-x" @click="showFilter = false">&times;</button>
+						</div>
+						<div v-if="!filterDraft.length" class="ps-filter-empty">Belum ada filter. Klik "Tambah Filter".</div>
+						<div v-for="(f, i) in filterDraft" :key="i" class="ps-filter-row">
+							<select v-model="f.field" class="input input-sm">
+								<option v-for="f2 in FIELDS" :key="f2.value" :value="f2.value">{{ f2.label }}</option>
+							</select>
+							<select v-model="f.operator" class="input input-sm">
+								<option v-for="o in OPERATORS" :key="o.value" :value="o.value">{{ o.label }}</option>
+							</select>
+							<input v-model="f.value" class="input input-sm" type="text" placeholder="Nilai" @keyup.enter="applyFilters" />
+							<button type="button" class="ps-filter-x" title="Hapus baris" @click="filterDraft.splice(i, 1)">&times;</button>
+						</div>
+						<div class="ps-filter-foot">
+							<button type="button" class="btn btn-sm" @click="addFilterRow">+ Tambah Filter</button>
+							<span class="ps-filter-spacer"></span>
+							<button type="button" class="btn btn-sm" @click="clearFilters">Reset</button>
+							<button type="button" class="btn btn-sm btn-primary" @click="applyFilters">Terapkan</button>
+						</div>
+					</div>
+				</div>
 			</div>
 
 			<p v-if="error" class="ps-error">{{ error }}</p>
@@ -317,7 +389,7 @@ function fmtQty(value) {
 					<span></span>
 				</div>
 				<div
-					v-for="row in slips"
+					v-for="row in filteredSlips"
 					:key="row.name"
 					class="ps-trow"
 					role="button"
@@ -561,6 +633,18 @@ function fmtQty(value) {
 .ps-page { padding: 16px; }
 .ps-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .ps-filters, .ps-actions { display: flex; gap: 8px; align-items: center; }
+
+/* Filter ala ERPNext: dropdown panel di bawah tombol */
+.ps-filter-wrap { position: relative; }
+.ps-filter-panel { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 380px; background: #fff; border: 1px solid #d1d8dd; border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); padding: 10px 12px; }
+.ps-filter-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.ps-filter-x { border: 0; background: none; font-size: 16px; line-height: 1; cursor: pointer; color: #6b7280; padding: 2px 4px; }
+.ps-filter-x:hover { color: #111; }
+.ps-filter-empty { font-size: 12px; color: #6b6b6b; padding: 6px 0; }
+.ps-filter-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.ps-filter-row select { min-width: 110px; }
+.ps-filter-foot { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.ps-filter-spacer { flex: 1; }
 .ps-notice { color: #1a7f37; font-size: 13px; }
 .ps-error { color: #c0392b; font-size: 13px; }
 .ps-empty { color: #666; padding: 32px 0; text-align: center; }
