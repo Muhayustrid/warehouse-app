@@ -1,9 +1,13 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-11-16 — **feat/fulfillment-stage-tabs (17 commits, unpushed)**: halaman **/gudang/packing-slips** (Packing Slip per SO) menggantikan Packing List Harian (dihapus total: packing_page.py, PackingListPage.vue, 4 endpoint, field page_state, tes lama). Editor koli Frozen/Dry berdampingan, cetak A4 + label 60x40mm, edit terkunci setelah DN submit. Tests: 125/125 OK (docker). Probe runtime gudang user sofyanbudiluhur LOLOS (list 157 SO, editor SORD-JURI-261110004 editable=True, save/persist/restore berat OK, print OK).
+Head: 2026-11-16 — **feat/fulfillment-stage-tabs (18 commits, unpushed)**: redesign editor Packing List bergaya Excel (commit 0e9e430). Editor /gudang/packing-slips: header oranye penuh PACKING LIST, tabel Frozen kiri / Dry kanan, drag baris + drag kolom + resize lebar kolom (HTML5 manual), add-row (1 item banyak koli & koli campuran), input Driver + No. Mobil (custom field PS `custom_driver`/`custom_vehicle_no`, ikut tercetak A4). Tab Packing Fulfillment: ringkasan hasil packing per SO (koli dry/frozen + berat + driver dari PS), klik langsung buka editor (?open=<SO>). Tests: 131/131 OK. Probe runtime LOLOS (save koli campuran + driver, persist, validasi item-not-in-DN, restore, paper/labels).
 
 ## Current
 
+- Redesign Packing List editor (DONE, commit 0e9e430):
+  - `PackingSlipPage.vue` rewritten: tampilan persis image 2 (Excel), drag baris/kolom/resize manual tanpa dependensi, add-row picker dari DN items, driver + no. mobil di header.
+  - Backend: `validate_slip_lines` + `packing_summary` (pure logic, 6 tes baru), save_packing_slip terima driver/vehicle_no + validasi item harus di DN & qty>0, load_packing_slips agregat hasil packing per SO, custom fields via upgrade.py (bench migrate).
+  - Rulings tetap: count() v16 error → loop manual; berat per-koli dari baris pertama; prefer DN draft.
 - Packing Slip per SO page (DONE, commit e81a4e2 + fix):
   - List per SO (bukan per PS): semua SO dgn DN non-cancelled; status Editable/Read-only/Belum Packing; fallback editor dari DN items bila PS belum ada (klasifikasi frozen/dry via profile).
   - Save: satu PS draft per koli (from_case_no=koli), berat persist via item `net_weight` (header `net_weight_pkg` dihitung ulang ERPNext = sum(net_weight x qty)), berat diambil dari baris pertama koli; kategori persist via `custom_box_size` (K=frozen/B=dry).
@@ -36,7 +40,7 @@ Head: 2026-11-16 — **feat/fulfillment-stage-tabs (17 commits, unpushed)**: hal
 
 ## Next
 
-1. User review halaman /gudang/packing-slips (reload browser, cache build baru).
+1. User review editor baru /gudang/packing-slips (reload browser, build baru sudah terpasang).
 2. Push hanya setelah persetujuan eksplisit.
 
 ## Constraints
