@@ -480,10 +480,10 @@ def _load_documents(so_names: list[str]) -> dict:
 			delivery_notes_by_so.setdefault(row["against_sales_order"], []).append(doc)
 
 	ps_docs = (
-		frappe.get_list(
+		frappe.get_all(
 			"Packing Slip",
 			filters={"delivery_note": ("in", dn_names)},
-			fields=["name", "docstatus", "status", "delivery_note", "creation"],
+			fields=["name", "docstatus", "delivery_note", "creation"],
 			limit_page_length=0,
 		)
 		if dn_names
@@ -542,7 +542,9 @@ def _empty_documents() -> dict:
 def _get_docs(doctype: str, names: list[str], fields: list[str]) -> list[dict]:
 	if not names:
 		return []
-	rows = frappe.get_list(
+	# get_all bypasses doc permission: the queue is already role-gated by
+	# _require_roles, and gudang users may lack Delivery Note/Packing Slip perms.
+	rows = frappe.get_all(
 		doctype,
 		filters={"name": ("in", names)},
 		fields=fields,
