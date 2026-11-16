@@ -1,10 +1,12 @@
 <script setup>
-// Halaman Packing Slip per Sales Order: daftar semua Packing Slip, editor
-// koli (Frozen kiri / Dry kanan, satu baris per koli), cetak A4 + label 60x40.
+// Halaman Packing Slip per Sales Order: daftar SO, editor bergaya Excel
+// (header oranye PACKING LIST, tabel Frozen kiri / Dry kanan), drag baris &
+// kolom + resize lebar kolom (HTML5, tanpa dependensi), add row mendukung
+// 1 item di banyak koli dan 1 koli campuran, input Driver + No. Mobil.
 // Edit terkunci setelah Delivery Note disubmit.
 import { computed, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Printer, Save, Tag, X } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
+import { ArrowLeft, GripVertical, Plus, Printer, Save, Tag, X } from 'lucide-vue-next'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
 import {
 	fetchPackingSlip,
@@ -15,7 +17,6 @@ import {
 } from '@/data/fulfillment'
 
 const route = useRoute()
-const router = useRouter()
 
 const company = ref(route.query.company || '')
 const fromDate = ref(route.query.from_date || '')
@@ -27,12 +28,40 @@ const error = ref('')
 const notice = ref('')
 
 const editing = ref(null) // editor payload
+const driver = ref('')
+const vehicleNo = ref('')
 
 const printModalOpen = ref(false)
 const printModalTitle = ref('')
 const printModalItems = ref([])
 
-onMounted(load)
+// add-row state: table category + pilihan item + qty + nomor koli
+const addRow = ref(null) // { category, item_code, qty, koli_no }
+
+// drag state (HTML5, manual): baris & kolom
+const dragLine = ref(null) // index di editing.lines
+const dragCol = ref(null) // { table: 'frozen'|'dry', key }
+const dragOverCol = ref(null)
+
+// urutan kolom per tabel (persist lokal per sesi editor)
+const colOrder = ref({
+	frozen: ['item', 'qty', 'uom', 'koli', 'berat'],
+	dry: ['item', 'qty', 'uom', 'koli', 'berat'],
+})
+const colWidths = ref({
+	frozen: { item: 220, qty: 70, uom: 70, koli: 60, berat: 100 },
+	dry: { item: 220, qty: 70, uom: 70, koli: 60, berat: 100 },
+})
+const COL_LABELS = { item: 'Item', qty: 'Qty', uom: 'Unit', koli: 'Koli', berat: 'Weight (Kg)' }
+
+onMounted(async () => {
+	await load()
+	// Dari tab Packing: ?open=<SO> langsung buka editor SO tersebut.
+	if (route.query.open) {
+		const row = slips.value.find((s) => s.sales_order === route.query.open)
+		if (row) await openSlip(row)
+	}
+})
 
 async function load() {
 	loading.value = true
@@ -53,6 +82,8 @@ async function openSlip(row) {
 	notice.value = ''
 	try {
 		editing.value = await fetchPackingSlip(row.name)
+		driver.value = editing.value.driver || ''
+		vehicleNo.value = editing.value.vehicle_no || ''
 	} catch (e) {
 		error.value = e.message || 'Gagal membuka packing slip.'
 	}
@@ -60,6 +91,10 @@ async function openSlip(row) {
 
 function closeSlip() {
 	editing.value = null
+	colOrder.value = {
+		frozen: ['item', 'qty', 'uom', 'koli', 'berat'],
+		dry: ['item', 'qty', 'uom', 'koli', 'berat'],
+	}
 	load()
 }
 
@@ -88,34 +123,104 @@ const totals = computed(() => {
 	}
 })
 
-function nextKoliNo() {
-	const nums = (editing.value?.lines || []).map((l) => Number(l.koli_no) || 1)
+// ---------------- add row ----------------
+function openAddRow(category) {
+	addRow.value = { category, item_code: '', qty: 1, koli_no: nextKoliNo(category) }
+}
+
+function nextKoliNo(category) {
+	const nums = (editing.value?.lines || [])
+		.filter((l) => l.category === category)
+		.map((l) => Number(l.koli_no) || 1)
 	return (nums.length ? Math.max(...nums) : 0) + 1
 }
 
-function addLine(category) {
+function confirmAddRow() {
+	const row = addRow.value
+	if (!row) return
+	const dnItem = (editing.value?.dn_items || []).find((it) => it.item_code === row.item_code)
+	if (!dnItem) {
+		error.value = 'Pilih item dari daftar DN terlebih dahulu.'
+		return
+	}
+	if (!(Number(row.qty) > 0)) {
+		error.value = 'Qty harus lebih dari 0.'
+		return
+	}
+	error.value = ''
 	editing.value.lines.push({
-		item_code: '',
-		item_name: '',
-		qty: 0,
-		uom: '',
-		koli_no: nextKoliNo(),
+		item_code: dnItem.item_code,
+		item_name: dnItem.item_name || dnItem.item_code,
+		qty: Number(row.qty),
+		uom: dnItem.stock_uom || dnItem.uom || '',
+		koli_no: Number(row.koli_no) || nextKoliNo(row.category),
 		koli: 1,
 		berat: '',
-		category,
+		category: row.category,
 	})
+	addRow.value = null
 }
 
-function removeLine(index) {
-	editing.value.lines.splice(index, 1)
+function removeLine(line) {
+	const idx = editing.value.lines.indexOf(line)
+	if (idx >= 0) editing.value.lines.splice(idx, 1)
 }
 
+// ---------------- drag & drop (HTML5 manual) ----------------
+function onLineDragStart(index, event) {
+	dragLine.value = index
+	event.dataTransfer.effectAllowed = 'move'
+}
+
+function onLineDrop(targetIndex, event) {
+	event.preventDefault()
+	const from = dragLine.value
+	dragLine.value = null
+	if (from === null || from === targetIndex) return
+	const lines = editing.value.lines
+	const [moved] = lines.splice(from, 1)
+	lines.splice(targetIndex > from ? targetIndex - 1 : targetIndex, 0, moved)
+}
+
+function onColDragStart(table, key, event) {
+	dragCol.value = { table, key }
+	event.dataTransfer.effectAllowed = 'move'
+}
+
+function onColDrop(table, key) {
+	if (!dragCol.value || dragCol.value.table !== table || dragCol.value.key === key) return
+	const order = colOrder.value[table]
+	const from = order.indexOf(dragCol.value.key)
+	const to = order.indexOf(key)
+	if (from < 0 || to < 0) return
+	order.splice(from, 1)
+	order.splice(to, 0, dragCol.value.key)
+	dragCol.value = null
+	dragOverCol.value = null
+}
+
+function startResize(table, key, event) {
+	event.preventDefault()
+	const startX = event.clientX
+	const startW = colWidths.value[table][key]
+	function move(e) {
+		colWidths.value[table][key] = Math.max(40, startW + e.clientX - startX)
+	}
+	function up() {
+		window.removeEventListener('mousemove', move)
+		window.removeEventListener('mouseup', up)
+	}
+	window.addEventListener('mousemove', move)
+	window.addEventListener('mouseup', up)
+}
+
+// ---------------- save & print ----------------
 async function save() {
 	if (saving.value || !editing.value?.editable) return
 	saving.value = true
 	error.value = ''
 	try {
-		await savePackingSlip(editing.value.name, editing.value.lines)
+		await savePackingSlip(editing.value.name, editing.value.lines, driver.value, vehicleNo.value)
 		notice.value = 'Packing slip tersimpan.'
 	} catch (e) {
 		error.value = e.message || 'Gagal menyimpan packing slip.'
@@ -174,8 +279,8 @@ function fmtQty(value) {
 					<span>NO. SO</span>
 					<span>CUSTOMER</span>
 					<span>TANGGAL KIRIM</span>
+					<span>PACKING</span>
 					<span>STATUS</span>
-					<span>TERAKHIR DIUBAH</span>
 					<span></span>
 				</div>
 				<div
@@ -190,10 +295,17 @@ function fmtQty(value) {
 					<span class="mono"><strong>{{ row.sales_order }}</strong></span>
 					<span>{{ row.customer_name }}</span>
 					<span class="muted">{{ row.delivery_date }}</span>
+					<span class="muted ps-packing">
+						<template v-if="row.packing && row.packing.packed">
+							{{ row.packing.koli_dry }} Dry · {{ row.packing.koli_frozen }} Frozen koli ·
+							{{ row.packing.weight_dry + row.packing.weight_frozen }} kg
+							<span v-if="row.packing.driver" class="ps-driver">— Driver: {{ row.packing.driver }}</span>
+						</template>
+						<template v-else>Belum diinput</template>
+					</span>
 					<span>
 						<span class="badge" :class="row.editable ? 'b-edit' : 'b-ro'">{{ row.status }}</span>
 					</span>
-					<span class="muted">{{ row.modified }}</span>
 					<span class="chev">›</span>
 				</div>
 			</div>
@@ -212,26 +324,18 @@ function fmtQty(value) {
 							<Save :size="15" :stroke-width="2" />
 							<span>Simpan</span>
 						</button>
-						<button type="button" class="btn" @click="printPaper">
-							<Printer :size="15" :stroke-width="2" />
-							<span>Cetak Packing List</span>
-						</button>
-						<button type="button" class="btn" @click="printLabels">
-							<Tag :size="15" :stroke-width="2" />
-							<span>Cetak Label</span>
-						</button>
 					</template>
 					<template v-else>
 						<span class="ps-ro-note">Read-only — Delivery Note sudah disubmit</span>
-						<button type="button" class="btn" @click="printPaper">
-							<Printer :size="15" :stroke-width="2" />
-							<span>Cetak Packing List</span>
-						</button>
-						<button type="button" class="btn" @click="printLabels">
-							<Tag :size="15" :stroke-width="2" />
-							<span>Cetak Label</span>
-						</button>
 					</template>
+					<button type="button" class="btn" @click="printPaper">
+						<Printer :size="15" :stroke-width="2" />
+						<span>Cetak Packing List</span>
+					</button>
+					<button type="button" class="btn" @click="printLabels">
+						<Tag :size="15" :stroke-width="2" />
+						<span>Cetak Label</span>
+					</button>
 				</div>
 			</div>
 
@@ -239,82 +343,178 @@ function fmtQty(value) {
 			<p v-if="error" class="ps-error">{{ error }}</p>
 
 			<div class="ps-paper">
+				<!-- Header oranye penuh, teks tengah -->
 				<header class="ps-paper-head">
 					<h1>PACKING LIST</h1>
-					<div class="ps-to">
-						<span class="ps-to-label">TO:</span>
-						<strong>{{ editing.header.customer_name }}</strong>
-					</div>
+					<div class="ps-to">TO : <strong>{{ editing.header.customer_name }}</strong></div>
+					<div class="ps-to">PO No : <strong>{{ editing.header.po_no || '-' }}</strong></div>
+					<div class="ps-to">Delivery date : <strong>{{ editing.header.delivery_date || '-' }}</strong></div>
 				</header>
-				<div class="ps-meta">
-					<span>PO No: <strong>{{ editing.header.po_no || '-' }}</strong></span>
-					<span>Delivery date: <strong>{{ editing.header.delivery_date || '-' }}</strong></span>
-					<span>No: <strong>{{ editing.name }}</strong></span>
+
+				<!-- Driver + No. Mobil -->
+				<div class="ps-driver-row">
+					<label>
+						<span>Driver</span>
+						<input v-model="driver" class="input input-sm" type="text" :disabled="!editing.editable" placeholder="Nama driver" />
+					</label>
+					<label>
+						<span>No. Mobil</span>
+						<input v-model="vehicleNo" class="input input-sm" type="text" :disabled="!editing.editable" placeholder="B 1234 XYZ" />
+					</label>
+					<span v-if="editing.name" class="muted ps-no">No: {{ editing.name }}</span>
 				</div>
 
 				<div class="ps-cols">
 					<!-- FROZEN kiri -->
 					<div class="ps-col">
-						<div class="ps-colh">FROZEN</div>
+						<div class="ps-colh ps-colh-frozen">FROZEN</div>
 						<table class="ps-table">
 							<thead>
-								<tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th class="num">Koli</th><th class="num">Weight (Kg)</th><th v-if="editing.editable"></th></tr>
+								<tr>
+									<th v-if="editing.editable" class="ps-handle-col"></th>
+									<th
+										v-for="key in colOrder.frozen"
+										:key="key"
+										:style="{ width: colWidths.frozen[key] + 'px' }"
+										draggable="true"
+										@dragstart="onColDragStart('frozen', key, $event)"
+										@dragover.prevent="dragOverCol = key"
+										@drop="onColDrop('frozen', key)"
+										:class="{ 'ps-col-dragover': dragOverCol === key }"
+									>
+										{{ COL_LABELS[key] }}
+										<span class="ps-resize" @mousedown="startResize('frozen', key, $event)"></span>
+									</th>
+									<th v-if="editing.editable" class="ps-del-col"></th>
+								</tr>
 							</thead>
 							<tbody>
-								<tr v-for="(row, index) in frozenLines" :key="index">
-									<td>{{ row.item_name || row.item_code || '-' }}</td>
-									<td class="num"><input v-model.number="row.qty" class="input input-sm ps-num" type="number" min="0" :disabled="!editing.editable" /></td>
-									<td>{{ row.uom }}</td>
-									<td class="num">{{ row.koli_no }}</td>
-									<td class="num">
-										<input v-model="row.berat" class="input input-sm ps-num" type="text" :disabled="!editing.editable" />
-									</td>
-									<td v-if="editing.editable" class="num">
-										<button type="button" class="ps-del" title="Hapus baris" @click="removeLine(editing.lines.indexOf(row))">
+								<tr
+									v-for="(row, index) in frozenLines"
+									:key="index"
+									draggable="true"
+									@dragstart="onLineDragStart(editing.lines.indexOf(row), $event)"
+									@dragover.prevent
+									@drop="onLineDrop(editing.lines.indexOf(row), $event)"
+								>
+									<td v-if="editing.editable" class="ps-handle-col"><GripVertical :size="13" class="ps-grip" /></td>
+									<template v-for="key in colOrder.frozen" :key="key">
+										<td v-if="key === 'item'">{{ row.item_name || row.item_code || '-' }}</td>
+										<td v-else-if="key === 'qty'" class="num">
+											<input v-model.number="row.qty" class="input input-sm ps-num" type="number" min="0" :disabled="!editing.editable" />
+										</td>
+										<td v-else-if="key === 'uom'">{{ row.uom }}</td>
+										<td v-else-if="key === 'koli'" class="num">
+											<input v-model.number="row.koli_no" class="input input-sm ps-num" type="number" min="1" :disabled="!editing.editable" />
+										</td>
+										<td v-else class="num">
+											<input v-model="row.berat" class="input input-sm ps-num" type="text" :disabled="!editing.editable" />
+										</td>
+									</template>
+									<td v-if="editing.editable" class="num ps-del-col">
+										<button type="button" class="ps-del" title="Hapus baris" @click="removeLine(row)">
 											<X :size="11" :stroke-width="2" />
 										</button>
 									</td>
 								</tr>
-								<tr v-if="!frozenLines.length"><td colspan="5" class="ps-none">—</td></tr>
+								<tr v-if="!frozenLines.length"><td :colspan="6" class="ps-none">—</td></tr>
 							</tbody>
 						</table>
-						<button v-if="editing.editable" type="button" class="ps-add" @click="addLine('frozen')">+ Tambah Frozen</button>
+						<template v-if="editing.editable">
+							<button type="button" class="ps-add" @click="openAddRow('frozen')"><Plus :size="12" :stroke-width="2" /> Tambah Baris</button>
+							<div v-if="addRow && addRow.category === 'frozen'" class="ps-addrow">
+								<select v-model="addRow.item_code" class="select select-sm">
+									<option value="" disabled>Pilih item dari DN…</option>
+									<option v-for="it in editing.dn_items" :key="it.item_code" :value="it.item_code">
+										{{ it.item_code }} — {{ it.item_name || it.item_code }}
+									</option>
+								</select>
+								<input v-model.number="addRow.qty" class="input input-sm ps-num" type="number" min="0" placeholder="Qty" />
+								<input v-model.number="addRow.koli_no" class="input input-sm ps-num-sm" type="number" min="1" placeholder="Koli" />
+								<button type="button" class="btn btn-primary btn-sm" @click="confirmAddRow">OK</button>
+								<button type="button" class="btn btn-sm" @click="addRow = null">Batal</button>
+							</div>
+						</template>
+						<div class="ps-total-line">
+							Total Frozen (colly): <strong>{{ totals.frozenColly }}</strong> ·
+							Net Weight Frozen (kg): <strong>{{ fmtQty(totals.frozenWeight) }}</strong>
+						</div>
 					</div>
 
 					<!-- DRY kanan -->
 					<div class="ps-col">
-						<div class="ps-colh">DRY</div>
+						<div class="ps-colh ps-colh-dry">DRY</div>
 						<table class="ps-table">
 							<thead>
-								<tr><th>Item</th><th class="num">Qty</th><th>Unit</th><th class="num">Koli</th><th class="num">Weight (Kg)</th><th v-if="editing.editable"></th></tr>
+								<tr>
+									<th v-if="editing.editable" class="ps-handle-col"></th>
+									<th
+										v-for="key in colOrder.dry"
+										:key="key"
+										:style="{ width: colWidths.dry[key] + 'px' }"
+										draggable="true"
+										@dragstart="onColDragStart('dry', key, $event)"
+										@dragover.prevent="dragOverCol = key"
+										@drop="onColDrop('dry', key)"
+										:class="{ 'ps-col-dragover': dragOverCol === key }"
+									>
+										{{ COL_LABELS[key] }}
+										<span class="ps-resize" @mousedown="startResize('dry', key, $event)"></span>
+									</th>
+									<th v-if="editing.editable" class="ps-del-col"></th>
+								</tr>
 							</thead>
 							<tbody>
-								<tr v-for="(row, index) in dryLines" :key="index">
-									<td>{{ row.item_name || row.item_code || '-' }}</td>
-									<td class="num"><input v-model.number="row.qty" class="input input-sm ps-num" type="number" min="0" :disabled="!editing.editable" /></td>
-									<td>{{ row.uom }}</td>
-									<td class="num">{{ row.koli_no }}</td>
-									<td class="num"><input v-model="row.berat" class="input input-sm ps-num" type="text" :disabled="!editing.editable" /></td>
-									<td v-if="editing.editable" class="num">
-										<button type="button" class="ps-del" title="Hapus baris" @click="removeLine(editing.lines.indexOf(row))">
+								<tr
+									v-for="(row, index) in dryLines"
+									:key="index"
+									draggable="true"
+									@dragstart="onLineDragStart(editing.lines.indexOf(row), $event)"
+									@dragover.prevent
+									@drop="onLineDrop(editing.lines.indexOf(row), $event)"
+								>
+									<td v-if="editing.editable" class="ps-handle-col"><GripVertical :size="13" class="ps-grip" /></td>
+									<template v-for="key in colOrder.dry" :key="key">
+										<td v-if="key === 'item'">{{ row.item_name || row.item_code || '-' }}</td>
+										<td v-else-if="key === 'qty'" class="num">
+											<input v-model.number="row.qty" class="input input-sm ps-num" type="number" min="0" :disabled="!editing.editable" />
+										</td>
+										<td v-else-if="key === 'uom'">{{ row.uom }}</td>
+										<td v-else-if="key === 'koli'" class="num">
+											<input v-model.number="row.koli_no" class="input input-sm ps-num" type="number" min="1" :disabled="!editing.editable" />
+										</td>
+										<td v-else class="num">
+											<input v-model="row.berat" class="input input-sm ps-num" type="text" :disabled="!editing.editable" />
+										</td>
+									</template>
+									<td v-if="editing.editable" class="num ps-del-col">
+										<button type="button" class="ps-del" title="Hapus baris" @click="removeLine(row)">
 											<X :size="11" :stroke-width="2" />
 										</button>
 									</td>
 								</tr>
-								<tr v-if="!dryLines.length"><td colspan="5" class="ps-none">—</td></tr>
-								<tr class="ps-total">
-									<td colspan="4">Total Dry (colly)</td>
-									<td class="num">{{ totals.dryColly }}</td>
-									<td v-if="editing.editable"></td>
-								</tr>
-								<tr class="ps-total">
-									<td colspan="4">Net Weight Dry (kg)</td>
-									<td class="num">{{ fmtQty(totals.dryWeight) }}</td>
-									<td v-if="editing.editable"></td>
-								</tr>
+								<tr v-if="!dryLines.length"><td :colspan="6" class="ps-none">—</td></tr>
 							</tbody>
 						</table>
-						<button v-if="editing.editable" type="button" class="ps-add" @click="addLine('dry')">+ Tambah Dry</button>
+						<template v-if="editing.editable">
+							<button type="button" class="ps-add" @click="openAddRow('dry')"><Plus :size="12" :stroke-width="2" /> Tambah Baris</button>
+							<div v-if="addRow && addRow.category === 'dry'" class="ps-addrow">
+								<select v-model="addRow.item_code" class="select select-sm">
+									<option value="" disabled>Pilih item dari DN…</option>
+									<option v-for="it in editing.dn_items" :key="it.item_code" :value="it.item_code">
+										{{ it.item_code }} — {{ it.item_name || it.item_code }}
+									</option>
+								</select>
+								<input v-model.number="addRow.qty" class="input input-sm ps-num" type="number" min="0" placeholder="Qty" />
+								<input v-model.number="addRow.koli_no" class="input input-sm ps-num-sm" type="number" min="1" placeholder="Koli" />
+								<button type="button" class="btn btn-primary btn-sm" @click="confirmAddRow">OK</button>
+								<button type="button" class="btn btn-sm" @click="addRow = null">Batal</button>
+							</div>
+						</template>
+						<div class="ps-total-line">
+							Total Dry (colly): <strong>{{ totals.dryColly }}</strong> ·
+							Net Weight Dry (kg): <strong>{{ fmtQty(totals.dryWeight) }}</strong>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -335,7 +535,7 @@ function fmtQty(value) {
 .chev { color: #94a3b8; text-align: right; }
 .ps-thead, .ps-trow {
 	display: grid;
-	grid-template-columns: 170px minmax(180px, 1fr) 120px 110px 160px 32px;
+	grid-template-columns: 170px minmax(160px, 1fr) 110px minmax(220px, 1fr) 110px 32px;
 	gap: 14px;
 	padding: 11px 16px;
 	align-items: center;
@@ -343,28 +543,44 @@ function fmtQty(value) {
 .ps-thead { border-bottom: 1px solid #e5e7eb; font-size: 11px; font-weight: 700; color: #64748b; text-transform: uppercase; }
 .ps-trow { border-bottom: 1px solid #f1f5f9; cursor: pointer; font-size: 13px; }
 .ps-trow:hover { background: #f8fafc; }
+.ps-packing { font-size: 12px; }
+.ps-driver { color: #2563eb; }
 .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
 .b-edit { background: #dcfce7; color: #166534; }
 .b-ro { background: #f1f5f9; color: #64748b; }
 .ps-ro-note { font-size: 12px; color: #64748b; }
 
-/* Paper */
-.ps-paper { background: #fff; border: 1px solid #ddd; padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
-.ps-paper-head { background: #f7a600; color: #fff; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; }
-.ps-paper-head h1 { font-size: 20px; letter-spacing: 0.08em; margin: 0; }
-.ps-to-label { font-size: 12px; margin-right: 6px; }
-.ps-meta { display: flex; gap: 24px; margin: 8px 0 12px; font-size: 13px; }
-.ps-cols { display: flex; gap: 12px; }
+/* Paper — gaya Excel image 2 */
+.ps-paper { background: #fff; border: 1px solid #ddd; padding: 0; max-width: 1150px; margin: 0 auto; }
+.ps-paper-head { background: #f7a600; color: #fff; padding: 14px; text-align: center; }
+.ps-paper-head h1 { font-size: 26px; letter-spacing: 0.12em; margin: 0 0 6px; font-weight: 800; }
+.ps-to { font-size: 14px; margin: 2px 0; }
+.ps-driver-row { display: flex; gap: 16px; align-items: center; padding: 10px 14px; border-bottom: 1px solid #eee; flex-wrap: wrap; }
+.ps-driver-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.ps-driver-row input { width: 180px; }
+.ps-no { margin-left: auto; }
+.ps-cols { display: flex; gap: 12px; padding: 14px; }
 .ps-col { flex: 1; min-width: 0; }
-.ps-colh { background: #f7ecd2; border: 1px solid #e6d3a2; padding: 4px 8px; font-weight: bold; font-size: 12px; }
-.ps-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.ps-table th, .ps-table td { border: 1px solid #999; padding: 3px 6px; text-align: left; }
-.ps-table th { background: #f7ecd2; text-transform: uppercase; font-size: 11px; }
+.ps-colh { padding: 4px 8px; font-weight: bold; font-size: 13px; border: 1px solid #999; border-bottom: none; text-align: center; }
+.ps-colh-frozen { background: #bfe3f7; color: #0b5e86; }
+.ps-colh-dry { background: #ffe2a8; color: #8a5a00; }
+.ps-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.ps-table th, .ps-table td { border: 1px solid #999; padding: 3px 6px; text-align: left; overflow: hidden; }
+.ps-table th { background: #f7ecd2; text-transform: uppercase; font-size: 11px; position: relative; cursor: grab; user-select: none; }
+.ps-table th.ps-col-dragover { outline: 2px dashed #f7a600; outline-offset: -2px; }
+.ps-resize { position: absolute; right: 0; top: 0; height: 100%; width: 6px; cursor: col-resize; }
+.ps-resize:hover { background: #f7a60055; }
+.ps-handle-col { width: 22px; padding: 0 !important; text-align: center; }
+.ps-grip { color: #94a3b8; cursor: grab; }
+.ps-del-col { width: 26px; }
 .ps-table .num { text-align: right; }
 .ps-num { width: 64px; text-align: right; }
+.ps-num-sm { width: 56px; }
 .ps-del { color: #c0392b; border: none; background: none; cursor: pointer; padding: 0 2px; }
-.ps-total td { font-weight: bold; background: #fafafa; }
 .ps-none { text-align: center; color: #999; }
-.ps-add { border: none; background: none; color: #2563eb; cursor: pointer; font-size: 12px; padding: 4px 2px; }
+.ps-add { border: none; background: none; color: #2563eb; cursor: pointer; font-size: 12px; padding: 6px 2px; display: inline-flex; align-items: center; gap: 3px; }
+.ps-addrow { display: flex; gap: 6px; align-items: center; padding: 4px 0 8px; flex-wrap: wrap; }
+.ps-addrow select { min-width: 220px; }
+.ps-total-line { border: 1px solid #999; background: #f4f4f0; padding: 5px 8px; font-size: 12px; margin-top: 8px; }
 @media (max-width: 820px) { .ps-cols { flex-direction: column; } }
 </style>

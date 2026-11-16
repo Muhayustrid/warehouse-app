@@ -1,9 +1,14 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-11-16 — **feat/fulfillment-stage-tabs (15 commits, unpushed)**: 4 tab tahap + cetak Pick List Gabungan & Ringkasan Kirim + port Delivery Manifest (doctype, 4 endpoint, ManifestDialog, print format) + fix permission gudang (`frappe.get_all` utk query internal role-gated, commit 13176fe) + **halaman baru /gudang/packing-list** (PackingListPage.vue: per tanggal kirim, per customer Dry/Frozen, editable koli/berat/B-K/picker, simpan ke Delivery Manifest `page_state`, cetak A4 + label koli 60x40mm, tombol "Buka Packing List" di tab Packing). Tests: 129/129 OK (docker). Probe runtime gudang user sofyanbudiluhur OK (load/save/print).
+Head: 2026-11-16 — **feat/fulfillment-stage-tabs (17 commits, unpushed)**: halaman **/gudang/packing-slips** (Packing Slip per SO) menggantikan Packing List Harian (dihapus total: packing_page.py, PackingListPage.vue, 4 endpoint, field page_state, tes lama). Editor koli Frozen/Dry berdampingan, cetak A4 + label 60x40mm, edit terkunci setelah DN submit. Tests: 125/125 OK (docker). Probe runtime gudang user sofyanbudiluhur LOLOS (list 157 SO, editor SORD-JURI-261110004 editable=True, save/persist/restore berat OK, print OK).
 
 ## Current
 
+- Packing Slip per SO page (DONE, commit e81a4e2 + fix):
+  - List per SO (bukan per PS): semua SO dgn DN non-cancelled; status Editable/Read-only/Belum Packing; fallback editor dari DN items bila PS belum ada (klasifikasi frozen/dry via profile).
+  - Save: satu PS draft per koli (from_case_no=koli), berat persist via item `net_weight` (header `net_weight_pkg` dihitung ulang ERPNext = sum(net_weight x qty)), berat diambil dari baris pertama koli; kategori persist via `custom_box_size` (K=frozen/B=dry).
+  - Rulings: `count()` aggregate get_all v16 error → loop manual; default category = frozen; editor pilih DN draft bila ada beberapa DN per SO.
+  - Bug fix (e81a4e2): docstatus 0 falsy `or 2` menyaring DN draft; endpoint save rekursif (alias `_save_packing_slip`); PS wajib >=1 item saat insert.
 - W54 Refinements & Print Format Alignment (DONE locally):
   - Stepper Bar Auto-Hide Packing Slip (DONE): Diperbaiki bug di mana stepper bar masih memunculkan step "3. Packing Slip" saat opsi `enable_packing_slip` dimatikan di Pengaturan. Penyebab: `get_profile` pada `profile.py` dan `_profile_payload` pada `loader.py` belum menyertakan kolom `enable_packing_slip`, sehingga saat memuat data preview order nilainya `undefined` (yang secara default dianggap aktif). Kini status `enable_packing_slip` tersinkron penuh dari backend ke frontend, dan tahapan stepper otomatis menciut menjadi 3 langkah bersih (`1. Picking` -> `2. Surat Jalan (DN)` -> `3. Review & Kirim`).
   - Pick List Multi-Page Running Header (DONE): Format cetak Pick List pada halaman ke-2 dst kini tidak lagi mengulang kop surat / letterhead (`.pl-header`) dan rincian customer (`.pl-parties`). Halaman ke-2 dst tampil bersih dengan running header 1 baris ramping (`PICKING LIST — <Doc> [DRY/FROZEN] | Page X / Y`), sehingga tabel item dan blok tanda tangan muat rapi tanpa buang ruang kertas.
@@ -31,7 +36,8 @@ Head: 2026-11-16 — **feat/fulfillment-stage-tabs (15 commits, unpushed)**: 4 t
 
 ## Next
 
-1. Present proposed conventional commit message and obtain user authorization before committing and pushing to GitHub.
+1. User review halaman /gudang/packing-slips (reload browser, cache build baru).
+2. Push hanya setelah persetujuan eksplisit.
 
 ## Constraints
 

@@ -76,6 +76,47 @@ def slip_totals(lines: list[dict]) -> dict:
 	}
 
 
+def validate_slip_lines(lines: list[dict], dn_items: set[str]) -> list[str]:
+	"""Editor-line validation before persist: item must exist on the DN,
+	qty > 0. Koli number defaults to 1. Returns a list of error messages."""
+	errors: list[str] = []
+	for idx, line in enumerate(lines or [], start=1):
+		item_code = line.get("item_code")
+		if not item_code or item_code not in dn_items:
+			errors.append(f"Baris {idx}: item {item_code or '(kosong)'} tidak ada di Delivery Note.")
+			continue
+		if flt(line.get("qty")) <= 0:
+			errors.append(f"Baris {idx}: {item_code} qty harus > 0.")
+	return errors
+
+
+def packing_summary(ps_docs: list[dict]) -> dict:
+	"""Aggregate packing results per DN from its Packing Slip docs, for the
+	Fulfillment Packing tab: koli dry/frozen counts + weights + driver."""
+	koli_frozen = koli_dry = 0
+	weight_frozen = weight_dry = 0.0
+	driver = ""
+	vehicle_no = ""
+	for doc in ps_docs:
+		if (doc.get("custom_box_size") or "B") == "K":
+			koli_frozen += 1
+			weight_frozen += flt(doc.get("net_weight_pkg"))
+		else:
+			koli_dry += 1
+			weight_dry += flt(doc.get("net_weight_pkg"))
+		driver = driver or (doc.get("custom_driver") or "")
+		vehicle_no = vehicle_no or (doc.get("custom_vehicle_no") or "")
+	return {
+		"packed": bool(ps_docs),
+		"koli_frozen": koli_frozen,
+		"koli_dry": koli_dry,
+		"weight_frozen": round(weight_frozen, 2),
+		"weight_dry": round(weight_dry, 2),
+		"driver": driver,
+		"vehicle_no": vehicle_no,
+	}
+
+
 # ---------------------------------------------------------------- frappe layer
 
 
@@ -124,6 +165,18 @@ def load_packing_slips(company: str, from_date: str, to_date: str) -> dict:
 	):
 		ps_counts[row["delivery_note"]] = ps_counts.get(row["delivery_note"], 0) + 1
 
+	# Packing results per DN (for the Fulfillment Packing tab summary).
+	ps_docs = frappe.get_all(
+		"Packing Slip",
+		filters={"docstatus": ("<", 2)},
+		fields=["name", "delivery_note", "from_case_no", "custom_box_size", "net_weight_pkg", "custom_driver", "custom_vehicle_no"],
+		order_by="from_case_no asc",
+		limit_page_length=0,
+	)
+	ps_by_dn: dict[str, list[dict]] = {}
+	for row in ps_docs:
+		ps_by_dn.setdefault(row["delivery_note"], []).append(row)
+
 	slips: list[dict] = []
 	for so_name, so in so_by_name.items():
 		dn_names = sorted({dn for dn in dn_by_so.get(so_name, []) if dn_status.get(dn) not in (None, 2)})
@@ -131,6 +184,8 @@ def load_packing_slips(company: str, from_date: str, to_date: str) -> dict:
 			continue
 		dn_docstatus = min(dn_status[dn] for dn in dn_names)
 		ps_total = sum(ps_counts.get(dn, 0) for dn in dn_names)
+		# Aggregate packing results across every DN of the SO.
+		summary = packing_summary([doc for dn in dn_names for doc in ps_by_dn.get(dn, [])])
 		slips.append(
 			{
 				"name": so_name,
@@ -142,6 +197,7 @@ def load_packing_slips(company: str, from_date: str, to_date: str) -> dict:
 				"delivery_note": dn_names[0],
 				"status": "Read-only" if dn_docstatus == 1 else ("Editable" if ps_total else "Belum Packing"),
 				"editable": dn_docstatus != 1,
+				"packing": summary,
 				"modified": str(max(
 					frappe.db.get_value("Delivery Note", dn, "modified") for dn in dn_names
 				)),
@@ -189,7 +245,7 @@ def load_packing_slip(name: str) -> dict:
 	siblings = frappe.get_all(
 		"Packing Slip",
 		filters={"delivery_note": dn_name, "docstatus": ("<", 2)},
-		fields=["name", "from_case_no", "custom_box_size", "net_weight_pkg"],
+		fields=["name", "from_case_no", "custom_box_size", "net_weight_pkg", "custom_driver", "custom_vehicle_no"],
 		order_by="from_case_no asc",
 		limit_page_length=0,
 	)
@@ -217,12 +273,24 @@ def load_packing_slip(name: str) -> dict:
 	else:
 		lines = _lines_from_dn(dn_name)
 
+	# DN items for the editor's add-row picker.
+	dn_item_rows = frappe.get_all(
+		"Delivery Note Item",
+		filters={"parent": dn_name},
+		fields=["item_code", "item_name", "stock_uom", "uom", "qty"],
+		order_by="idx asc",
+		limit_page_length=0,
+	)
+
 	return {
 		"name": name,
 		"delivery_note": dn_name,
 		"editable": editable,
 		"header": header,
 		"lines": lines,
+		"dn_items": dn_item_rows,
+		"driver": next((s.custom_driver or "" for s in siblings if s.custom_driver), ""),
+		"vehicle_no": next((s.custom_vehicle_no or "" for s in siblings if s.custom_vehicle_no), ""),
 		"totals": slip_totals(lines),
 	}
 
@@ -277,7 +345,7 @@ def _lines_from_dn(dn_name: str) -> list[dict]:
 	return lines
 
 
-def save_packing_slip(name: str, lines: list) -> dict:
+def save_packing_slip(name: str, lines: list, driver: str = "", vehicle_no: str = "") -> dict:
 	"""Persist edited koli lines onto draft Packing Slip documents of the SO's
 	Delivery Note (one doc per koli). Blocked once the DN is submitted."""
 	require_read()
@@ -290,6 +358,17 @@ def save_packing_slip(name: str, lines: list) -> dict:
 	if not data["editable"]:
 		frappe.throw("Packing Slip is read-only: Delivery Note already submitted.", frappe.ValidationError)
 	dn_name = data["delivery_note"]
+
+	# Validate against the DN item set before touching any document.
+	dn_items = {
+		row.item_code
+		for row in frappe.get_all(
+			"Delivery Note Item", filters={"parent": dn_name}, fields=["item_code"], limit_page_length=0
+		)
+	}
+	errors = validate_slip_lines(lines or [], dn_items)
+	if errors:
+		frappe.throw("; ".join(errors), frappe.ValidationError)
 
 	# Group edited lines per koli number; delete extra slips, update/create the rest.
 	by_koli: dict[int, list[dict]] = {}
@@ -357,6 +436,18 @@ def save_packing_slip(name: str, lines: list) -> dict:
 		if case_no not in by_koli:
 			frappe.delete_doc("Packing Slip", sib_name, ignore_permissions=True, force=1)
 
+	# Driver + vehicle number: uniform across every draft PS of the DN.
+	if driver or vehicle_no:
+		for sib in frappe.get_all(
+			"Packing Slip",
+			filters={"delivery_note": dn_name, "docstatus": 0},
+			pluck="name",
+			limit_page_length=0,
+		):
+			frappe.db.set_value(
+				"Packing Slip", sib, {"custom_driver": driver, "custom_vehicle_no": vehicle_no}
+			)
+
 	frappe.db.commit()
 	return {"name": name, "totals": slip_totals(lines or [])}
 
@@ -389,6 +480,8 @@ def packing_slip_print_html(name: str) -> str:
 	totals = data["totals"]
 	dry_rows = rows_html("dry")
 	frozen_rows = rows_html("frozen")
+	driver = data.get("driver") or "-"
+	vehicle_no = data.get("vehicle_no") or "-"
 
 	return f"""<!doctype html><html><head><meta charset='utf-8'><title>Packing List {escape_html(name)}</title>
 <style>
@@ -410,8 +503,11 @@ th{{background:#f7ecd2;font-size:10px;text-transform:uppercase}}
 </style></head><body>
 <div class='head'><h1>PACKING LIST</h1><div class='to'>TO: {escape_html(header.get('customer_name') or '')}</div></div>
 <div class='meta'>
+<span>TO: <strong>{escape_html(header.get('customer_name') or '')}</strong></span>
 <span>PO No: <strong>{escape_html(header.get('po_no') or '-')}</strong></span>
 <span>Delivery date: <strong>{escape_html(header.get('delivery_date') or '-')}</strong></span>
+<span>Driver: <strong>{escape_html(driver)}</strong></span>
+<span>No. Mobil: <strong>{escape_html(vehicle_no)}</strong></span>
 <span>No: <strong>{escape_html(name)}</strong></span>
 </div>
 <div class='cols'>

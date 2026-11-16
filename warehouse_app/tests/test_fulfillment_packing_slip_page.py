@@ -4,8 +4,10 @@
 import unittest
 
 from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
+	packing_summary,
 	slip_lines_from_ps_items,
 	slip_totals,
+	validate_slip_lines,
 )
 
 
@@ -64,6 +66,70 @@ class TestSlipTotals(unittest.TestCase):
 		totals = slip_totals([])
 		self.assertEqual(totals["total_dry_colly"], 0)
 		self.assertEqual(totals["net_weight_dry"], 0)
+
+
+class TestValidateSlipLines(unittest.TestCase):
+	"""Validasi baris editor sebelum persist: item harus ada di DN, qty > 0,
+	nomor koli >= 1."""
+
+	def test_valid_lines_pass(self):
+		lines = [{"item_code": "PJ260010", "qty": 5, "koli_no": 1}]
+		self.assertEqual(validate_slip_lines(lines, dn_items={"PJ260010"}), [])
+
+	def test_item_not_in_dn_rejected(self):
+		lines = [{"item_code": "XX999", "qty": 5, "koli_no": 1}]
+		errors = validate_slip_lines(lines, dn_items={"PJ260010"})
+		self.assertEqual(len(errors), 1)
+		self.assertIn("XX999", errors[0])
+
+	def test_zero_qty_rejected(self):
+		lines = [{"item_code": "PJ260010", "qty": 0, "koli_no": 1}]
+		errors = validate_slip_lines(lines, dn_items={"PJ260010"})
+		self.assertEqual(len(errors), 1)
+		self.assertIn("PJ260010", errors[0])
+
+	def test_missing_koli_defaults_ok(self):
+		# koli_no kosong -> default 1, bukan error.
+		lines = [{"item_code": "PJ260010", "qty": 2}]
+		self.assertEqual(validate_slip_lines(lines, dn_items={"PJ260010"}), [])
+
+
+class TestPackingSummary(unittest.TestCase):
+	"""Agregat hasil packing per DN untuk tab Packing: koli dry/frozen +
+	berat + driver dari dokumen PS."""
+
+	def test_summary_counts_koli_and_weight(self):
+		ps_docs = [
+			{
+				"from_case_no": 1,
+				"custom_box_size": "K",
+				"net_weight_pkg": 9.99,
+				"custom_driver": "Ismail",
+				"custom_vehicle_no": "B 1234 XYZ",
+			},
+			{
+				"from_case_no": 2,
+				"custom_box_size": "B",
+				"net_weight_pkg": 4.5,
+				"custom_driver": "Ismail",
+				"custom_vehicle_no": "B 1234 XYZ",
+			},
+		]
+		summary = packing_summary(ps_docs)
+		self.assertEqual(summary["koli_frozen"], 1)
+		self.assertEqual(summary["koli_dry"], 1)
+		self.assertEqual(summary["weight_frozen"], 9.99)
+		self.assertEqual(summary["weight_dry"], 4.5)
+		self.assertEqual(summary["driver"], "Ismail")
+		self.assertEqual(summary["vehicle_no"], "B 1234 XYZ")
+		self.assertTrue(summary["packed"])
+
+	def test_empty_means_not_packed(self):
+		summary = packing_summary([])
+		self.assertFalse(summary["packed"])
+		self.assertEqual(summary["koli_frozen"], 0)
+		self.assertEqual(summary["koli_dry"], 0)
+		self.assertEqual(summary["driver"], "")
 
 
 if __name__ == "__main__":

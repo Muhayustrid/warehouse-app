@@ -179,10 +179,12 @@ export function fetchPackingSlip(name) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip', { name })
 }
 
-export function savePackingSlip(name, lines) {
+export function savePackingSlip(name, lines, driver, vehicleNo) {
 	return call('warehouse_app.warehouse_app.fulfillment.api.save_packing_slip', {
 		name,
 		lines: JSON.stringify(lines),
+		driver: driver || '',
+		vehicle_no: vehicleNo || '',
 	})
 }
 

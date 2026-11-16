@@ -11,7 +11,7 @@ import {
 	Search,
 	X,
 } from 'lucide-vue-next'
-import { fetchCombinedPickListHtml, fetchOrderQueue } from '@/data/fulfillment'
+import { fetchCombinedPickListHtml, fetchOrderQueue, fetchPackingSlips } from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
 
@@ -60,6 +60,35 @@ const pickPrinting = ref(false)
 const printModalOpen = ref(false)
 const printModalTitle = ref('')
 const printModalItems = ref([])
+
+// Tab Packing: ringkasan hasil packing per SO (dari Packing Slip), klik buka editor.
+const packingBySo = ref({})
+
+async function loadPackingSummary() {
+	try {
+		const res = await fetchPackingSlips(company.value || undefined, '', '')
+		const map = {}
+		for (const row of res.slips || []) map[row.sales_order] = row
+		packingBySo.value = map
+	} catch {
+		packingBySo.value = {}
+	}
+}
+
+function packingStatus(row) {
+	const p = packingBySo.value[row.sales_order]
+	if (!p) return null
+	if (!p.editable) return { label: 'Read-only (DN submit)', cls: 'b-ro' }
+	if (p.packing?.packed) return { label: 'Sudah Diinput', cls: 'b-edit' }
+	return { label: 'Belum Packing', cls: 'b-draft' }
+}
+
+function openPackingEditor(row) {
+	router.push({
+		path: '/packing-slips',
+		query: { company: company.value || undefined, open: row.sales_order },
+	})
+}
 
 // Tab "Semua" hilang: aktif tab = filter stage. Counts per tab dihitung dari
 // counts per stage backend.
@@ -140,6 +169,7 @@ async function load() {
 		total.value = res.total || 0
 		page.value = res.page || page.value
 		pageLength.value = res.page_length || pageLength.value
+		if (activeTab.value === 'packing') await loadPackingSummary()
 	} catch (e) {
 		if (token === loadToken) {
 			error.value = e.message || 'Gagal memuat daftar order.'
@@ -165,6 +195,10 @@ function setTab(value, syncQuery = true) {
 	}
 	load()
 }
+
+watch(activeTab, (v) => {
+	if (v === 'packing') loadPackingSummary()
+})
 
 async function printCombinedPickList() {
 	if (pickPrinting.value) return
@@ -423,8 +457,8 @@ function statusLabel(row) {
 						class="ff-trow"
 						role="button"
 						tabindex="0"
-						@click="openOrder(row)"
-						@keydown.enter="openOrder(row)"
+						@click="activeTab === 'packing' ? openPackingEditor(row) : openOrder(row)"
+						@keydown.enter="activeTab === 'packing' ? openPackingEditor(row) : openOrder(row)"
 					>
 						<!-- NO. SO -->
 						<div class="ff-cell ff-cell-so">
@@ -446,15 +480,30 @@ function statusLabel(row) {
 
 						<!-- Status (Mewakili tahap & progres secara visual) -->
 						<div class="ff-cell">
-							<span class="badge" :class="statusBadgeClass(row)">
-								{{ statusLabel(row) }}
+							<span class="badge" :class="activeTab === 'packing' && packingStatus(row) ? packingStatus(row).cls : statusBadgeClass(row)">
+								{{ activeTab === 'packing' && packingStatus(row) ? packingStatus(row).label : statusLabel(row) }}
 							</span>
 						</div>
 
-						<!-- Dry / Frozen -->
+						<!-- Hasil Packing (tab Packing) / Dry-Frozen (tab lain) -->
 						<div class="ff-cell ff-cell-groups">
-							<span class="group-pill pill-dry">{{ row.dry_count }} {{ dryLabel }}</span>
-							<span class="group-pill pill-frozen">{{ row.frozen_count }} {{ frozenLabel }}</span>
+							<template v-if="activeTab === 'packing'">
+								<template v-if="packingBySo[row.sales_order]?.packing?.packed">
+									<span class="group-pill pill-dry">{{ packingBySo[row.sales_order].packing.koli_dry }} Dry koli</span>
+									<span class="group-pill pill-frozen">{{ packingBySo[row.sales_order].packing.koli_frozen }} Frozen koli</span>
+									<span class="group-pill pill-weight">
+										{{ packingBySo[row.sales_order].packing.weight_dry + packingBySo[row.sales_order].packing.weight_frozen }} kg
+									</span>
+									<span v-if="packingBySo[row.sales_order].packing.driver" class="group-pill pill-driver">
+										{{ packingBySo[row.sales_order].packing.driver }}
+									</span>
+								</template>
+								<span class="group-pill pill-none">Belum diinput</span>
+							</template>
+							<template v-else>
+								<span class="group-pill pill-dry">{{ row.dry_count }} {{ dryLabel }}</span>
+								<span class="group-pill pill-frozen">{{ row.frozen_count }} {{ frozenLabel }}</span>
+							</template>
 						</div>
 
 						<!-- Chevron Arrow -->
@@ -879,6 +928,21 @@ function statusLabel(row) {
 .pill-frozen {
 	background: #e0f2fe;
 	color: #0284c7;
+}
+
+.pill-weight {
+	background: #fef3c7;
+	color: #92400e;
+}
+
+.pill-driver {
+	background: #ede9fe;
+	color: #5b21b6;
+}
+
+.pill-none {
+	background: #f1f5f9;
+	color: #64748b;
 }
 
 .ff-cell-arrow {

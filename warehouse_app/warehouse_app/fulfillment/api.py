@@ -447,10 +447,10 @@ def get_packing_slip(name=None):
 
 
 @frappe.whitelist(methods=["POST"])
-def save_packing_slip(name=None, lines=None):
+def save_packing_slip(name=None, lines=None, driver=None, vehicle_no=None):
 	if not name:
 		frappe.throw("Packing Slip name is required.", frappe.ValidationError)
-	return _save_packing_slip(name, lines)
+	return _save_packing_slip(name, lines, driver=driver or "", vehicle_no=vehicle_no or "")
 
 
 @frappe.whitelist(methods=["GET"])

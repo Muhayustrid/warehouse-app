@@ -1029,6 +1029,22 @@ PS_BOX_SIZE_SPEC = {
     "insert_after": "to_case_no",
 }
 
+PS_DRIVER_FIELD_SPEC = {
+    "dt": "Packing Slip",
+    "fieldname": "custom_driver",
+    "fieldtype": "Data",
+    "label": "Driver",
+    "insert_after": "custom_box_size",
+}
+
+PS_VEHICLE_FIELD_SPEC = {
+    "dt": "Packing Slip",
+    "fieldname": "custom_vehicle_no",
+    "fieldtype": "Data",
+    "label": "Vehicle No",
+    "insert_after": "custom_driver",
+}
+
 # Installer patch SerialBatchPackageSelector — sama persis disematkan di script
 # Pick List DAN Stock Entry (dialog batch/serial dibuka dari kedua form);
 # flag proto.__w31 menjaga install tunggal walau kedua script dimuat bersama.
@@ -1607,6 +1623,8 @@ def ensure_fulfillment_lineage_fields():
         _ensure_custom_field(DN_TOTAL_PACKAGES_SPEC),
         _ensure_custom_field(PS_RUN_FIELD_SPEC),
         _ensure_custom_field(PS_BOX_SIZE_SPEC),
+        _ensure_custom_field(PS_DRIVER_FIELD_SPEC),
+        _ensure_custom_field(PS_VEHICLE_FIELD_SPEC),
     ]
     for dt in ("Delivery Note", "Packing Slip"):
         frappe.clear_cache(doctype=dt)
