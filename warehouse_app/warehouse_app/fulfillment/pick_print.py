@@ -133,39 +133,30 @@ def _pick_list_html(rows: list[dict], delivery_date: str, company: str) -> str:
 
 
 def load_combined_pick_rows(company: str, delivery_date: str) -> list[dict]:
+	# delivery_date lives on the Sales Order, not the Run; pick list links live
+	# on the Run. One join-style query covers both.
 	runs = [
 		dict(r)
 		for r in frappe.get_all(
 			RUN,
 			filters={"name": ("in", pick_run_names(company, delivery_date))},
-			fields=["name", "company", "customer", "status"],
+			fields=["name", "company", "customer", "status", "dry_pick_list", "frozen_pick_list", "sales_order"],
 			order_by="name asc",
 		)
 	]
-	# delivery_date lives on the Sales Order, not the Run.
-	so_names = [r["sales_order"] for r in frappe.get_all(
-		RUN,
-		filters={"name": ("in", [r["name"] for r in runs])} if runs else {"name": ("in", [])},
-		fields=["sales_order"],
-	)]
-	delivery_by_run = {}
-	if runs:
-		pairs = frappe.get_all(
-			RUN,
-			filters={"name": ("in", [r["name"] for r in runs])},
-			fields=["name", "sales_order"],
+	if not runs:
+		return []
+	so_dates = dict(
+		frappe.get_all(
+			"Sales Order",
+			filters={"name": ("in", list({r["sales_order"] for r in runs if r.get("sales_order")}))},
+			fields=["name", "delivery_date"],
+			as_list=True,
 		)
-		so_dates = dict(
-			frappe.get_all(
-				"Sales Order",
-				filters={"name": ("in", list({p["sales_order"] for p in pairs}))},
-				fields=["name", "delivery_date"],
-				as_list=True,
-			)
-		)
-		for p in pairs:
-			delivery_by_run[p["name"]] = str(so_dates.get(p["sales_order"]) or "")
+	)
 	for r in runs:
-		r["delivery_date"] = delivery_by_run.get(r["name"], "")
-	runs = [r for r in runs if r["delivery_date"] == str(delivery_date)]
-	return combined_pick_rows(runs, _pick_list_rows)
+		r["delivery_date"] = str(so_dates.get(r.get("sales_order")) or "")
+	return combined_pick_rows(
+		[r for r in runs if r["delivery_date"] == str(delivery_date)],
+		_pick_list_rows,
+	)
