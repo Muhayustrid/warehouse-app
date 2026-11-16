@@ -63,5 +63,19 @@ class TestCombinedPickRows(unittest.TestCase):
 		self.assertFalse(any(r["customer"] == "RS C" for r in combined_pick_rows(runs, lambda n: ROWS[n])))
 
 
+class TestPickListHtml(unittest.TestCase):
+	def test_html_groups_and_empty_state(self):
+		from warehouse_app.warehouse_app.fulfillment.pick_print import _pick_list_html
+
+		rows = combined_pick_rows(RUNS, lambda n: ROWS[n])
+		html = _pick_list_html(rows, "2026-11-17", "PT. JUARA ROTI INDONESIA")
+		self.assertIn("FROZEN", html)
+		self.assertIn("DRY", html)
+		self.assertIn("RS A", html)
+		self.assertIn("2026-11-17", html)
+		empty = _pick_list_html([], "2026-11-17", "PT. JUARA ROTI INDONESIA")
+		self.assertIn("Tidak ada pick list", empty)
+
+
 if __name__ == "__main__":
 	unittest.main()

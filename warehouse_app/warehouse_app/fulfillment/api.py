@@ -38,6 +38,7 @@ from warehouse_app.warehouse_app.fulfillment.picking import (
 	save_picking as _save_picking,
 	submit_pick_list as _submit_pick_list,
 )
+from warehouse_app.warehouse_app.fulfillment.permissions import require_read
 from warehouse_app.warehouse_app.fulfillment.settings_api import (
 	fulfillment_settings_options as _fulfillment_settings_options,
 )
@@ -255,6 +256,25 @@ def submit_delivery_note(run, idempotency_key=None, expected_dn_modified=None):
 		)
 	except FulfillmentError as exc:
 		frappe.throw(f"{exc.code}: {exc.message}", frappe.ValidationError)
+
+
+@frappe.whitelist(methods=["GET"])
+def get_combined_pick_list_html(company=None, delivery_date=None):
+	from warehouse_app.warehouse_app.fulfillment.pick_print import (
+		_pick_list_html,
+		load_combined_pick_rows,
+	)
+
+	require_read()
+	if not delivery_date:
+		frappe.throw("Delivery date is required.", frappe.ValidationError)
+	company = company or frappe.defaults.get_user_default("Company")
+	if not company:
+		frappe.throw("Company is required.", frappe.ValidationError)
+	if not frappe.has_permission("Company", doc=company, ptype="read"):
+		raise frappe.PermissionError
+	rows = load_combined_pick_rows(company, delivery_date)
+	return _pick_list_html(rows, delivery_date, company)
 
 
 @frappe.whitelist(methods=["GET"])
