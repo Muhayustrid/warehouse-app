@@ -38,6 +38,7 @@ import { toast } from '@/lib/toast'
 
 import SplitConfirmationModal from '@/components/fulfillment/SplitConfirmationModal.vue'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
+import ManifestDialog from '@/components/fulfillment/ManifestDialog.vue'
 import PickingPanel from '@/components/fulfillment/PickingPanel.vue'
 import DeliveryPanel from '@/components/fulfillment/DeliveryPanel.vue'
 import PackingPanel from '@/components/fulfillment/PackingPanel.vue'
@@ -109,6 +110,8 @@ const showPrintModal = ref(false)
 const printModalTitle = ref('Cetak Dokumen')
 const printModalItems = ref([])
 
+const manifestOpen = ref(false)
+
 let loadToken = 0
 
 const currentSO = computed(() => {
@@ -127,6 +130,34 @@ const customerName = computed(() => {
 		'—'
 	)
 })
+
+// Manifest harian: tanggal & outlet diambil dari SO yang sedang dibuka.
+const manifestCompany = computed(
+	() =>
+		workspace.value?.run?.company ||
+		workspace.value?.sales_order?.company ||
+		previewData.value?.sales_order?.company ||
+		'',
+)
+const manifestDate = computed(
+	() =>
+		workspace.value?.run?.delivery_date ||
+		previewData?.sales_order?.delivery_date ||
+		workspace.value?.sales_order?.delivery_date ||
+		'',
+)
+const manifestCustomer = computed(
+	() => workspace.value?.sales_order?.customer || previewData.value?.sales_order?.customer || '',
+)
+
+function onManifestSaved(name) {
+	manifestOpen.value = false
+	printModalTitle.value = 'Packing List Harian'
+	printModalItems.value = [
+		{ label: 'Packing List', doctype: 'Delivery Manifest', name, format: 'Format Print Packing List' },
+	]
+	showPrintModal.value = true
+}
 
 const dryLabel = computed(
 	() =>
@@ -808,10 +839,16 @@ async function handleSubmitDeliveryNote() {
 <template>
 	<div class="ws-page-container">
 		<!-- Back link matching PRODAPP Image 1 -->
-		<RouterLink to="/fulfillment" class="back">
-			<ChevronLeft :size="16" :stroke-width="2" />
-			<span>Order Queue</span>
-		</RouterLink>
+		<div class="ws-topbar">
+			<RouterLink to="/fulfillment" class="back">
+				<ChevronLeft :size="16" :stroke-width="2" />
+				<span>Order Queue</span>
+			</RouterLink>
+			<button type="button" class="btn btn-sm ws-manifest-btn" @click="manifestOpen = true">
+				<Package :size="15" :stroke-width="2" />
+				<span>Packing List Harian</span>
+			</button>
+		</div>
 
 		<!-- 2-Column Grid Layout matching PRODAPP Image 1 -->
 		<div class="ws-layout">
@@ -1217,6 +1254,15 @@ async function handleSubmitDeliveryNote() {
 			:items="printModalItems"
 			@close="showPrintModal = false"
 		/>
+
+		<ManifestDialog
+			:open="manifestOpen"
+			:company="manifestCompany"
+			:date="manifestDate"
+			:customer="manifestCustomer"
+			@close="manifestOpen = false"
+			@saved="onManifestSaved"
+		/>
 	</div>
 </template>
 
@@ -1225,6 +1271,19 @@ async function handleSubmitDeliveryNote() {
 	max-width: 1400px;
 	margin: 0 auto;
 	padding: 18px 24px 48px;
+}
+
+.ws-topbar {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.ws-manifest-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
 }
 
 /* Back Link matching PRODAPP */

@@ -32,6 +32,30 @@ export function fetchDeliverySummaryHtml(company, deliveryDate) {
 	})
 }
 
+export function fetchManifestCandidates(company, deliveryDate) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_manifest_candidates', {
+		company: company || undefined,
+		delivery_date: deliveryDate,
+	})
+}
+
+export function saveDeliveryManifest(payload) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.save_delivery_manifest', {
+		payload: JSON.stringify(payload),
+	})
+}
+
+export function fetchManifests(company, deliveryDate) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_manifests', {
+		company: company || undefined,
+		delivery_date: deliveryDate,
+	})
+}
+
+export function fetchManifest(name) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_manifest', { name })
+}
+
 export function fetchOrderPreview(salesOrder) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_order_preview', {
 		sales_order: salesOrder,
