@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 import frappe
-from frappe.utils import flt
+from frappe.utils import escape_html, flt, getdate
 
 RUN = "Warehouse Fulfillment Run"
 
@@ -28,7 +28,7 @@ def combined_pick_rows(
 	pick_list_rows: Callable[[str], list[dict]],
 ) -> list[dict]:
 	"""Flatten run pick lists into printable rows: FROZEN first, then customer,
-	then item_code."""
+	then item_code. Runs must already be filtered to one delivery date."""
 	rows: list[dict] = []
 	for run in runs:
 		delivery_date = run.get("delivery_date") or ""
@@ -57,17 +57,22 @@ def combined_pick_rows(
 
 
 def pick_run_names(company: str, delivery_date: str) -> list[str]:
-	"""Runs whose pick lists are still relevant for that delivery date."""
+	"""Runs whose pick lists are still relevant for that delivery date.
+	The delivery date lives on the Sales Order, not the Run."""
+	so_names = frappe.get_all(
+		"Sales Order",
+		filters={"delivery_date": getdate(delivery_date)},
+		pluck="name",
+	)
+	if not so_names:
+		return []
 	return frappe.get_all(
 		RUN,
 		filters={
 			"company": company,
+			"sales_order": ("in", so_names),
 			"status": ("not in", ["DISPATCHED", "CANCELLED"]),
 		},
-		or_filters=[
-			["dry_pick_list", "is", "set"],
-			["frozen_pick_list", "is", "set"],
-		],
 		order_by="name asc",
 		pluck="name",
 	)
@@ -90,51 +95,7 @@ def _pick_list_rows(pl_name: str) -> list[dict]:
 	]
 
 
-def _pick_list_html(rows: list[dict], delivery_date: str, company: str) -> str:
-	"""One A4 sheet: all rows for a delivery date, FROZEN section then DRY."""
-	head = (
-		f"<!doctype html><html><head><meta charset='utf-8'><title>Pick List {delivery_date}</title>"
-		"<style>"
-		"@page{size:A4;margin:12mm}"
-		"body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111}"
-		"h1{font-size:16px;margin:0 0 2px}"
-		".sub{color:#555;margin:0 0 10px;font-size:11px}"
-		"table{width:100%;border-collapse:collapse;margin-bottom:14px}"
-		"th,td{border:1px solid #999;padding:4px 6px;text-align:left}"
-		"th{background:#e8eef5;font-size:10px;text-transform:uppercase}"
-		".qty,.uom{white-space:nowrap}"
-		"h2{font-size:13px;margin:14px 0 4px;letter-spacing:.04em}"
-		".empty{color:#555;font-size:13px;padding:24px 0}"
-		"@media print{.noprint{display:none}}"
-		"</style></head><body>"
-	)
-	title = f"<h1>PICK LIST &mdash; {company}</h1><p class='sub'>Tanggal kirim: {delivery_date}</p>"
-	if not rows:
-		return head + title + "<p class='empty'>Tidak ada pick list untuk tanggal ini.</p></body></html>"
-
-	sections = []
-	for group in ("FROZEN", "DRY"):
-		group_rows = [r for r in rows if r["group"] == group]
-		if not group_rows:
-			continue
-		body = "".join(
-			f"<tr><td>{r['customer']}</td><td>{r['item_code']} &mdash; {r['item_name']}</td>"
-			f"<td class='qty'>{r['qty']:g}</td><td class='uom'>{r['stock_uom']}</td>"
-			f"<td>{r['warehouse']}</td></tr>"
-			for r in group_rows
-		)
-		sections.append(
-			f"<h2>{group} ({len(group_rows)} baris)</h2>"
-			"<table><thead><tr><th>Customer</th><th>Item</th><th>Qty</th><th>UOM</th><th>Warehouse</th></tr></thead>"
-			f"<tbody>{body}</tbody></table>"
-		)
-	total = len(rows)
-	return head + title + "".join(sections) + f"<p class='sub'>Total {total} baris.</p></body></html>"
-
-
 def load_combined_pick_rows(company: str, delivery_date: str) -> list[dict]:
-	# delivery_date lives on the Sales Order, not the Run; pick list links live
-	# on the Run. One join-style query covers both.
 	runs = [
 		dict(r)
 		for r in frappe.get_all(
@@ -160,3 +121,46 @@ def load_combined_pick_rows(company: str, delivery_date: str) -> list[dict]:
 		[r for r in runs if r["delivery_date"] == str(delivery_date)],
 		_pick_list_rows,
 	)
+
+
+def _pick_list_html(rows: list[dict], delivery_date: str, company: str) -> str:
+	"""One A4 sheet: all rows for a delivery date, FROZEN section then DRY."""
+	head = (
+		f"<!doctype html><html><head><meta charset='utf-8'><title>Pick List {escape_html(delivery_date)}</title>"
+		"<style>"
+		"@page{size:A4;margin:12mm}"
+		"body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111}"
+		"h1{font-size:16px;margin:0 0 2px}"
+		".sub{color:#555;margin:0 0 10px;font-size:11px}"
+		"table{width:100%;border-collapse:collapse;margin-bottom:14px}"
+		"th,td{border:1px solid #999;padding:4px 6px;text-align:left}"
+		"th{background:#e8eef5;font-size:10px;text-transform:uppercase}"
+		".qty,.uom{white-space:nowrap}"
+		"h2{font-size:13px;margin:14px 0 4px;letter-spacing:.04em}"
+		".empty{color:#555;font-size:13px;padding:24px 0}"
+		"@media print{.noprint{display:none}}"
+		"</style></head><body>"
+	)
+	title = f"<h1>PICK LIST &mdash; {escape_html(company)}</h1><p class='sub'>Tanggal kirim: {escape_html(delivery_date)}</p>"
+	if not rows:
+		return head + title + "<p class='empty'>Tidak ada pick list untuk tanggal ini.</p></body></html>"
+
+	sections = []
+	for group in ("FROZEN", "DRY"):
+		group_rows = [r for r in rows if r["group"] == group]
+		if not group_rows:
+			continue
+		body = "".join(
+			f"<tr><td>{escape_html(r['customer'])}</td>"
+			f"<td>{escape_html(r['item_code'])} &mdash; {escape_html(r['item_name'])}</td>"
+			f"<td class='qty'>{r['qty']:g}</td><td class='uom'>{escape_html(r['stock_uom'])}</td>"
+			f"<td>{escape_html(r['warehouse'])}</td></tr>"
+			for r in group_rows
+		)
+		sections.append(
+			f"<h2>{group} ({len(group_rows)} baris)</h2>"
+			"<table><thead><tr><th>Customer</th><th>Item</th><th>Qty</th><th>UOM</th><th>Warehouse</th></tr></thead>"
+			f"<tbody>{body}</tbody></table>"
+		)
+	total = len(rows)
+	return head + title + "".join(sections) + f"<p class='sub'>Total {total} baris.</p></body></html>"

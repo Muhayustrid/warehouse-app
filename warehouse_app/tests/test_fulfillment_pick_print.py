@@ -2,6 +2,7 @@
 # License: MIT
 
 import unittest
+from unittest.mock import patch
 
 from warehouse_app.warehouse_app.fulfillment.pick_print import combined_pick_rows
 
@@ -75,6 +76,71 @@ class TestPickListHtml(unittest.TestCase):
 		self.assertIn("2026-11-17", html)
 		empty = _pick_list_html([], "2026-11-17", "PT. JUARA ROTI INDONESIA")
 		self.assertIn("Tidak ada pick list", empty)
+
+	def test_html_escapes_user_data(self):
+		from warehouse_app.warehouse_app.fulfillment.pick_print import _pick_list_html
+
+		rows = [
+			{
+				"group": "DRY",
+				"customer": "<script>x</script>",
+				"delivery_date": "2026-11-17",
+				"pick_list": "PL",
+				"item_code": "I1",
+				"item_name": "<img src=x onerror=alert(1)>",
+				"qty": 1.0,
+				"stock_uom": "Pcs",
+				"warehouse": "W & H",
+			}
+		]
+		html = _pick_list_html(rows, "2026-11-17", "Co <b> Ltd")
+		self.assertNotIn("<script>x</script>", html)
+		self.assertNotIn("<img src=x", html)
+		self.assertIn("&lt;script&gt;", html)
+		self.assertIn("W &amp; H", html)
+
+
+class TestLoadCombinedPickRowsFiltering(unittest.TestCase):
+	"""load_combined_pick_rows must filter by SO delivery_date — the paper is
+	per delivery date (H-1), not 'every active run'."""
+
+	def _run_load(self, run_delivery, requested):
+		import warehouse_app.warehouse_app.fulfillment.pick_print as pp
+
+		def fake_get_all(doctype, filters=None, fields=None, order_by=None, as_list=False, pluck=None):
+			if doctype == pp.RUN:
+				if fields and "dry_pick_list" in fields:
+					return [
+						{
+							"name": "WFR-1",
+							"company": "CO",
+							"customer": "C",
+							"status": "IN_PICKING",
+							"dry_pick_list": "PL-D",
+							"frozen_pick_list": None,
+							"sales_order": "SO-1",
+						}
+					]
+				return [{"name": "WFR-1", "sales_order": "SO-1"}]
+			if doctype == "Sales Order":
+				return [("SO-1", run_delivery)]
+			return []
+
+		frappe_flags = {}
+		with patch.object(pp, "pick_run_names", return_value=["WFR-1"]), patch.object(
+			pp.frappe, "get_all", side_effect=fake_get_all
+		), patch.object(pp, "_pick_list_rows", return_value=[
+			{"item_code": "I", "item_name": "N", "qty": 1.0, "picked_qty": 0.0, "stock_uom": "Pcs", "warehouse": "W"}
+		]):
+			return pp.load_combined_pick_rows("CO", requested)
+
+	def test_rows_only_for_requested_delivery_date(self):
+		rows = self._run_load("2026-11-17", "2026-11-17")
+		self.assertEqual(len(rows), 1)
+
+	def test_rows_empty_when_delivery_date_differs(self):
+		rows = self._run_load("2026-11-18", "2026-11-17")
+		self.assertEqual(rows, [])
 
 
 if __name__ == "__main__":
