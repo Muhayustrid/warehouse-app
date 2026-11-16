@@ -26,7 +26,7 @@ const props = defineProps({
 	date: { type: String, default: '' },
 })
 
-const emit = defineEmits(['closed'])
+const emit = defineEmits(['closed', 'editing'])
 
 const route = useRoute()
 
@@ -158,8 +158,7 @@ async function openSlip(row) {
 	notice.value = ''
 	try {
 		editing.value = await fetchPackingSlip(row.name)
-		driver.value = editing.value.driver || ''
-		vehicleNo.value = editing.value.vehicle_no || ''
+		emit('editing', true)
 	} catch (e) {
 		error.value = e.message || 'Gagal membuka packing slip.'
 	}
@@ -167,6 +166,7 @@ async function openSlip(row) {
 
 function closeSlip() {
 	editing.value = null
+	emit('editing', false)
 	colOrder.value = {
 		frozen: ['item', 'qty', 'uom', 'koli', 'berat'],
 		dry: ['item', 'qty', 'uom', 'koli', 'berat'],
@@ -451,8 +451,8 @@ function fmtQty(value) {
 			</div>
 		</template>
 
-		<!-- ================= Editor ================= -->
-		<template v-else>
+		<!-- ================= Editor (full layar: lepas dari card Fulfillment) ================= -->
+		<div v-else class="ps-editor-full">
 			<div class="ps-toolbar">
 				<button type="button" class="btn" @click="closeSlip">
 					<ArrowLeft :size="15" :stroke-width="2" />
@@ -645,7 +645,7 @@ function fmtQty(value) {
 					</div>
 				</div>
 			</div>
-		</template>
+		</div>
 
 		<PrintPreviewModal :open="printModalOpen" :title="printModalTitle" :items="printModalItems" @close="printModalOpen = false" />
 	</div>
@@ -653,6 +653,17 @@ function fmtQty(value) {
 
 <style scoped>
 .ps-page { padding: 16px; }
+
+/* Editor full layar saat embedded: keluar dari alur card Fulfillment. */
+.ps-editor-full {
+	position: fixed;
+	inset: 56px 0 0 0; /* di bawah topbar aplikasi */
+	background: #f7f8fa;
+	overflow-y: auto;
+	padding: 16px 24px 40px;
+	z-index: 40; /* di atas topbar (z-30) agar tidak tertutup */
+}
+@media (max-width: 820px) { .ps-editor-full { inset: 0; } }
 .ps-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .ps-filters, .ps-actions { display: flex; gap: 8px; align-items: center; }
 
