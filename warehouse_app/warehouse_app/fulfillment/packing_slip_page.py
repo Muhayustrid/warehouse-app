@@ -80,7 +80,8 @@ def slip_totals(lines: list[dict]) -> dict:
 
 
 def load_packing_slips(company: str, from_date: str, to_date: str) -> dict:
-	"""List of Packing Slips grouped per Sales Order for the list page."""
+	"""List of packing papers per Sales Order: every SO with a non-cancelled
+	Delivery Note (picked/packed). Editable until the DN is submitted."""
 	so_filters = {"company": company, "docstatus": 1}
 	if from_date or to_date:
 		so_filters["delivery_date"] = ("between", [from_date or to_date, to_date or from_date])
@@ -97,7 +98,7 @@ def load_packing_slips(company: str, from_date: str, to_date: str) -> dict:
 
 	dn_links = frappe.get_all(
 		"Delivery Note Item",
-		filters={"against_sales_order": ("in", sorted(so_by_name)), "docstatus": ("<", 2)},
+		filters={"against_sales_order": ("in", sorted(so_by_name))},
 		fields=["parent", "against_sales_order"],
 		limit_page_length=0,
 	)
@@ -114,95 +115,111 @@ def load_packing_slips(company: str, from_date: str, to_date: str) -> dict:
 		)
 	}
 
+	ps_counts: dict[str, int] = {}
+	for row in frappe.get_all(
+		"Packing Slip",
+		filters={"docstatus": ("<", 2)},
+		fields=["delivery_note"],
+		limit_page_length=0,
+	):
+		ps_counts[row["delivery_note"]] = ps_counts.get(row["delivery_note"], 0) + 1
+
 	slips: list[dict] = []
 	for so_name, so in so_by_name.items():
-		dn_names = [dn for dn in dn_by_so.get(so_name, []) if dn_status.get(dn) not in (None, 2)]
+		dn_names = sorted({dn for dn in dn_by_so.get(so_name, []) if dn_status.get(dn) not in (None, 2)})
 		if not dn_names:
 			continue
-		ps_rows = frappe.get_all(
-			"Packing Slip",
-			filters={"delivery_note": ("in", dn_names), "docstatus": ("<", 2)},
-			fields=["name", "delivery_note", "docstatus", "modified", "from_case_no", "to_case_no"],
-			order_by="from_case_no asc",
-			limit_page_length=0,
-		)
-		if not ps_rows:
-			continue
 		dn_docstatus = min(dn_status[dn] for dn in dn_names)
-		for ps in ps_rows:
-			slips.append(
-				{
-					"name": ps.name,
-					"sales_order": so_name,
-					"customer": so.customer,
-					"customer_name": so.customer_name or so.customer,
-					"po_no": so.po_no or "",
-					"delivery_date": str(so.delivery_date),
-					"delivery_note": ps.delivery_note,
-					"status": "Read-only" if dn_docstatus == 1 else "Editable",
-					"editable": dn_docstatus != 1,
-					"modified": str(ps.modified),
-					"from_case_no": ps.from_case_no,
-					"to_case_no": ps.to_case_no,
-				}
-			)
-	return {"company": company, "slips": slips}
-
-
-def load_packing_slip(name: str) -> dict:
-	"""Editor payload for one Packing Slip: koli lines, customer/PO header,
-	totals, editable flag."""
-	require_read()
-	ps = frappe.get_doc("Packing Slip", name)
-	dn_docstatus = frappe.db.get_value("Delivery Note", ps.delivery_note, "docstatus")
-	editable = dn_docstatus != 1
-	dn = frappe.get_doc("Delivery Note", ps.delivery_note) if editable else None
-	so_name = None
-	if dn:
-		so_name = next(
-			(row.against_sales_order for row in dn.items if getattr(row, "against_sales_order", None)),
-			None,
-		)
-
-	# Sibling slips of the same DN = the other koli (Frozen/Dry split).
-	siblings = frappe.get_all(
-		"Packing Slip",
-		filters={"delivery_note": ps.delivery_note, "docstatus": ("<", 2)},
-		fields=["name", "from_case_no", "custom_box_size"],
-		order_by="from_case_no asc",
-		limit_page_length=0,
-	)
-	categories = ["frozen" if (s.custom_box_size == "K") else "dry" for s in siblings]
-	ps_items = [
-		[
+		ps_total = sum(ps_counts.get(dn, 0) for dn in dn_names)
+		slips.append(
 			{
-				"item_code": it.item_code,
-				"item_name": it.item_name or it.item_code,
-				"qty": flt(it.qty),
-				"net_weight": flt(it.net_weight),
-				"stock_uom": it.stock_uom,
-			}
-			for it in frappe.get_doc("Packing Slip", s.name).items
-		]
-		for s in siblings
-	]
-	lines = slip_lines_from_ps_items(ps_items, categories=categories)
-
-	header = {"customer": "", "customer_name": "", "po_no": "", "delivery_date": ""}
-	if so_name:
-		so = frappe.db.get_value(
-			"Sales Order", so_name, ["customer", "customer_name", "po_no", "delivery_date"], as_dict=True
-		)
-		if so:
-			header = {
+				"name": so_name,
+				"sales_order": so_name,
 				"customer": so.customer,
 				"customer_name": so.customer_name or so.customer,
 				"po_no": so.po_no or "",
 				"delivery_date": str(so.delivery_date),
+				"delivery_note": dn_names[0],
+				"status": "Read-only" if dn_docstatus == 1 else ("Editable" if ps_total else "Belum Packing"),
+				"editable": dn_docstatus != 1,
+				"modified": str(max(
+					frappe.db.get_value("Delivery Note", dn, "modified") for dn in dn_names
+				)),
 			}
+		)
+	return {"company": company, "slips": slips}
+
+
+def load_packing_slip(name: str) -> dict:
+	"""Editor payload for one Sales Order: koli lines from its Packing Slips
+	(fallback: DN items when packing has not run yet), header, totals."""
+	require_read()
+	so = frappe.db.get_value(
+		"Sales Order", name, ["customer", "customer_name", "po_no", "delivery_date"], as_dict=True
+	)
+	if not so:
+		frappe.throw(f"Sales Order {name} not found.", frappe.DoesNotExistError)
+	header = {
+		"customer": so.customer,
+		"customer_name": so.customer_name or so.customer,
+		"po_no": so.po_no or "",
+		"delivery_date": str(so.delivery_date),
+	}
+
+	dn_links = frappe.get_all(
+		"Delivery Note Item",
+		filters={"against_sales_order": name},
+		pluck="parent",
+		limit_page_length=0,
+	)
+	dn_names = sorted(
+		{
+			dn
+			for dn in dn_links
+			if frappe.db.get_value("Delivery Note", dn, "docstatus") != 2
+		}
+	)
+	if not dn_names:
+		frappe.throw(f"No Delivery Note for {name}.", frappe.DoesNotExistError)
+	# Prefer the draft DN (still editable); a submitted sibling is read-only.
+	draft_dns = [dn for dn in dn_names if frappe.db.get_value("Delivery Note", dn, "docstatus") == 0]
+	dn_name = draft_dns[-1] if draft_dns else dn_names[-1]
+	editable = bool(draft_dns)
+
+	siblings = frappe.get_all(
+		"Packing Slip",
+		filters={"delivery_note": dn_name, "docstatus": ("<", 2)},
+		fields=["name", "from_case_no", "custom_box_size", "net_weight_pkg"],
+		order_by="from_case_no asc",
+		limit_page_length=0,
+	)
+	if siblings:
+		categories = ["frozen" if (s.custom_box_size == "K") else "dry" for s in siblings]
+		ps_items = [
+			[
+				{
+					"item_code": it.item_code,
+					"item_name": it.item_name or it.item_code,
+					"qty": flt(it.qty),
+					"net_weight": flt(it.net_weight),
+					"stock_uom": it.stock_uom,
+				}
+				for it in frappe.get_doc("Packing Slip", s.name).items
+			]
+			for s in siblings
+		]
+		lines = slip_lines_from_ps_items(ps_items, categories=categories)
+		# Hand-weighed weight per koli persists on the doc (net_weight_pkg).
+		for line in lines:
+			sibling = siblings[line["koli_no"] - 1]
+			if flt(sibling.net_weight_pkg):
+				line["berat"] = flt(sibling.net_weight_pkg)
+	else:
+		lines = _lines_from_dn(dn_name)
+
 	return {
-		"name": ps.name,
-		"delivery_note": ps.delivery_note,
+		"name": name,
+		"delivery_note": dn_name,
 		"editable": editable,
 		"header": header,
 		"lines": lines,
@@ -210,35 +227,89 @@ def load_packing_slip(name: str) -> dict:
 	}
 
 
+def _lines_from_dn(dn_name: str) -> list[dict]:
+	"""Fallback editor lines from DN items (packing not run yet): one line per
+	item, frozen/dry via Item master category, sequential koli numbers."""
+	company = frappe.db.get_value("Delivery Note", dn_name, "company")
+	profile = frappe.get_all(
+		"Warehouse Fulfillment Profile",
+		filters={"company": company},
+		fields=["name", "enabled", "frozen_item_group", "include_child_item_groups", "dry_item_exceptions"],
+		limit_page_length=1,
+	)
+	profile = profile[0] if profile else None
+	frozen = resolve_frozen(profile) if profile else None
+	dry_exceptions = resolve_dry_exceptions(profile) if profile else set()
+	items = frappe.get_all(
+		"Delivery Note Item",
+		filters={"parent": dn_name},
+		fields=["item_code", "item_name", "qty", "uom", "stock_uom", "item_group"],
+		order_by="idx asc",
+		limit_page_length=0,
+	)
+	dry_koli = frozen_koli = 0
+	lines = []
+	for it in items:
+		if it.item_code in dry_exceptions:
+			category = "dry"
+		elif frozen and it.item_group in frozen:
+			category = "frozen"
+		else:
+			category = "dry"
+		if category == "frozen":
+			frozen_koli += 1
+			koli_no = frozen_koli
+		else:
+			dry_koli += 1
+			koli_no = dry_koli
+		line = {
+			"item_code": it.item_code,
+			"item_name": it.item_name or it.item_code,
+			"qty": flt(it.qty),
+			"uom": it.stock_uom or it.uom,
+			"koli_no": koli_no,
+			"koli": 1,
+			"berat": "",
+			"category": category,
+			"net_weight": 0,
+		}
+		lines.append(line)
+	return lines
+
+
 def save_packing_slip(name: str, lines: list) -> dict:
-	"""Persist edited koli lines back onto the native Packing Slip documents of
-	the DN (one doc per koli). Blocked once the DN is submitted."""
+	"""Persist edited koli lines onto draft Packing Slip documents of the SO's
+	Delivery Note (one doc per koli). Blocked once the DN is submitted."""
 	require_read()
 	if isinstance(lines, str):
 		try:
 			lines = json.loads(lines)
 		except ValueError:
 			frappe.throw("Invalid lines payload.", frappe.ValidationError)
-	ps = frappe.get_doc("Packing Slip", name)
-	dn_docstatus = frappe.db.get_value("Delivery Note", ps.delivery_note, "docstatus")
-	if dn_docstatus == 1:
+	data = load_packing_slip(name)
+	if not data["editable"]:
 		frappe.throw("Packing Slip is read-only: Delivery Note already submitted.", frappe.ValidationError)
+	dn_name = data["delivery_note"]
 
 	# Group edited lines per koli number; delete extra slips, update/create the rest.
 	by_koli: dict[int, list[dict]] = {}
 	for line in lines or []:
-		koli = max(1, int(flt(line.get("koli_no"), 1) or 1))
+		koli = max(1, int(flt(line.get("koli_no")) or 1))
 		by_koli.setdefault(koli, []).append(line)
 
 	siblings = frappe.get_all(
 		"Packing Slip",
-		filters={"delivery_note": ps.delivery_note, "docstatus": 0},
+		filters={"delivery_note": dn_name, "docstatus": 0},
 		fields=["name", "from_case_no"],
 		order_by="from_case_no asc",
 		limit_page_length=0,
 	)
 	sibling_by_case = {int(s.from_case_no or 1): s.name for s in siblings}
-	max_case = max(sibling_by_case) if sibling_by_case else 0
+
+	dn_doc = frappe.get_doc("Delivery Note", dn_name)
+	dn_row_by_item = {}
+	for row in dn_doc.items:
+		dn_row_by_item.setdefault(row.item_code, row)
 
 	for koli in sorted(by_koli):
 		target = sibling_by_case.get(koli)
@@ -247,14 +318,19 @@ def save_packing_slip(name: str, lines: list) -> dict:
 			doc.set("items", [])
 		else:
 			doc = frappe.new_doc("Packing Slip")
-			doc.delivery_note = ps.delivery_note
+			doc.delivery_note = dn_name
 			doc.from_case_no = koli
 			doc.to_case_no = koli
-			doc.insert(ignore_permissions=True)
-		dn_row_by_item = {}
-		dn_doc = frappe.get_doc("Delivery Note", ps.delivery_note)
-		for row in dn_doc.items:
-			dn_row_by_item.setdefault(row.item_code, row)
+		# Category persists on the doc: box_size K=frozen/B=dry.
+		first = by_koli[koli][0]
+		doc.custom_box_size = "K" if first.get("category") == "frozen" else "B"
+		# Hand-weighed weight per koli: the input is one weight per koli, so
+		# take it from the koli's first line only. It persists on item rows
+		# (net_weight) because calculate_net_total_pkg recomputes header =
+		# sum(net_weight x qty).
+		weight = flt(by_koli[koli][0].get("berat")) or 0
+		total_qty = sum(flt(l.get("qty")) or 0 for l in by_koli[koli])
+		doc.net_weight_pkg = weight
 		for line in by_koli[koli]:
 			dn_row = dn_row_by_item.get(line.get("item_code"))
 			doc.append(
@@ -266,8 +342,14 @@ def save_packing_slip(name: str, lines: list) -> dict:
 					"qty": flt(line.get("qty")),
 					"dn_detail": dn_row.name if dn_row else None,
 					"stock_uom": line.get("uom") or (dn_row.stock_uom if dn_row else None),
+					# per-unit weight = koli weight / total qty, so the ERPNext
+					# recompute (net_weight x qty) lands on the hand-weighed value.
+					"net_weight": (weight / total_qty) if (weight and total_qty) else 0,
+					"weight_uom": "Kg",
 				},
 			)
+		if not doc.name:
+			doc.insert(ignore_permissions=True)  # insert after items: PS requires >=1 line
 		doc.save(ignore_permissions=True)
 
 	# Koli rows removed in the editor: delete those draft slips.
@@ -296,10 +378,11 @@ def packing_slip_print_html(name: str) -> str:
 			if line["category"] != category:
 				continue
 			berat = line.get("berat") if line.get("berat") != "" else (line.get("estimated_weight") or "")
+			berat_html = escape_html(str(berat)) if berat == "" or isinstance(berat, str) else f"{flt(berat):g}"
 			out.append(
 				f"<tr><td>{escape_html(line['item_code'])} &mdash; {escape_html(line['item_name'])}</td>"
 				f"<td class='num'>{flt(line['qty']):g}</td><td class='num'>{escape_html(str(line.get('uom') or ''))}</td>"
-				f"<td class='num'>{line['koli_no']}</td><td class='num'>{berat if berat == '' else flt(berat):g}</td></tr>"
+				f"<td class='num'>{line['koli_no']}</td><td class='num'>{berat_html}</td></tr>"
 			)
 		return "".join(out)
 
