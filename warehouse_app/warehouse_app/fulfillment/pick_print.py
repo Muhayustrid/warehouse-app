@@ -123,6 +123,100 @@ def load_combined_pick_rows(company: str, delivery_date: str) -> list[dict]:
 	)
 
 
+def load_delivery_summary_rows(company: str, delivery_date: str) -> list[dict]:
+	"""Per-customer shipment summary for one delivery date: DN items + koli
+	counts (custom_dry_packages / custom_frozen_packages on Delivery Note)."""
+	so_names = frappe.get_all(
+		"Sales Order",
+		filters={"delivery_date": getdate(delivery_date)},
+		pluck="name",
+	)
+	if not so_names:
+		return []
+	runs = frappe.get_all(
+		RUN,
+		filters={
+			"company": company,
+			"sales_order": ("in", so_names),
+			"delivery_note": ("is", "set"),
+			"status": ("not in", ["CANCELLED"]),
+		},
+		fields=["name", "customer", "delivery_note"],
+		order_by="customer asc, name asc",
+	)
+	customers: list[dict] = []
+	for run in runs:
+		if not run.get("delivery_note"):
+			continue
+		dn = frappe.get_doc("Delivery Note", run.get("delivery_note"))
+		if dn.docstatus == 2:
+			continue
+		customers.append(
+			{
+				"customer": run.get("customer") or "",
+				"delivery_note": run.get("delivery_note"),
+				"dry_packages": int(getattr(dn, "custom_dry_packages", None) or 0),
+				"frozen_packages": int(getattr(dn, "custom_frozen_packages", None) or 0),
+				"items": [
+					{
+						"item_code": it.item_code,
+						"item_name": it.item_name,
+						"qty": flt(it.qty),
+						"uom": it.uom or it.stock_uom or "",
+					}
+					for it in dn.items
+				],
+			}
+		)
+	return customers
+
+
+
+def _delivery_summary_html(customers: list[dict], delivery_date: str, company: str) -> str:
+	"""One A4 sheet: per customer, items to ship + koli count, for the loading crew."""
+	head = (
+		f"<!doctype html><html><head><meta charset='utf-8'><title>Ringkasan Kirim {escape_html(delivery_date)}</title>"
+		"<style>"
+		"@page{size:A4;margin:12mm}"
+		"body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111}"
+		"h1{font-size:16px;margin:0 0 2px}"
+		".sub{color:#555;margin:0 0 10px;font-size:11px}"
+		"h2{font-size:13px;margin:14px 0 2px}"
+		".koli{color:#555;margin:0 0 4px;font-size:10px}"
+		"table{width:100%;border-collapse:collapse;margin-bottom:10px}"
+		"th,td{border:1px solid #999;padding:4px 6px;text-align:left}"
+		"th{background:#e8eef5;font-size:10px;text-transform:uppercase}"
+		".qty,.uom{white-space:nowrap}"
+		".empty{color:#555;font-size:13px;padding:24px 0}"
+		"</style></head><body>"
+	)
+	title = f"<h1>RINGKASAN KIRIM &mdash; {escape_html(company)}</h1><p class='sub'>Tanggal kirim: {escape_html(delivery_date)}</p>"
+	if not customers:
+		return head + title + "<p class='empty'>Tidak ada kiriman untuk tanggal ini.</p></body></html>"
+	sections = []
+	total_koli = 0
+	for c in customers:
+		koli = c["dry_packages"] + c["frozen_packages"]
+		total_koli += koli
+		body = "".join(
+			f"<tr><td>{escape_html(it['item_code'])} &mdash; {escape_html(it['item_name'])}</td>"
+			f"<td class='qty'>{it['qty']:g}</td><td class='uom'>{escape_html(it['uom'])}</td></tr>"
+			for it in c["items"]
+		)
+		sections.append(
+			f"<h2>{escape_html(c['customer'])}</h2>"
+			f"<p class='koli'>Total {koli} koli &mdash; {c['dry_packages']} dry, {c['frozen_packages']} frozen &middot; DN {escape_html(c['delivery_note'])}</p>"
+			"<table><thead><tr><th>Item</th><th>Qty</th><th>UOM</th></tr></thead>"
+			f"<tbody>{body}</tbody></table>"
+		)
+	return (
+		head
+		+ title
+		+ "".join(sections)
+		+ f"<p class='sub'>Total {len(customers)} customer, {total_koli} koli.</p></body></html>"
+	)
+
+
 def _pick_list_html(rows: list[dict], delivery_date: str, company: str) -> str:
 	"""One A4 sheet: all rows for a delivery date, FROZEN section then DRY."""
 	head = (

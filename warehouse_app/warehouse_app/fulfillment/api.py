@@ -280,6 +280,25 @@ def get_combined_pick_list_html(company=None, delivery_date=None):
 
 
 @frappe.whitelist(methods=["GET"])
+def get_delivery_summary_html(company=None, delivery_date=None):
+	from warehouse_app.warehouse_app.fulfillment.pick_print import (
+		_delivery_summary_html,
+		load_delivery_summary_rows,
+	)
+
+	require_read()
+	if not delivery_date:
+		frappe.throw("Delivery date is required.", frappe.ValidationError)
+	company = company or frappe.defaults.get_user_default("Company")
+	if not company:
+		frappe.throw("Company is required.", frappe.ValidationError)
+	if not frappe.has_permission("Company", doc=company, ptype="read"):
+		raise frappe.PermissionError
+	customers = load_delivery_summary_rows(company, delivery_date)
+	return _delivery_summary_html(customers, delivery_date, company)
+
+
+@frappe.whitelist(methods=["GET"])
 def get_packing_slips_print_html(delivery_note):
 	if not delivery_note:
 		return ""

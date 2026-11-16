@@ -493,7 +493,7 @@ function onConfirmReset() {
 								</div>
 								<div class="pkg-cat-body">
 									<div class="pkg-counter-row">
-										<label class="pkg-counter-label">Jumlah Koli Kardus:</label>
+										<label class="pkg-counter-label">Jumlah Koli:</label>
 										<div class="stepper-counter">
 											<button
 												type="button"
@@ -515,7 +515,7 @@ function onConfirmReset() {
 										</div>
 									</div>
 									<span class="pkg-hint">
-										{{ dryPackages > 1 ? `Item Dry dikemas berurutan ke ${dryPackages} koli kardus.` : 'Seluruh item Dry dikemas dalam 1 koli kardus.' }}
+										{{ dryPackages > 1 ? `Item Dry dikemas berurutan ke ${dryPackages} koli.` : 'Seluruh item Dry dikemas dalam 1 koli.' }}
 									</span>
 								</div>
 							</div>
@@ -528,7 +528,7 @@ function onConfirmReset() {
 								</div>
 								<div class="pkg-cat-body">
 									<div class="pkg-counter-row">
-										<label class="pkg-counter-label">Jumlah Koli Styrofoam:</label>
+										<label class="pkg-counter-label">Jumlah Koli:</label>
 										<div class="stepper-counter">
 											<button
 												type="button"
@@ -550,7 +550,7 @@ function onConfirmReset() {
 										</div>
 									</div>
 									<span class="pkg-hint">
-										{{ frozenPackages > 1 ? `Item Frozen dikemas berurutan ke ${frozenPackages} koli styrofoam.` : 'Seluruh item Frozen dikemas dalam 1 koli styrofoam.' }}
+										{{ frozenPackages > 1 ? `Item Frozen dikemas berurutan ke ${frozenPackages} koli.` : 'Seluruh item Frozen dikemas dalam 1 koli.' }}
 									</span>
 								</div>
 							</div>

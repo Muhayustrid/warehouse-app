@@ -11,7 +11,7 @@ import {
 	Search,
 	X,
 } from 'lucide-vue-next'
-import { fetchCombinedPickListHtml, fetchOrderQueue } from '@/data/fulfillment'
+import { fetchCombinedPickListHtml, fetchDeliverySummaryHtml, fetchOrderQueue } from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
 
@@ -181,6 +181,21 @@ async function printCombinedPickList() {
 	}
 }
 
+async function printDeliverySummary() {
+	if (pickPrinting.value) return
+	pickPrinting.value = true
+	try {
+		const res = await fetchDeliverySummaryHtml(company.value, pickDate.value)
+		printModalTitle.value = 'Ringkasan Kirim'
+		printModalItems.value = [{ label: 'Ringkasan', name: pickDate.value, html: res }]
+		printModalOpen.value = true
+	} catch (e) {
+		error.value = e.message || 'Gagal memuat ringkasan kirim.'
+	} finally {
+		pickPrinting.value = false
+	}
+}
+
 function setPageSize(n) {
 	if (pageLength.value === n) return
 	pageLength.value = n
@@ -276,14 +291,14 @@ function statusLabel(row) {
 				</div>
 
 				<div class="ff-toolbar-actions">
-					<!-- Pick list gabungan: hanya di tab Picking (kertas = satuan kerja) -->
-					<template v-if="activeTab === 'picking'">
+					<!-- Cetak gabungan: hanya di tab Packing (kertas = satuan kerja) -->
+					<template v-if="activeTab === 'packing'">
 						<input
 							v-model="pickDate"
 							class="input input-sm ff-pick-date"
 							type="date"
 							aria-label="Tanggal kirim"
-							title="Tanggal kirim yang dipick"
+							title="Tanggal kirim"
 						/>
 						<button
 							type="button"
@@ -293,6 +308,15 @@ function statusLabel(row) {
 						>
 							<FileText :size="14" :stroke-width="2" />
 							<span>Cetak Pick List Gabungan</span>
+						</button>
+						<button
+							type="button"
+							class="btn ff-manifest-btn"
+							:disabled="pickPrinting"
+							@click="printDeliverySummary"
+						>
+							<FileText :size="14" :stroke-width="2" />
+							<span>Cetak Ringkasan Kirim</span>
 						</button>
 					</template>
 					<!-- Filter Dropdown Popover Anchor -->

@@ -25,6 +25,13 @@ export function fetchCombinedPickListHtml(company, deliveryDate) {
 	})
 }
 
+export function fetchDeliverySummaryHtml(company, deliveryDate) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.get_delivery_summary_html', {
+		company: company || undefined,
+		delivery_date: deliveryDate,
+	})
+}
+
 export function fetchOrderPreview(salesOrder) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_order_preview', {
 		sales_order: salesOrder,

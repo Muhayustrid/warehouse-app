@@ -143,5 +143,77 @@ class TestLoadCombinedPickRowsFiltering(unittest.TestCase):
 		self.assertEqual(rows, [])
 
 
+class TestDeliverySummary(unittest.TestCase):
+	"""Ringkasan kirim per customer untuk satu tanggal kirim."""
+
+	def _fake_pp(self, dn_doc):
+		import warehouse_app.warehouse_app.fulfillment.pick_print as pp
+
+		def fake_get_all(doctype, filters=None, fields=None, order_by=None, as_list=False, pluck=None):
+			if doctype == "Sales Order":
+				return ["SO-1"]
+			if doctype == pp.RUN:
+				return [
+					{"name": "WFR-1", "customer": "RS A", "delivery_note": "DN-1"},
+					{"name": "WFR-2", "customer": "RS B", "delivery_note": None},
+				]
+			return []
+
+		with patch.object(pp.frappe, "get_all", side_effect=fake_get_all), patch.object(
+			pp.frappe, "get_doc", return_value=dn_doc
+		):
+			return pp.load_delivery_summary_rows("CO", "2026-11-17")
+
+	def test_summary_groups_koli_and_items(self):
+		class Row:
+			def __init__(self, d):
+				self.__dict__.update(d)
+
+		class DN:
+			name = "DN-1"
+			docstatus = 1
+			custom_dry_packages = 2
+			custom_frozen_packages = 1
+			items = [
+				Row({"item_code": "I1", "item_name": "Item 1", "qty": 5.0, "uom": "Pcs", "stock_uom": "Pcs"}),
+			]
+
+		customers = self._fake_pp(DN())
+		self.assertEqual(len(customers), 1)
+		c = customers[0]
+		self.assertEqual(c["customer"], "RS A")
+		self.assertEqual(c["dry_packages"], 2)
+		self.assertEqual(c["frozen_packages"], 1)
+		self.assertEqual(c["items"][0]["item_code"], "I1")
+
+	def test_run_without_dn_is_skipped(self):
+		class EmptyDN:
+			name = "DN-X"
+			docstatus = 1
+			custom_dry_packages = 0
+			custom_frozen_packages = 0
+			items = []
+
+		customers = self._fake_pp(EmptyDN())
+		self.assertEqual([c["customer"] for c in customers], ["RS A"])
+
+	def test_html_escapes_user_data(self):
+		from warehouse_app.warehouse_app.fulfillment.pick_print import _delivery_summary_html
+
+		customers = [
+			{
+				"customer": "<script>x</script>",
+				"delivery_note": "DN-1",
+				"dry_packages": 2,
+				"frozen_packages": 1,
+				"items": [{"item_code": "I1", "item_name": "<img src=x>", "qty": 1.0, "uom": "Pcs"}],
+			}
+		]
+		html = _delivery_summary_html(customers, "2026-11-17", "Co & Sons")
+		self.assertNotIn("<script>x</script>", html)
+		self.assertNotIn("<img src=x>", html)
+		self.assertIn("Total 3 koli", html)
+
+
 if __name__ == "__main__":
 	unittest.main()
