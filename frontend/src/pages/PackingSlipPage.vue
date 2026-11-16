@@ -634,9 +634,10 @@ function fmtQty(value) {
 .ps-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .ps-filters, .ps-actions { display: flex; gap: 8px; align-items: center; }
 
-/* Filter ala ERPNext: dropdown panel di bawah tombol */
-.ps-filter-wrap { position: relative; }
-.ps-filter-panel { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 380px; background: #fff; border: 1px solid #d1d8dd; border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); padding: 10px 12px; }
+/* Filter ala ERPNext: panel inline di bawah toolbar (bukan absolute, agar
+	tidak terpotong overflow:hidden pada .board-card induk) */
+.ps-filter-wrap { width: 100%; }
+.ps-filter-panel { background: #fff; border: 1px solid #d1d8dd; border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08); padding: 10px 12px; max-width: 560px; }
 .ps-filter-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .ps-filter-x { border: 0; background: none; font-size: 16px; line-height: 1; cursor: pointer; color: #6b7280; padding: 2px 4px; }
 .ps-filter-x:hover { color: #111; }
