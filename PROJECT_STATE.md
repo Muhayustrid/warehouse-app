@@ -1,6 +1,6 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-10-30 — **W54 COMMITTED & PUSHED to callmevan1120/warehouse-app (main)**. In-app fulfillment workspace MVP (F3/F4), Multi-Koli Packing Refinement (Sequential Bin Filling & Live Preview), 1-Click Pick All, Single Print Action, 29 Oct cloud database restored & migrated into `erp.localhost`, and bind mount permanently configured in `frappe16`.
+Head: 2026-11-16 — **feat/fulfillment-stage-tabs (5 commits, unpushed)**: halaman Fulfillment dipecah jadi 4 tab tahap (Order/Picking/Packing/Delivery) + endpoint cetak Pick List Gabungan per tanggal kirim (FROZEN dulu, lalu DRY, sorted customer/item), dengan filter delivery_date SO dan escape HTML. Base di-reset ke origin/main (dc42c7f) — main lokal lama (SR count protection + Delivery Manifest + PackingListPage) disimpan di branch `backup-main-lokal-20261116`. Tests: 108/108 unittest discover test_fulfillment_*.py OK (docker frappe16-backend-1). Review pass fix: filter tanggal + XSS (commit 1c0cdd1). Ledger: `.superpowers/sdd/2026-11-16-fulfillment-stage-tabs.md/progress.md`.
 
 ## Current
 
