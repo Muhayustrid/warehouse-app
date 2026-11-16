@@ -9,6 +9,8 @@ import { useRoute } from 'vue-router'
 import { ArrowLeft, Filter, GripVertical, Plus, Printer, Save, Tag, X } from 'lucide-vue-next'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
 import {
+	fetchPackingSheet,
+	fetchPackingSheetHtml,
 	fetchPackingSlip,
 	fetchPackingSlipLabelsHtml,
 	fetchPackingSlipPrintHtml,
@@ -88,6 +90,33 @@ function toggleFilter() {
 	showFilter.value = !showFilter.value
 }
 defineExpose({ toggleFilter })
+
+// ===== Sheet view (embedded): edit Koli/Berat langsung di kartu customer =====
+function cardKoli(s) {
+	return (s.lines || []).reduce((sum, l) => sum + Math.max(1, Number(l.koli) || 1), 0)
+}
+const totalKoli = computed(() => filteredSlips.value.reduce((sum, s) => sum + cardKoli(s), 0))
+
+async function saveCard(s) {
+	if (!s.editable) return
+	error.value = ''
+	try {
+		await savePackingSlip(s.sales_order, s.lines, driver.value, vehicleNo.value)
+	} catch (e) {
+		error.value = e.message || `Gagal menyimpan ${s.customer_name}.`
+	}
+}
+
+async function printSheet() {
+	try {
+		const html = await fetchPackingSheetHtml(company.value, fromDate.value)
+		printModalTitle.value = `Cetak Packing List (${fromDate.value})`
+		printModalItems.value = [{ label: 'Packing List', name: fromDate.value, html }]
+		printModalOpen.value = true
+	} catch (e) {
+		error.value = e.message || 'Gagal memuat packing list gabungan.'
+	}
+}
 function applyFilters() {
 	appliedFilters.value = filterDraft.value.filter((f) => f.field && f.value)
 	showFilter.value = false
@@ -146,7 +175,10 @@ async function load() {
 	loading.value = true
 	error.value = ''
 	try {
-		const res = await fetchPackingSlips(company.value, fromDate.value, toDate.value)
+		// Embedded (tab Packing): sheet gabungan dengan lines per SO.
+		const res = props.embedded
+			? await fetchPackingSheet(company.value, fromDate.value)
+			: await fetchPackingSlips(company.value, fromDate.value, toDate.value)
 		company.value = res.company || company.value
 		slips.value = res.slips || []
 		// Driver per hari: prefill dari data existing, jangan menimpa yang sedang diedit.
@@ -375,6 +407,10 @@ function fmtQty(value) {
 						<Filter :size="13" :stroke-width="2" />
 						<span>Filter{{ appliedFilters.length ? ` (${appliedFilters.length})` : '' }}</span>
 					</button>
+					<button v-if="embedded" type="button" class="btn btn-sm" :disabled="loading" @click="printSheet">
+						<Printer :size="13" :stroke-width="2" />
+						<span>Cetak Packing List</span>
+					</button>
 					<div v-if="showFilter" class="ps-filter-panel">
 						<div class="ps-filter-head">
 							<strong>Filter</strong>
@@ -420,6 +456,53 @@ function fmtQty(value) {
 			<p v-if="error" class="ps-error">{{ error }}</p>
 			<p v-if="loading" class="ps-empty">Memuat…</p>
 			<p v-else-if="!slips.length" class="ps-empty">Belum ada Packing Slip pada rentang tanggal ini.</p>
+
+			<!-- ===== Sheet ala papan klip (embedded): kartu per customer, edit langsung ===== -->
+			<template v-else-if="embedded">
+				<div class="sheet-grid">
+					<div v-for="s in filteredSlips" :key="s.name" class="sheet-card">
+						<div class="sc-cap">
+							<button type="button" class="sc-name" title="Buka editor penuh" @click="openSlip(s)">
+								{{ s.customer_name }}
+							</button>
+							<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
+							<span class="sc-colly">Colly<br /><b>{{ (s.totals?.total_dry_colly || 0) + (s.totals?.total_frozen_colly || 0) }}</b></span>
+						</div>
+						<table class="sc-tbl">
+							<thead>
+								<tr><th>Item</th><th>Qty</th><th>Koli</th><th>Berat</th><th>B / K</th><th>Picker</th><th>Estimasi</th></tr>
+							</thead>
+							<tbody>
+								<tr v-for="(l, i) in s.lines" :key="i">
+									<td>{{ l.item_name }}</td>
+									<td class="num" :class="{ 'qty-hl': l.category === 'frozen' }">{{ l.qty }}</td>
+									<td><input v-model="l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
+									<td><input v-model="l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
+									<td class="hand"></td>
+									<td class="hand"></td>
+									<td class="num">{{ l.estimated_weight || '' }}</td>
+								</tr>
+								<tr class="tf">
+									<td colspan="2">Total</td>
+									<td>{{ cardKoli(s) }}</td>
+									<td colspan="4"></td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				<div class="sheet-foot">
+					<div class="sf-total">TOTAL {{ totalKoli }} KOLI</div>
+					<table class="sf-box">
+						<tr><th></th><th>BERANGKAT</th><th>PULANG</th></tr>
+						<tr><td>BOX ABU</td><td></td><td></td></tr>
+						<tr><td>KRANJANG BESAR</td><td></td><td></td></tr>
+						<tr><td>KRANJANG KECIL</td><td></td><td></td></tr>
+					</table>
+					<div class="sf-mobil"><span>MOBIL : {{ vehicleNo || '—' }}</span><span>DRIVER : {{ driver || '—' }}</span></div>
+				</div>
+			</template>
 
 			<div v-else class="board-card">
 				<div class="ps-thead">
@@ -741,4 +824,29 @@ function fmtQty(value) {
 .ps-addrow select { min-width: 220px; }
 .ps-total-line { border: 1px solid #999; background: #f4f4f0; padding: 5px 8px; font-size: 12px; margin-top: 8px; }
 @media (max-width: 820px) { .ps-cols { flex-direction: column; } }
+
+/* ===== Sheet ala papan klip (Image 2) ===== */
+.sheet-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+@media (max-width: 900px) { .sheet-grid { grid-template-columns: 1fr; } }
+.sheet-card { border: 1.5px solid #111; background: #fff; break-inside: avoid; }
+.sc-cap { display: flex; align-items: center; gap: 8px; background: #ffe94a; border-bottom: 1.5px solid #111; padding: 4px 8px; }
+.sc-name { flex: 1; border: 0; background: none; padding: 0; font-weight: bold; font-size: 12.5px; text-align: left; cursor: pointer; color: inherit; }
+.sc-name:hover { text-decoration: underline; }
+.sc-dry { white-space: nowrap; font-size: 11px; }
+.sc-colly { text-align: center; background: #fff; border: 1px solid #111; padding: 0 6px; font-size: 9px; line-height: 1.2; }
+.sc-colly b { font-size: 13px; }
+.sc-tbl { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+.sc-tbl th, .sc-tbl td { border: 1px solid #111; padding: 2px 4px; text-align: left; }
+.sc-tbl th { background: #ffe94a; font-size: 9.5px; }
+.sc-tbl .num { text-align: center; }
+.sc-tbl .qty-hl { background: #ffe94a; font-weight: 600; }
+.sc-tbl .hand { width: 34px; }
+.sc-in { width: 100%; border: 0; background: #f8f8f8; text-align: center; font: inherit; padding: 0; }
+.sc-in:focus { background: #fff; outline: 1px solid #111; }
+.sc-tbl .tf td { background: #ffe94a; font-weight: bold; }
+.sheet-foot { margin-top: 8px; }
+.sf-total { font-size: 14px; font-weight: bold; }
+.sf-box { border-collapse: collapse; margin-top: 6px; }
+.sf-box th, .sf-box td { border: 1px solid #111; height: 24px; min-width: 90px; font-size: 11px; padding: 2px 6px; }
+.sf-mobil { margin-top: 6px; font-size: 12px; font-weight: bold; display: flex; gap: 24px; }
 </style>

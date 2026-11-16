@@ -45,8 +45,10 @@ from warehouse_app.warehouse_app.fulfillment.picking import (
 	submit_pick_list as _submit_pick_list,
 )
 from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
+	load_packing_sheet,
 	load_packing_slip,
 	load_packing_slips,
+	packing_sheet_html,
 	packing_slip_labels_html,
 	packing_slip_print_html,
 	packing_slips_labels_html,
@@ -479,5 +481,18 @@ def get_packing_slip_labels_html(name=None):
 @frappe.whitelist(methods=["GET"])
 def get_packing_slips_labels_html(company=None, date=None):
 	return packing_slips_labels_html(company=company, date=date)
+
+
+@frappe.whitelist(methods=["GET"])
+def get_packing_sheet(company=None, date=None):
+	company = company or frappe.defaults.get_user_default("Company")
+	if not company:
+		frappe.throw("Company is required.", frappe.ValidationError)
+	return load_packing_sheet(company, date or "")
+
+
+@frappe.whitelist(methods=["GET"])
+def get_packing_sheet_html(company=None, date=None):
+	return packing_sheet_html(company=company, date=date)
 
 

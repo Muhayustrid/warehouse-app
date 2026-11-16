@@ -87,7 +87,9 @@ export async function callGet(url, params = {}) {
 	try {
 		// fetch tak punya opsi `params` — query wajib dirangkai sendiri
 		const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== ''))
-		const suffix = qs.toString() ? '?' + qs : ''
+		// Cache-buster: label/print hasil generate server tidak boleh di-cache browser.
+		qs.set('_', String(Date.now()))
+		const suffix = '?' + qs
 		return await request('/api/method/' + url + suffix)
 	} catch (e) {
 		throw new Error(errText(e))

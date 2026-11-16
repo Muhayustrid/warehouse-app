@@ -574,6 +574,113 @@ def packing_slips_labels_html(company: str | None = None, date: str | None = Non
 	return _labels_page("".join(divs), title)
 
 
+def sheet_koli_total(lines: list[dict]) -> int:
+	"""Total colly of one card: sum of per-line koli."""
+	return sum(max(1, int(flt(l.get("koli")) or 1)) for l in lines)
+
+
+def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
+	"""One customer card of the combined packing sheet (pure, testable): yellow
+	caption row (customer, Dry count, Colly total) + table Item/Qty/Koli/Berat/
+	B/K/Picker/Estimasi. B/K and Picker stay blank (hand-filled on paper)."""
+	rows = []
+	dry_koli = 0
+	for line in lines:
+		koli = max(1, int(flt(line.get("koli")) or 1))
+		if line.get("category") == "dry":
+			dry_koli += koli
+		est = line.get("estimated_weight")
+		est_s = f"{flt(est):g}" if est not in (None, "") else ""
+		rows.append(
+			f"<tr><td class='it'>{escape_html(line.get('item_name') or '')}</td>"
+			f"<td class='qty'>{flt(line.get('qty')):g}</td><td class='k'>{koli}</td>"
+			f"<td class='w'>{escape_html(str(line.get('berat') or ''))}</td>"
+			f"<td class='hand'></td><td class='hand'></td><td class='est'>{est_s}</td></tr>"
+		)
+	head = (
+		"<tr><th>Item</th><th>Qty</th><th>Koli</th><th>Berat</th>"
+		"<th>B / K</th><th>Picker</th><th>Estimasi</th></tr>"
+	)
+	koli_sum = sheet_koli_total(lines)
+	foot = f"<tr class='tf'><td colspan='2'>Total</td><td>{koli_sum}</td><td colspan='4'></td></tr>"
+	return (
+		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
+		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly <b>{koli_sum}</b></span></div>"
+		f"<table>{head}{''.join(rows)}{foot}</table></div>"
+	)
+
+
+def load_packing_sheet(company: str, date: str) -> dict:
+	"""Combined packing sheet for one delivery date: per-SO slips with editor
+	lines attached (sheet view + print)."""
+	require_read()
+	res = load_packing_slips(company, date or "", date or "")
+	for slip in res["slips"]:
+		try:
+			full = load_packing_slip(slip["sales_order"])
+		except frappe.DoesNotExistError:
+			slip["lines"] = []
+			continue
+		slip["lines"] = full["lines"]
+		slip["totals"] = full["totals"]
+	return res
+
+
+def packing_sheet_html(company: str | None = None, date: str | None = None) -> str:
+	"""A4 print of the combined packing sheet: per-customer yellow cards,
+	blank B/K + Picker to hand-fill, TOTAL KOLI, truck box table, MOBIL/DRIVER."""
+	require_read()
+	company = company or frappe.defaults.get_user_default("Company")
+	if not company:
+		frappe.throw("Company is required.", frappe.ValidationError)
+	res = load_packing_sheet(company, date or "")
+	cards = []
+	total_koli = 0
+	for slip in res["slips"]:
+		if not slip["lines"]:
+			continue
+		total_koli += sheet_koli_total(slip["lines"])
+		cards.append(sheet_card_html(slip["customer_name"], slip["lines"]))
+	title = f"Packing List {company} {date or ''}".strip()
+	return _sheet_page("".join(cards), total_koli, res.get("driver") or "", res.get("vehicle_no") or "", title)
+
+
+def _sheet_page(body: str, total_koli: int, driver: str, vehicle_no: str, title: str) -> str:
+	return f"""<!doctype html><html><head><meta charset='utf-8'><title>{escape_html(title)}</title>
+<style>
+@page{{size:A4 portrait;margin:8mm}}
+body{{font-family:Arial,Helvetica,sans-serif;font-size:9px;margin:0}}
+.grid{{column-count:2;column-gap:5mm}}
+.card{{break-inside:avoid;margin-bottom:4mm;border:1.5px solid #111;background:#fff}}
+.cap{{display:flex;gap:3mm;align-items:center;background:#ffe94a;border-bottom:1.5px solid #111;padding:0.8mm 2mm}}
+.cap .cust{{flex:1;font-weight:bold;font-size:10px}}
+.cap .dry,.cap .colly{{white-space:nowrap}}
+.cap .colly{{text-align:center;background:#fff;border:1px solid #111;padding:0 2mm}}
+.cap .colly b{{font-size:12px}}
+table{{width:100%;border-collapse:collapse}}
+th,td{{border:1px solid #111;padding:0.6mm 1.5mm;text-align:left}}
+th{{background:#ffe94a;font-size:8.5px}}
+td.qty,td.k,td.w,td.est{{text-align:center}}
+td.hand{{width:11mm}}
+tr.tf td{{background:#ffe94a;font-weight:bold}}
+.boxwrap{{margin-top:5mm;display:flex;gap:8mm}}
+.total{{font-size:12px;font-weight:bold;margin-top:3mm}}
+.boxtable td,.boxtable th{{height:6mm}}
+.mobil{{margin-top:3mm;font-size:10px;font-weight:bold}}
+.mobil span{{display:inline-block;margin-right:10mm}}
+</style></head><body>
+<div class='grid'>{body or "<p>Belum ada packing pada tanggal ini.</p>"}</div>
+<div class='total'>TOTAL {total_koli} KOLI</div>
+<div class='boxwrap'><table class='boxtable'>
+<tr><th></th><th>BERANGKAT</th><th>PULANG</th></tr>
+<tr><td>BOX ABU</td><td></td><td></td></tr>
+<tr><td>KRANJANG BESAR</td><td></td><td></td></tr>
+<tr><td>KRANJANG KECIL</td><td></td><td></td></tr>
+</table></div>
+<div class='mobil'><span>MOBIL : {escape_html(vehicle_no)}</span><span>DRIVER : {escape_html(driver)}</span></div>
+<script>window.print()</script></body></html>"""
+
+
 def _slip_label_divs(name: str) -> str:
 	"""Label <div>s for one packing slip, in koli order (1/total first)."""
 	data = load_packing_slip(name)

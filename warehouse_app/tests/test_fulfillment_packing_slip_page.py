@@ -6,6 +6,8 @@ import unittest
 from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
 	_labels_page,
 	packing_summary,
+	sheet_card_html,
+	sheet_koli_total,
 	slip_lines_from_ps_items,
 	slip_totals,
 	validate_slip_lines,
@@ -104,6 +106,33 @@ class TestValidateSlipLines(unittest.TestCase):
 		# koli_no kosong -> default 1, bukan error.
 		lines = [{"item_code": "PJ260010", "qty": 2}]
 		self.assertEqual(validate_slip_lines(lines, dn_items={"PJ260010"}), [])
+
+
+class TestSheetCard(unittest.TestCase):
+	"""Kartu customer pada sheet gabungan ala Image 2 (pure helpers)."""
+
+	def _lines(self):
+		return [
+			{"item_name": "Krim Kopi", "qty": 45, "koli": 1, "berat": "", "category": "dry"},
+			{"item_name": "Butter", "qty": 35, "koli": 1, "berat": "31.62", "category": "frozen", "estimated_weight": 31.62},
+		]
+
+	def test_card_layout(self):
+		html = sheet_card_html("RS ISLAM AL-IKHLAS", self._lines())
+		self.assertIn("RS ISLAM AL-IKHLAS", html)
+		for col in ("Item", "Qty", "Koli", "Berat", "B / K", "Picker", "Estimasi"):
+			self.assertIn(col, html)
+		self.assertIn("31.62", html)  # estimasi frozen tampil
+
+	def test_totals_and_dry_count(self):
+		html = sheet_card_html("CUST", self._lines())
+		self.assertIn("Dry : 1", html)
+		self.assertIn("<b>2</b>", html)  # colly total
+		self.assertIn("<td>2</td>", html)  # baris Total
+
+	def test_koli_total(self):
+		self.assertEqual(sheet_koli_total(self._lines()), 2)
+		self.assertEqual(sheet_koli_total([{"koli": ""}, {"koli": 3}]), 4)
 
 
 class TestPackingSummary(unittest.TestCase):
