@@ -22,9 +22,9 @@ export default createRouter({
 			meta: { wide: true },
 		},
 		{
-			path: '/packing-list',
-			name: 'packing-list',
-			component: () => import('@/pages/PackingListPage.vue'),
+			path: '/packing-slips',
+			name: 'packing-slips',
+			component: () => import('@/pages/PackingSlipPage.vue'),
 			meta: { wide: true },
 		},
 		{

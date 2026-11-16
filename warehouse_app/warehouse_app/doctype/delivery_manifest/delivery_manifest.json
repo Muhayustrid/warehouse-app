@@ -74,12 +74,6 @@
    "fieldtype": "Table",
    "label": "Outlets",
    "options": "Delivery Manifest Outlet"
-  },
-  {
-   "fieldname": "page_state",
-   "fieldtype": "Long Text",
-   "label": "Page State",
-   "no_copy": 1
   }
  ],
  "index_web_pages_for_search": 1,

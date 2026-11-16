@@ -167,32 +167,29 @@ export function fetchPackingSlipsPrintHtml(deliveryNote) {
 	})
 }
 
-export function fetchPackingListPage(company, fromDate, toDate) {
-	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_list_page', {
+export function fetchPackingSlips(company, fromDate, toDate) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slips', {
 		company: company || undefined,
 		from_date: fromDate || undefined,
 		to_date: toDate || undefined,
 	})
 }
 
-export function savePackingListPage(company, deliveryDate, groups) {
-	return call('warehouse_app.warehouse_app.fulfillment.api.save_packing_list_page', {
-		company,
-		delivery_date: deliveryDate,
-		groups: JSON.stringify({ groups }),
+export function fetchPackingSlip(name) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip', { name })
+}
+
+export function savePackingSlip(name, lines) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.save_packing_slip', {
+		name,
+		lines: JSON.stringify(lines),
 	})
 }
 
-export function fetchPackingListPrintHtml(company, deliveryDate) {
-	return call('warehouse_app.warehouse_app.fulfillment.api.get_packing_list_print_html', {
-		company,
-		delivery_date: deliveryDate,
-	})
+export function fetchPackingSlipPrintHtml(name) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip_print_html', { name })
 }
 
-export function fetchPackingListLabelsHtml(company, deliveryDate) {
-	return call('warehouse_app.warehouse_app.fulfillment.api.get_packing_list_labels_html', {
-		company,
-		delivery_date: deliveryDate,
-	})
+export function fetchPackingSlipLabelsHtml(name) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.get_packing_slip_labels_html', { name })
 }

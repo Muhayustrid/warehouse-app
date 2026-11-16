@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 
 import frappe
-from frappe.utils import today
 
 from warehouse_app.warehouse_app.fulfillment.approval import (
 	approve_short_pick as _approve_short_pick,
@@ -45,11 +44,12 @@ from warehouse_app.warehouse_app.fulfillment.picking import (
 	save_picking as _save_picking,
 	submit_pick_list as _submit_pick_list,
 )
-from warehouse_app.warehouse_app.fulfillment.packing_page import (
-	load_packing_page_data,
-	packing_labels_html,
-	packing_print_html,
-	save_packing_page_data,
+from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
+	load_packing_slip,
+	load_packing_slips,
+	packing_slip_labels_html,
+	packing_slip_print_html,
+	save_packing_slip,
 )
 from warehouse_app.warehouse_app.fulfillment.permissions import (
 	require_manifest_write,
@@ -431,46 +431,39 @@ def get_manifest(name=None):
 
 
 @frappe.whitelist(methods=["GET"])
-def get_packing_list_page(company=None, from_date=None, to_date=None):
+def get_packing_slips(company=None, from_date=None, to_date=None):
 	require_read()
 	company = company or frappe.defaults.get_user_default("Company")
 	if not company:
 		frappe.throw("Company is required.", frappe.ValidationError)
-	if not from_date or not to_date:
-		to_date = from_date or today()
-		from_date = from_date or to_date
-	return load_packing_page_data(company, from_date, to_date)
+	return load_packing_slips(company, from_date or "", to_date or "")
+
+
+@frappe.whitelist(methods=["GET"])
+def get_packing_slip(name=None):
+	if not name:
+		frappe.throw("Packing Slip name is required.", frappe.ValidationError)
+	return load_packing_slip(name)
 
 
 @frappe.whitelist(methods=["POST"])
-def save_packing_list_page(company=None, delivery_date=None, groups=None):
-	require_read()
-	if not company or not delivery_date:
-		frappe.throw("Company and delivery date are required.", frappe.ValidationError)
-	payload = {"groups": groups}
-	if isinstance(groups, str):
-		try:
-			payload = json.loads(groups)
-		except ValueError:
-			frappe.throw("Invalid groups payload.", frappe.ValidationError)
-	if isinstance(payload, dict) and "groups" not in payload:
-		payload = {"groups": payload.get("groups", [])}
-	return save_packing_page_data(company, delivery_date, payload)
+def save_packing_slip(name=None, lines=None):
+	if not name:
+		frappe.throw("Packing Slip name is required.", frappe.ValidationError)
+	return save_packing_slip(name, lines)
 
 
 @frappe.whitelist(methods=["GET"])
-def get_packing_list_print_html(company=None, delivery_date=None):
-	require_read()
-	if not company or not delivery_date:
-		frappe.throw("Company and delivery date are required.", frappe.ValidationError)
-	return packing_print_html(company, delivery_date)
+def get_packing_slip_print_html(name=None):
+	if not name:
+		frappe.throw("Packing Slip name is required.", frappe.ValidationError)
+	return packing_slip_print_html(name)
 
 
 @frappe.whitelist(methods=["GET"])
-def get_packing_list_labels_html(company=None, delivery_date=None):
-	require_read()
-	if not company or not delivery_date:
-		frappe.throw("Company and delivery date are required.", frappe.ValidationError)
-	return packing_labels_html(company, delivery_date)
+def get_packing_slip_labels_html(name=None):
+	if not name:
+		frappe.throw("Packing Slip name is required.", frappe.ValidationError)
+	return packing_slip_labels_html(name)
 
 

@@ -11,10 +11,9 @@ import {
 	Search,
 	X,
 } from 'lucide-vue-next'
-import { fetchCombinedPickListHtml, fetchDeliverySummaryHtml, fetchOrderQueue } from '@/data/fulfillment'
+import { fetchCombinedPickListHtml, fetchOrderQueue } from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
-import ManifestDialog from '@/components/fulfillment/ManifestDialog.vue'
 
 const router = useRouter()
 
@@ -61,21 +60,6 @@ const pickPrinting = ref(false)
 const printModalOpen = ref(false)
 const printModalTitle = ref('')
 const printModalItems = ref([])
-
-const manifestOpen = ref(false)
-
-function openManifestDialog() {
-	manifestOpen.value = true
-}
-
-function onManifestSaved(name) {
-	manifestOpen.value = false
-	printModalTitle.value = 'Packing List Harian'
-	printModalItems.value = [
-		{ label: 'Packing List', doctype: 'Delivery Manifest', name, format: 'Format Print Packing List' },
-	]
-	printModalOpen.value = true
-}
 
 // Tab "Semua" hilang: aktif tab = filter stage. Counts per tab dihitung dari
 // counts per stage backend.
@@ -197,21 +181,6 @@ async function printCombinedPickList() {
 	}
 }
 
-async function printDeliverySummary() {
-	if (pickPrinting.value) return
-	pickPrinting.value = true
-	try {
-		const res = await fetchDeliverySummaryHtml(company.value, pickDate.value)
-		printModalTitle.value = 'Ringkasan Kirim'
-		printModalItems.value = [{ label: 'Ringkasan', name: pickDate.value, html: res }]
-		printModalOpen.value = true
-	} catch (e) {
-		error.value = e.message || 'Gagal memuat ringkasan kirim.'
-	} finally {
-		pickPrinting.value = false
-	}
-}
-
 function setPageSize(n) {
 	if (pageLength.value === n) return
 	pageLength.value = n
@@ -328,23 +297,10 @@ function statusLabel(row) {
 						<button
 							type="button"
 							class="btn ff-manifest-btn"
-							:disabled="pickPrinting"
-							@click="printDeliverySummary"
+							@click="router.push({ path: '/packing-slips', query: { company: company } })"
 						>
 							<FileText :size="14" :stroke-width="2" />
-							<span>Cetak Ringkasan Kirim</span>
-						</button>
-						<button type="button" class="btn ff-manifest-btn" @click="openManifestDialog()">
-							<FileText :size="14" :stroke-width="2" />
-							<span>Packing List Harian</span>
-						</button>
-						<button
-							type="button"
-							class="btn ff-manifest-btn"
-							@click="router.push({ path: '/packing-list', query: { company: company, from_date: pickDate } })"
-						>
-							<FileText :size="14" :stroke-width="2" />
-							<span>Buka Packing List</span>
+							<span>Packing Slips</span>
 						</button>
 					</template>
 					<!-- Filter Dropdown Popover Anchor -->
@@ -554,13 +510,6 @@ function statusLabel(row) {
 			:title="printModalTitle"
 			:items="printModalItems"
 			@close="printModalOpen = false"
-		/>
-
-		<ManifestDialog
-			:open="manifestOpen"
-			:company="company"
-			@close="manifestOpen = false"
-			@saved="onManifestSaved"
 		/>
 	</div>
 </template>
