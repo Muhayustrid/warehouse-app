@@ -1,6 +1,6 @@
 # PROJECT_STATE — warehouse_app
 
-Head: 2026-11-16 — **feat/fulfillment-stage-tabs (5 commits, unpushed)**: halaman Fulfillment dipecah jadi 4 tab tahap (Order/Picking/Packing/Delivery) + endpoint cetak Pick List Gabungan per tanggal kirim (FROZEN dulu, lalu DRY, sorted customer/item), dengan filter delivery_date SO dan escape HTML. Base di-reset ke origin/main (dc42c7f) — main lokal lama (SR count protection + Delivery Manifest + PackingListPage) disimpan di branch `backup-main-lokal-20261116`. Tests: 108/108 unittest discover test_fulfillment_*.py OK (docker frappe16-backend-1). Review pass fix: filter tanggal + XSS (commit 1c0cdd1). Ledger: `.superpowers/sdd/2026-11-16-fulfillment-stage-tabs.md/progress.md`.
+Head: 2026-11-16 — **feat/fulfillment-stage-tabs (14 commits, unpushed)**: 4 tab tahap (Order/Picking/Packing/Delivery) + cetak Pick List Gabungan & Ringkasan Kirim per tanggal kirim di tab Packing + **port penuh Delivery Manifest dari branch lama** (doctype manifest/region/outlet, 4 endpoint, ManifestDialog, print format "Format Print Packing List" + "Format Label Koli" 60x40mm, custom_box_size B/K per koli, tombol "Packing List Harian"). Fix permission: query internal role-gated pakai `frappe.get_all` bukan `get_list` (user gudang Stock User tanpa izin Delivery Note — commit 13176fe). Tests: 120/120 OK (docker). Migrate berjalan, probe get_manifest_candidates 2026-10-01 → 24 kandidat. Branch backup lama: `backup-main-lokal-20261116`.
 
 ## Current
 
