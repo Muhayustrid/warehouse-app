@@ -338,6 +338,14 @@ function statusLabel(row) {
 							<FileText :size="14" :stroke-width="2" />
 							<span>Packing List Harian</span>
 						</button>
+						<button
+							type="button"
+							class="btn ff-manifest-btn"
+							@click="router.push({ path: '/packing-list', query: { company: company, from_date: pickDate } })"
+						>
+							<FileText :size="14" :stroke-width="2" />
+							<span>Buka Packing List</span>
+						</button>
 					</template>
 					<!-- Filter Dropdown Popover Anchor -->
 					<div ref="filterPopoverRef" class="ff-filter-popover-wrap">

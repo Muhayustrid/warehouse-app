@@ -22,6 +22,12 @@ export default createRouter({
 			meta: { wide: true },
 		},
 		{
+			path: '/packing-list',
+			name: 'packing-list',
+			component: () => import('@/pages/PackingListPage.vue'),
+			meta: { wide: true },
+		},
+		{
 			path: '/inventory',
 			name: 'inventory',
 			component: () => import('@/pages/InventoryPage.vue'),
