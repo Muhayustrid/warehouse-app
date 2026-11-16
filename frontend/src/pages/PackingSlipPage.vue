@@ -105,10 +105,10 @@ function closeSlip() {
 		frozen: ['item', 'qty', 'uom', 'koli', 'berat'],
 		dry: ['item', 'qty', 'uom', 'koli', 'berat'],
 	}
-	// Embedded di Fulfillment: tutup editor = kembali ke daftar tab Packing.
+	// Embedded di Fulfillment: beri tahu parent (refresh ringkasan) lalu
+	// muat ulang daftar supaya status packing terbaru langsung terlihat.
 	if (props.embedded) {
 		emit('closed')
-		return
 	}
 	load()
 }
@@ -277,7 +277,7 @@ function fmtQty(value) {
 <template>
 	<div class="ps-page">
 		<!-- ================= List ================= -->
-		<template v-if="!editing && !embedded">
+		<template v-if="!editing">
 			<div class="ps-toolbar">
 				<div class="ps-filters">
 					<input v-model="fromDate" class="input input-sm" type="date" aria-label="Dari tanggal" @change="load" />

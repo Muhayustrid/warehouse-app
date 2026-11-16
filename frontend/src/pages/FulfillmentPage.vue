@@ -62,10 +62,8 @@ const printModalOpen = ref(false)
 const printModalTitle = ref('')
 const printModalItems = ref([])
 
-// Tab Packing: ringkasan hasil packing per SO (dari Packing Slip), klik buka editor.
+// Tab Packing: ringkasan hasil packing per SO (dari Packing Slip).
 const packingBySo = ref({})
-const packingEditorSo = ref(null) // SO yang editor Packing Slip-nya terbuka
-const editorOpen = computed(() => activeTab.value === 'packing' && !!packingEditorSo.value)
 
 async function loadPackingSummary() {
 	try {
@@ -84,10 +82,6 @@ function packingStatus(row) {
 	if (!p.editable) return { label: 'Read-only (DN submit)', cls: 'b-ro' }
 	if (p.packing?.packed) return { label: 'Sudah Diinput', cls: 'b-edit' }
 	return { label: 'Belum Packing', cls: 'b-draft' }
-}
-
-function openPackingEditor(row) {
-	packingEditorSo.value = row.sales_order
 }
 
 // Tab "Semua" hilang: aktif tab = filter stage. Counts per tab dihitung dari
@@ -397,7 +391,7 @@ function statusLabel(row) {
 			</div>
 
 			<!-- Editor Packing Slip embedded (tab Packing) -->
-			<template v-if="!editorOpen">
+			<template v-if="activeTab !== 'packing'">
 			<!-- Error State -->
 			<div v-if="error" class="ff-state ff-error" role="alert">
 				<AlertTriangle :size="22" :stroke-width="1.8" />
@@ -459,8 +453,8 @@ function statusLabel(row) {
 						class="ff-trow"
 						role="button"
 						tabindex="0"
-						@click="activeTab === 'packing' ? openPackingEditor(row) : openOrder(row)"
-						@keydown.enter="activeTab === 'packing' ? openPackingEditor(row) : openOrder(row)"
+						@click="openOrder(row)"
+						@keydown.enter="openOrder(row)"
 					>
 						<!-- NO. SO -->
 						<div class="ff-cell ff-cell-so">
@@ -555,12 +549,7 @@ function statusLabel(row) {
 				</div>
 			</div>
 			</template>
-			<PackingSlipPage
-				v-else
-				:auto-open="packingEditorSo"
-				embedded
-				@closed="packingEditorSo = null"
-			/>
+			<PackingSlipPage v-else embedded @closed="loadPackingSummary" />
 		</div>
 
 		<PrintPreviewModal
