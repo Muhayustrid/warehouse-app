@@ -29,6 +29,8 @@ def apply():
     ensure_delivery_note_letterhead_koli()
     ensure_format_print_pick_list()
     ensure_format_print_packing_slip()
+    ensure_format_print_packing_list()
+    ensure_format_print_manifest_label()
     retire_client_scripts()
     ensure_client_scripts()
     migrate_legacy_uom_field()
@@ -1018,6 +1020,15 @@ PS_RUN_FIELD_SPEC = {
     "insert_after": "delivery_note",
 }
 
+PS_BOX_SIZE_SPEC = {
+    "dt": "Packing Slip",
+    "fieldname": "custom_box_size",
+    "fieldtype": "Select",
+    "label": "Box Size (Koli)",
+    "options": "\nB\nK",
+    "insert_after": "to_case_no",
+}
+
 # Installer patch SerialBatchPackageSelector — sama persis disematkan di script
 # Pick List DAN Stock Entry (dialog batch/serial dibuka dari kedua form);
 # flag proto.__w31 menjaga install tunggal walau kedua script dimuat bersama.
@@ -1595,6 +1606,7 @@ def ensure_fulfillment_lineage_fields():
         _ensure_custom_field(DN_FROZEN_PACKAGES_SPEC),
         _ensure_custom_field(DN_TOTAL_PACKAGES_SPEC),
         _ensure_custom_field(PS_RUN_FIELD_SPEC),
+        _ensure_custom_field(PS_BOX_SIZE_SPEC),
     ]
     for dt in ("Delivery Note", "Packing Slip"):
         frappe.clear_cache(doctype=dt)
@@ -3098,3 +3110,333 @@ def migrate_legacy_uom_field():
         frappe.clear_cache(doctype="Item")
         frappe.db.commit()
     return f"copied {copied}, skipped {skipped}"
+
+
+def ensure_format_print_packing_list():
+    """Delivery Manifest print format: one paper per trip combining DRY and
+    FROZEN across every outlet in the manifest. Item rows are derived from the
+    linked Delivery Notes via doc.packing_list_data(); frozen estimates use
+    qty x Item.weight_per_unit, dry rows leave the weight blank to hand-weigh."""
+    template_html = """<div class="dm-print-format">
+<style>
+    @page {
+        size: A4 portrait;
+        margin: 10mm;
+    }
+
+    .dm-print-format {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #111111;
+        font-size: 12px;
+        background: #ffffff;
+        padding: 0;
+        line-height: 1.4;
+    }
+    .dm-print-format table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .dm-title {
+        font-size: 16px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-align: center;
+        margin-bottom: 2px;
+    }
+    .dm-subtitle {
+        font-size: 11px;
+        text-align: center;
+        color: #555555;
+        margin-bottom: 12px;
+    }
+    .dm-meta {
+        width: 100%;
+        margin-bottom: 14px;
+        border: 1px solid #111111;
+    }
+    .dm-meta td {
+        border: 1px solid #111111;
+        padding: 4px 8px;
+        font-size: 11.5px;
+        vertical-align: top;
+    }
+    .dm-meta .dm-meta-label {
+        font-weight: 700;
+        width: 120px;
+        background: #ffe699;
+        white-space: nowrap;
+    }
+    .dm-box {
+        width: 45%;
+        margin-top: -8px;
+    }
+    .dm-box td, .dm-box .dm-box-head {
+        text-align: center;
+    }
+    .dm-box .dm-box-head {
+        font-weight: 700;
+        background: #ffe699;
+    }
+    .dm-box .dm-meta-label {
+        text-align: left;
+    }
+    .dm-section {
+        margin-bottom: 16px;
+    }
+    .dm-section h2 {
+        font-size: 12.5px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin: 0 0 6px 0;
+        padding-bottom: 3px;
+        border-bottom: 1.5px solid #111111;
+    }
+    .dm-section.frozen h2 { color: #0369a1; }
+    .dm-section.dry h2 { color: #334155; }
+    .dm-table th, .dm-table td {
+        border: 1px solid #d0d0d0;
+        padding: 4px 8px;
+        font-size: 11.5px;
+        text-align: left;
+    }
+    .dm-table th {
+        background: #ffe699;
+        font-weight: 700;
+    }
+    .dm-table td.num { text-align: right; white-space: nowrap; }
+    .dm-table td.blank { color: #999999; }
+    .dm-total {
+        margin-top: 6px;
+        font-size: 11.5px;
+        font-weight: 700;
+        text-align: right;
+    }
+    .dm-region + .dm-region {
+        page-break-before: always;
+        break-before: page;
+    }
+    .dm-region-head {
+        display: flex;
+        gap: 18px;
+        align-items: baseline;
+        border: 1px solid #111111;
+        background: #fef3cd;
+        padding: 5px 10px;
+        margin-bottom: 10px;
+        font-size: 12px;
+    }
+    .dm-region-name {
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+</style>
+
+{% set d = doc.packing_list_data() %}
+<div class="dm-title">PACKING LIST</div>
+<div class="dm-subtitle">PT. JUARA ROTI INDONESIA</div>
+
+<table class="dm-meta">
+    <tr>
+        <td class="dm-meta-label">Tanggal</td>
+        <td style="width:30%;">{{ d.delivery_date or '' }}</td>
+        <td class="dm-meta-label">Box Abu</td>
+        <td>{% if d.box_big_depart or d.box_big_return or d.box_small_depart or d.box_small_return %}B {{ d.box_big_depart or 0 }} / {{ d.box_big_return or 0 }} &nbsp;&middot;&nbsp; K {{ d.box_small_depart or 0 }} / {{ d.box_small_return or 0 }}{% endif %}</td>
+    </tr>
+</table>
+
+<table class="dm-meta dm-box">
+    <tr>
+        <td class="dm-meta-label">Box</td>
+        <td class="dm-box-head">Berangkat</td>
+        <td class="dm-box-head">Pulang</td>
+    </tr>
+    <tr>
+        <td class="dm-meta-label">B (Besar)</td>
+        <td>{{ d.box_big_depart or '' }}</td>
+        <td>{{ d.box_big_return or '' }}</td>
+    </tr>
+    <tr>
+        <td class="dm-meta-label">K (Kecil)</td>
+        <td>{{ d.box_small_depart or '' }}</td>
+        <td>{{ d.box_small_return or '' }}</td>
+    </tr>
+</table>
+
+{% for region in d.regions %}
+<div class="dm-region">
+    <div class="dm-region-head">
+        <span class="dm-region-name">{{ region.region }}</span>
+        <span>Kendaraan: <strong>{{ region.vehicle or '-' }}</strong></span>
+        <span>Driver: <strong>{{ region.driver or '-' }}</strong></span>
+    </div>
+
+    <div class="dm-section frozen">
+        <h2>Frozen</h2>
+        <table class="dm-table">
+            <thead>
+                <tr>
+                    <th style="width:26%;">Outlet</th>
+                    <th>Item</th>
+                    <th class="num" style="width:9%;">Qty</th>
+                    <th style="width:9%;">Satuan</th>
+                    <th class="num" style="width:13%;">Estimasi (kg)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for o in region.outlets %}
+                    {% for ln in o.frozen %}
+                    <tr>
+                        <td>{{ o.customer_name or o.customer }}</td>
+                        <td>{{ ln.item_name }}</td>
+                        <td class="num">{{ ln.qty }}</td>
+                        <td>{{ ln.uom }}</td>
+                        <td class="num">{{ ln.estimated_weight if ln.estimated_weight is not none else '' }}</td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="dm-total">Total Estimasi Frozen: {{ region.frozen_total_weight }} kg</div>
+    </div>
+
+    <div class="dm-section dry">
+        <h2>Dry</h2>
+        <table class="dm-table">
+            <thead>
+                <tr>
+                    <th style="width:26%;">Outlet</th>
+                    <th>Item</th>
+                    <th class="num" style="width:9%;">Qty</th>
+                    <th style="width:9%;">Satuan</th>
+                    <th class="num" style="width:13%;">Berat (timbang)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for o in region.outlets %}
+                    {% for ln in o.dry %}
+                    <tr>
+                        <td>{{ o.customer_name or o.customer }}</td>
+                        <td>{{ ln.item_name }}</td>
+                        <td class="num">{{ ln.qty }}</td>
+                        <td>{{ ln.uom }}</td>
+                        <td class="num blank">&nbsp;</td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+</div>"""
+
+    name = "Format Print Packing List"
+    if not frappe.db.exists("Print Format", name):
+        doc = frappe.get_doc({
+            "doctype": "Print Format",
+            "name": name,
+            "doc_type": "Delivery Manifest",
+            "module": "Stock",
+            "standard": "No",
+            "custom_format": 1,
+            "print_format_type": "Jinja",
+            "pdf_generator": "chrome",
+            "html": template_html,
+        })
+        doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        return "created"
+
+    doc = frappe.get_doc("Print Format", name)
+    doc.html = template_html
+    doc.custom_format = 1
+    doc.print_format_type = "Jinja"
+    doc.pdf_generator = "chrome"
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return "updated"
+
+
+def ensure_format_print_manifest_label():
+    """Koli label 60x40mm per Packing Slip: outlet + koli no + box B/K + items."""
+    template_html = """<div class="koli-label">
+<style>
+    @page {
+        size: 60mm 40mm;
+        margin: 0;
+    }
+    .koli-label {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #111111;
+        font-size: 8.5px;
+        padding: 2mm;
+        line-height: 1.25;
+    }
+    .koli-label .head {
+        font-weight: 800;
+        font-size: 10px;
+        text-align: center;
+        letter-spacing: 0.04em;
+        margin-bottom: 1mm;
+    }
+    .koli-label .meta {
+        margin-bottom: 1mm;
+    }
+    .koli-label table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .koli-label th, .koli-label td {
+        border: 1px solid #111111;
+        padding: 1px 3px;
+        text-align: left;
+    }
+    .koli-label td.qty {
+        text-align: right;
+        white-space: nowrap;
+    }
+</style>
+<div class="head">PT. JUARA ROTI INDONESIA</div>
+<div class="meta">
+    <strong>{{ doc.customer_name or doc.customer or '' }}</strong><br>
+    Koli {{ doc.from_case_no or doc.to_case_no or '' }}{% if doc.custom_box_size %} &middot; Box {{ doc.custom_box_size }}{% endif %}
+    <br>{{ doc.delivery_note or '' }}
+</div>
+<table>
+    {% for it in doc.items %}
+    <tr>
+        <td>{{ it.item_name or it.item_code }}</td>
+        <td class="qty">{{ it.qty }}</td>
+    </tr>
+    {% endfor %}
+</table>
+</div>"""
+
+    name = "Format Label Koli"
+    if not frappe.db.exists("Print Format", name):
+        doc = frappe.get_doc({
+            "doctype": "Print Format",
+            "name": name,
+            "doc_type": "Packing Slip",
+            "module": "Stock",
+            "standard": "No",
+            "custom_format": 1,
+            "print_format_type": "Jinja",
+            "pdf_generator": "chrome",
+            "html": template_html,
+        })
+        doc.insert(ignore_permissions=True)
+        frappe.db.commit()
+        return "created"
+
+    doc = frappe.get_doc("Print Format", name)
+    doc.html = template_html
+    doc.custom_format = 1
+    doc.print_format_type = "Jinja"
+    doc.pdf_generator = "chrome"
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+    return "updated"

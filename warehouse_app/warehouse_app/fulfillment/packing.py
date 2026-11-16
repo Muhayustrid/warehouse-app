@@ -265,6 +265,8 @@ def pack_all(
 			ps.custom_fulfillment_run = run_doc.name
 			ps.from_case_no = actual_case_no
 			ps.to_case_no = actual_case_no
+			if slip_data.get("box_size") in ("B", "K"):
+				ps.custom_box_size = slip_data["box_size"]
 
 			cat = (slip_data.get("category") or "").lower()
 			if "frozen" in cat:

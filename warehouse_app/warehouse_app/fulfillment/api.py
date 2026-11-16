@@ -18,6 +18,12 @@ from warehouse_app.warehouse_app.fulfillment.delivery import (
 	create_delivery_note as _create_delivery_note,
 	update_delivery_packages as _update_delivery_packages,
 )
+from warehouse_app.warehouse_app.doctype.delivery_manifest.delivery_manifest import (
+	get_manifest as _get_manifest,
+	get_manifests as _get_manifests,
+	manifest_candidates as _manifest_candidates,
+	save_manifest as _save_manifest,
+)
 from warehouse_app.warehouse_app.fulfillment.dispatch import (
 	submit_delivery_note as _submit_delivery_note,
 )
@@ -38,7 +44,10 @@ from warehouse_app.warehouse_app.fulfillment.picking import (
 	save_picking as _save_picking,
 	submit_pick_list as _submit_pick_list,
 )
-from warehouse_app.warehouse_app.fulfillment.permissions import require_read
+from warehouse_app.warehouse_app.fulfillment.permissions import (
+	require_manifest_write,
+	require_read,
+)
 from warehouse_app.warehouse_app.fulfillment.settings_api import (
 	fulfillment_settings_options as _fulfillment_settings_options,
 )
@@ -369,5 +378,48 @@ body {{
 {''.join(pages)}
 </body>
 </html>"""
+
+
+@frappe.whitelist(methods=["GET"])
+def get_manifest_candidates(company=None, delivery_date=None):
+	if not delivery_date:
+		frappe.throw("Delivery date is required.", frappe.ValidationError)
+	require_read()
+	company = company or frappe.defaults.get_user_default("Company")
+	if not company:
+		frappe.throw("Company is required.", frappe.ValidationError)
+	return _manifest_candidates(company=company, delivery_date=delivery_date)
+
+
+@frappe.whitelist(methods=["POST"])
+def save_delivery_manifest(payload=None):
+	require_manifest_write()
+	if isinstance(payload, str):
+		try:
+			payload = json.loads(payload)
+		except ValueError:
+			frappe.throw("Invalid payload.", frappe.ValidationError)
+	if not isinstance(payload, dict):
+		frappe.throw("Payload is required.", frappe.ValidationError)
+	return _save_manifest(payload)
+
+
+@frappe.whitelist(methods=["GET"])
+def get_manifests(company=None, delivery_date=None):
+	require_read()
+	if not delivery_date:
+		frappe.throw("Delivery date is required.", frappe.ValidationError)
+	company = company or frappe.defaults.get_user_default("Company")
+	if not company:
+		frappe.throw("Company is required.", frappe.ValidationError)
+	return _get_manifests(company=company, delivery_date=delivery_date)
+
+
+@frappe.whitelist(methods=["GET"])
+def get_manifest(name=None):
+	require_read()
+	if not name:
+		frappe.throw("Manifest name is required.", frappe.ValidationError)
+	return _get_manifest(name=name)
 
 

@@ -166,7 +166,7 @@ def manifest_candidates(company: str, delivery_date: str) -> list[dict]:
 	if not dn_names:
 		return []
 
-	dn_rows = frappe.get_list(
+	dn_rows = frappe.get_all(
 		"Delivery Note",
 		filters={"name": ("in", dn_names)},
 		fields=["name", "customer", "customer_name", "docstatus", "status"],
@@ -348,7 +348,7 @@ def _clean(value):
 def _item_master(item_codes: set[str]) -> dict[str, dict]:
 	if not item_codes:
 		return {}
-	rows = frappe.get_list(
+	rows = frappe.get_all(
 		"Item",
 		filters={"name": ("in", sorted(item_codes))},
 		fields=[
