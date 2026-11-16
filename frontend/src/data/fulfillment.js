@@ -18,6 +18,13 @@ export function fetchOrderQueue(params = {}) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_order_queue', params)
 }
 
+export function fetchCombinedPickListHtml(company, deliveryDate) {
+	return call('warehouse_app.warehouse_app.fulfillment.api.get_combined_pick_list_html', {
+		company: company || undefined,
+		delivery_date: deliveryDate,
+	})
+}
+
 export function fetchOrderPreview(salesOrder) {
 	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_order_preview', {
 		sales_order: salesOrder,

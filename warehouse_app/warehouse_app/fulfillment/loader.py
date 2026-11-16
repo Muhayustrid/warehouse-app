@@ -33,6 +33,7 @@ def load_order_queue(
 	company=None,
 	search=None,
 	stage=None,
+	stages=None,
 	from_date=None,
 	to_date=None,
 	page=1,
@@ -45,6 +46,13 @@ def load_order_queue(
 	stage = (stage or "all").strip().lower()
 	if stage not in ("all", *STAGES):
 		frappe.throw(_("Invalid fulfillment stage: {0}").format(stage))
+	# stages = comma-separated multi-stage filter (tab UI); overrides stage.
+	stage_set = None
+	if stages and str(stages).strip():
+		stage_set = {s.strip().lower() for s in str(stages).split(",") if s.strip()}
+		invalid = stage_set - set(STAGES)
+		if invalid:
+			frappe.throw(_("Invalid fulfillment stage: {0}").format(", ".join(sorted(invalid))))
 
 	profile = get_profile(company)
 	frozen = resolve_frozen(profile)
@@ -119,6 +127,8 @@ def load_order_queue(
 
 	if stage != "all":
 		rows = [row for row in rows if row["stage"] == stage]
+	elif stage_set:
+		rows = [row for row in rows if row["stage"] in stage_set]
 
 	total = len(rows)
 	start = (page - 1) * page_length

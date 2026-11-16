@@ -1,29 +1,32 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
 	AlertTriangle,
-	ChevronLeft,
 	ChevronRight,
+	FileText,
 	Filter,
 	Inbox,
 	RefreshCw,
 	Search,
 	X,
 } from 'lucide-vue-next'
-import { fetchOrderQueue } from '@/data/fulfillment'
+import { fetchCombinedPickListHtml, fetchOrderQueue } from '@/data/fulfillment'
 import { fmtDate } from '@/lib/format'
+import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
 
 const router = useRouter()
 
-const STAGE_FILTERS = [
-	{ label: 'Semua', value: 'all' },
-	{ label: 'Open', value: 'open' },
-	{ label: 'Picking', value: 'picking' },
-	{ label: 'Packing', value: 'packing' },
-	{ label: 'Ready', value: 'ready' },
-	{ label: 'Completed', value: 'completed' },
+// Tab = tahap flow native (SO -> Picking List -> Packing Slip -> DN).
+// Tab mengarahkan filter stage queue; dokumen tetap per-SO di workspace.
+const TABS = [
+	{ label: 'Order', value: 'order', stages: 'open' },
+	{ label: 'Picking', value: 'picking', stages: 'picking' },
+	{ label: 'Packing', value: 'packing', stages: 'packing,ready' },
+	{ label: 'Delivery', value: 'delivery', stages: 'partially_delivered,completed' },
 ]
+
+const VALID_TABS = new Set(TABS.map((t) => t.value))
 
 const PAGE_SIZES = [10, 25, 50]
 
@@ -36,13 +39,35 @@ const total = ref(0)
 const page = ref(1)
 const pageLength = ref(10)
 const search = ref('')
-const stage = ref('all')
 const fromDate = ref('')
 const toDate = ref('')
 const loading = ref(false)
 const error = ref('')
 const filterOpen = ref(false)
 const filterPopoverRef = ref(null)
+
+const route = useRoute()
+
+function tabFromQuery() {
+	const v = String(route.query.view || 'order')
+	return VALID_TABS.has(v) ? v : 'order'
+}
+
+const activeTab = ref(tabFromQuery())
+const pickDate = ref(new Date(Date.now() + 86400000).toISOString().slice(0, 10))
+const pickPrinting = ref(false)
+
+const printModalOpen = ref(false)
+const printModalTitle = ref('')
+const printModalItems = ref([])
+
+// Tab "Semua" hilang: aktif tab = filter stage. Counts per tab dihitung dari
+// counts per stage backend.
+function tabCount(tab) {
+	return tab.stages
+		.split(',')
+		.reduce((sum, s) => sum + (counts.value[s] || 0), 0)
+}
 
 let loadToken = 0
 
@@ -79,6 +104,14 @@ onMounted(() => {
 	load()
 })
 
+// Klik sidebar ?view=... saat sudah di halaman ini: query berubah tanpa remount.
+watch(
+	() => route.query.view,
+	() => {
+		setTab(tabFromQuery(), false)
+	},
+)
+
 onBeforeUnmount(() => {
 	window.removeEventListener('click', onDocClick)
 })
@@ -91,7 +124,8 @@ async function load() {
 		const res = await fetchOrderQueue({
 			company: company.value || undefined,
 			search: search.value.trim() || undefined,
-			stage: stage.value,
+			stages: TABS.find((t) => t.value === activeTab.value)?.stages,
+			stage: undefined,
 			from_date: fromDate.value || undefined,
 			to_date: toDate.value || undefined,
 			page: page.value,
@@ -122,11 +156,29 @@ function applyFilters() {
 	load()
 }
 
-function setStage(value) {
-	if (stage.value === value) return
-	stage.value = value
+function setTab(value, syncQuery = true) {
+	if (activeTab.value === value) return
+	activeTab.value = value
 	page.value = 1
+	if (syncQuery) {
+		router.replace({ query: { ...route.query, view: value === 'order' ? undefined : value } })
+	}
 	load()
+}
+
+async function printCombinedPickList() {
+	if (pickPrinting.value) return
+	pickPrinting.value = true
+	try {
+		const res = await fetchCombinedPickListHtml(company.value, pickDate.value)
+		printModalTitle.value = 'Pick List Gabungan'
+		printModalItems.value = [{ label: 'Pick List', name: pickDate.value, html: res }]
+		printModalOpen.value = true
+	} catch (e) {
+		error.value = e.message || 'Gagal memuat pick list gabungan.'
+	} finally {
+		pickPrinting.value = false
+	}
 }
 
 function setPageSize(n) {
@@ -177,9 +229,9 @@ function statusLabel(row) {
 		<!-- Header matching Hand Request style -->
 		<div class="page-head">
 			<div class="ph-left">
-				<h1>Order Queue</h1>
+				<h1>Fulfillment</h1>
 				<p class="sub">
-					Siapkan material, jalankan fulfillment dari picking hingga submit delivery.
+					Antrean per tahap: order, picking, packing, hingga delivery.
 				</p>
 			</div>
 			<div class="ff-date-badge">
@@ -187,22 +239,22 @@ function statusLabel(row) {
 			</div>
 		</div>
 
-		<!-- Card: Tab Status, Toolbar, Table, Pagination -->
+		<!-- Card: Tab Tahap, Toolbar, Table, Pagination -->
 		<div class="board-card">
-			<!-- Tab Status di kepala kartu persis Hand Request -->
-			<div class="board-tabs" role="tablist" aria-label="Status">
+			<!-- Tab tahap flow di kepala kartu -->
+			<div class="board-tabs" role="tablist" aria-label="Tahap fulfillment">
 				<button
-					v-for="item in STAGE_FILTERS"
+					v-for="item in TABS"
 					:key="item.value"
 					type="button"
 					role="tab"
 					class="board-tab"
-					:class="{ on: stage === item.value }"
-					:aria-selected="stage === item.value"
-					@click="setStage(item.value)"
+					:class="{ on: activeTab === item.value }"
+					:aria-selected="activeTab === item.value"
+					@click="setTab(item.value)"
 				>
 					{{ item.label }}
-					<span v-if="counts[item.value] !== undefined" class="board-tab-count">{{ counts[item.value] }}</span>
+					<span v-if="tabCount(item)" class="board-tab-count">{{ tabCount(item) }}</span>
 				</button>
 			</div>
 
@@ -224,6 +276,25 @@ function statusLabel(row) {
 				</div>
 
 				<div class="ff-toolbar-actions">
+					<!-- Pick list gabungan: hanya di tab Picking (kertas = satuan kerja) -->
+					<template v-if="activeTab === 'picking'">
+						<input
+							v-model="pickDate"
+							class="input input-sm ff-pick-date"
+							type="date"
+							aria-label="Tanggal kirim"
+							title="Tanggal kirim yang dipick"
+						/>
+						<button
+							type="button"
+							class="btn ff-manifest-btn"
+							:disabled="pickPrinting"
+							@click="printCombinedPickList"
+						>
+							<FileText :size="14" :stroke-width="2" />
+							<span>Cetak Pick List Gabungan</span>
+						</button>
+					</template>
 					<!-- Filter Dropdown Popover Anchor -->
 					<div ref="filterPopoverRef" class="ff-filter-popover-wrap">
 						<button
@@ -317,9 +388,9 @@ function statusLabel(row) {
 			<div v-else-if="!rows.length" class="ff-state ff-empty">
 				<Inbox :size="32" :stroke-width="1.5" />
 				<div>
-					<strong>Tidak ada Sales Order dalam antrean</strong>
+					<strong>Tidak ada order di tahap ini</strong>
 					<p v-if="activeFilterCount">Coba bersihkan kata kunci pencarian atau filter tanggal.</p>
-					<p v-else>Order baru yang membutuhkan pengiriman akan otomatis muncul di sini.</p>
+					<p v-else>Order pada tahap {{ activeTab }} akan muncul di sini.</p>
 				</div>
 				<button v-if="activeFilterCount" type="button" class="btn btn-sm" @click="clearFilters">
 					Hapus filter
@@ -389,7 +460,7 @@ function statusLabel(row) {
 			<!-- Pagination persis Hand Request -->
 			<div v-if="!error && total" class="pagination-bar board-pagination">
 				<span>
-					Menampilkan {{ rangeStart }}–{{ rangeEnd }} dari {{ total }} Sales Order
+					Menampilkan {{ rangeStart }}-{{ rangeEnd }} dari {{ total }} order
 				</span>
 				<label class="page-size-control">
 					<span>Per halaman</span>
@@ -425,6 +496,13 @@ function statusLabel(row) {
 				</div>
 			</div>
 		</div>
+
+		<PrintPreviewModal
+			:open="printModalOpen"
+			:title="printModalTitle"
+			:items="printModalItems"
+			@close="printModalOpen = false"
+		/>
 	</div>
 </template>
 
@@ -853,5 +931,33 @@ function statusLabel(row) {
 	.board-tab { gap: 5px; font-size: 13px; }
 	.board-toolbar { padding: 10px 14px; }
 	.board-toolbar .searchbox { flex: 1 1 100%; }
+}
+
+/* Tombol Cetak Pick List Gabungan + input tanggal */
+.ff-manifest-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 34px;
+	padding: 0 12px;
+	font-size: 13px;
+	font-weight: 600;
+	border-radius: 6px;
+	border: 1px solid var(--brand, #3368a0);
+	background: var(--brand, #3368a0);
+	color: #ffffff;
+}
+.ff-manifest-btn:hover {
+	background: var(--brand-dark, #2a567f);
+	border-color: var(--brand-dark, #2a567f);
+}
+.ff-manifest-btn:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+.ff-pick-date {
+	height: 34px;
+	font-size: 13px;
+	width: 150px;
 }
 </style>
