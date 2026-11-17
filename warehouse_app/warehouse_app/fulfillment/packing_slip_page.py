@@ -857,7 +857,7 @@ def _slip_label_divs(name: str) -> str:
 		seen[g["category"]] = seen.get(g["category"], 0) + 1
 		category = g["category"].upper()
 		master = g["master"]
-		weight = f"{master:g}" if master > 0 else g["hand"]
+		weight = f"{round(master, 2):g}" if master > 0 else g["hand"]
 		items = "<br>".join(escape_html(i) for i in g["items"])
 		labels.append(
 			f"""<div class='label'>
