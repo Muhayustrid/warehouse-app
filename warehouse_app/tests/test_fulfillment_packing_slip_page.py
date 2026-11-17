@@ -5,6 +5,7 @@ import unittest
 
 from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
 	_labels_page,
+	_koli_badges,
 	csv_estimasi,
 	packing_summary,
 	sheet_card_html,
@@ -55,6 +56,12 @@ class TestSheetCardColly(unittest.TestCase):
 			dry_exceptions=set(),
 		)
 		self.assertEqual([l["category"] for l in lines], ["frozen", "dry"])
+
+	def test_label_koli_any_frozen_is_frozen(self):
+		# Mixed koli: badge determined by content, not first line order.
+		self.assertEqual(_koli_badges([["dry", "frozen"]]), ["FROZEN"])
+		self.assertEqual(_koli_badges([["frozen", "dry", "dry"]]), ["FROZEN"])
+		self.assertEqual(_koli_badges([["dry", "dry"]]), ["DRY"])
 
 	def test_dry_exception_overrides_frozen_group(self):
 		ps_items = [[_item(item_group="Produk Jadi Pabrik", item_code="PJ260009", qty=1)]]

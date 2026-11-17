@@ -823,28 +823,34 @@ tr.tf td{{background:#ffe94a;font-weight:bold}}
 <script>window.print()</script></body></html>"""
 
 
+def _koli_badges(koli_line_categories: list[list[str]]) -> list[str]:
+	"""Physical koli badge: any frozen content -> FROZEN, else DRY
+	(independent of first-line order)."""
+	return ["FROZEN" if "frozen" in cats else "DRY" for cats in koli_line_categories]
+
+
 def _slip_label_divs(name: str) -> str:
 	"""Label <div>s for one packing slip, in koli order (1/total first)."""
 	data = load_packing_slip(name)
 	header = data["header"]
 	lines = data["lines"]
 
-	koli_categories: dict[int, str] = {}
 	koli_items: dict[int, list[str]] = {}
 	koli_master: dict[int, float] = {}
 	koli_hand: dict[int, str] = {}
+	koli_cats: dict[int, list[str]] = {}
 	for line in lines:
 		n = line["koli_no"]
-		koli_categories.setdefault(n, line["category"])
+		koli_cats.setdefault(n, []).append(line["category"])
 		koli_items.setdefault(n, []).append(f"{line['item_code']} - {line['item_name']}")
 		# Berat dari data master (Item.net_weight x qty); fallback timbangan manual.
 		koli_master[n] = koli_master.get(n, 0) + flt(line.get("net_weight")) * flt(line.get("qty"))
 		koli_hand.setdefault(n, str(line.get("berat") or ""))
 
-	total = len(koli_categories)
+	badges = _koli_badges([koli_cats[n] for n in sorted(koli_cats)])
+	total = len(koli_cats)
 	labels = []
-	for n in sorted(koli_categories):
-		category = koli_categories[n].upper()
+	for n, category in zip(sorted(koli_cats), badges):
 		master = koli_master.get(n) or 0
 		weight = f"{master:g}" if master > 0 else (koli_hand.get(n) or "")
 		items = "<br>".join(escape_html(i) for i in koli_items[n])
