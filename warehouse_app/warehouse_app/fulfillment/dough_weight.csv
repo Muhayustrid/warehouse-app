@@ -1,0 +1,65 @@
+DOUGH WEIGHT,,,,,CREAM WEIGHT,,,
+Item,Qty,Berat Total,Berat Item,,Item,Qty,Berat Total,Berat Item
+Butter,43,"33,92 - 34,85","0,8",,Krim Kopi,50,"33,19 - 33,38","0,7"
+Coklat,,,,,Krim Kopi,45,"30,36 - 30,56","0,7"
+Mocca,,,,,Krim Kopi,40,"27,43 - 27,60","0,7"
+Tiramisu,,,,5,Krim Kopi,35,"23,31 - 23,43","0,6677142857"
+Keju,43,"32,94 - 33,89","0,7",,Krim Kopi,30,"20,39 - 20,76","0,7"
+Srikaya,,,,,Krim Kopi,30,"20,39 - 20,77","0,7"
+Vanila,,,,,Krim Kopi,30,"20,39 - 20,78","0,7"
+Butter,40,"32,04 - 32,19","0,8",,,,,
+Coklat,,,,,GEMPI WEIGHT,,,
+Mocca,,,,,Item,Qty,Berat Total,Berat Item
+Tiramisu,,,,,Gempi,50,"34,44 - 35,17","0,7"
+Keju,40,"31,49 - 31,79","0,7",,Gempi,45,"31,65 - 31,87","0,7"
+Srikaya,,,,,Gempi,30,"21,51 - 22,31","0,7"
+Vanila,,,,,,,,
+Butter,35,"27,72 - 28,64","0,8",,CROISANT WEIGHT,,,
+Coklat,,,,,Item,Qty,Berat Total,Berat Item
+Mocca,,,,,Croisant,50,"25,30 - 26,23","0,5"
+Tiramisu,,,,,Croisant,40,"20,04 20,79","0,5"
+Keju,35,"27,64 - 27,93","0,7",,Croisant,30,"15,98 - 16,16","0,5"
+Srikaya,,,,,Croisant,20,"10,12 - 11,12","0,5"
+Vanila,,,,,,,,
+Butter,30,"23,82 - 24,87","0,8",,Item,Weight,,
+Coklat,,,,,Krim Kopi,"0,67",,
+Mocca,,,,,Gempi,"0,71",,
+Tiramisu,,,,,Butter,"0,74",,
+Keju,30,"23,27 - 24,59","0,7",,Coklat,"0,74",,
+Srikaya,,,,,Keju,"0,73",,
+Vanila,,,,,Tiramisu,"0,73",,
+Butter,25,"20,21 - 21,25","0,8",,Croissant,"0,53",,
+Coklat,,,,,Vanilla,"0,72",,
+Mocca,,,,,Mocca,"0,72",,
+Tiramisu,,,,,Srikaya,"0,72",,
+Keju,25,"20,18 - 21,12","0,7",,,,,
+Srikaya,,,,,,,,
+Vanila,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+,,,,,,,,
+Item,Weight,,,,,,,
+Krim Kopi,"0,67",,,,,,,
+Gempi,"0,71",,,,,,,
+Butter,"0,74",,,,,,,
+Coklat,"0,74",,,,,,,
+Keju,"0,73",,,,,,,
+Tiramisu,"0,73",,,,,,,
+Croissant,"0,53",,,,,,,
+Vanilla,"0,72",,,,,,,
+Mocca,"0,72",,,,,,,
+Srikaya,"0,72",,,,,,,

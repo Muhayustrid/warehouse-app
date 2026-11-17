@@ -5,6 +5,7 @@ import unittest
 
 from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
 	_labels_page,
+	csv_estimasi,
 	packing_summary,
 	sheet_card_html,
 	sheet_koli_total,
@@ -12,6 +13,19 @@ from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
 	slip_totals,
 	validate_slip_lines,
 )
+
+
+class TestCsvEstimasi(unittest.TestCase):
+	def test_krim_kopi_from_cream_columns(self):
+		# Baris Krim Kopi ada di grup kolom CREAM (kolom 5-8): 45 x 0,7
+		self.assertAlmostEqual(csv_estimasi("Dough Ropi Krim Kopi", 45), 31.5)
+
+	def test_butter_from_dough_columns(self):
+		# Butter qty 40 (grup DOUGH, berat item 0,8)
+		self.assertAlmostEqual(csv_estimasi("Butter", 40), 32.0)
+
+	def test_no_match(self):
+		self.assertIsNone(csv_estimasi("Paper Bag Ropi", 50))
 
 
 def _item(**overrides):

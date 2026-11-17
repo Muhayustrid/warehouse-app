@@ -9,6 +9,7 @@ is submitted (then read-only)."""
 from __future__ import annotations
 
 import json
+import os
 
 import frappe
 from frappe.utils import escape_html, flt, getdate
@@ -21,6 +22,59 @@ from warehouse_app.warehouse_app.fulfillment.profile import (
 )
 
 COMPANY = "PT. JUARA ROTI INDONESIA"
+
+# Master berat dough/cream/gempi (Harian Gudang - Dough Weight.csv): estimasi
+# per baris = berat per item dari baris master dengan qty terbesar <= qty baris.
+_DOUGH_WEIGHT_CSV = os.path.join(os.path.dirname(__file__), "dough_weight.csv")
+_dough_weight_cache: list[tuple[str, float, float]] | None = None
+
+
+def _dough_weight_rows() -> list[tuple[str, float, float]]:
+	"""[(item_lower, qty, berat_per_unit)] dari CSV; baris header/section dilewati."""
+	global _dough_weight_cache
+	if _dough_weight_cache is not None:
+		return _dough_weight_cache
+	rows: list[tuple[str, float, float]] = []
+	try:
+		with open(_DOUGH_WEIGHT_CSV, encoding="utf-8-sig") as f:
+			import csv as _csv
+
+			for raw in _csv.reader(f):
+				# CSV punya 2 grup kolom: DOUGH (0-3) dan CREAM/GEMPI (5-8).
+				for base in (0, 5):
+					if len(raw) < base + 4 or not raw[base] or raw[base].strip().lower() == "item":
+						continue
+					try:
+						qty = flt(raw[base + 1])
+					except Exception:
+						continue
+					if qty <= 0:
+						continue
+					# "0,8" atau "33,92 - 34,85" -> angka pertama, koma desimal -> titik
+					berat_item = raw[base + 3].split("-")[0].strip().replace(",", ".")
+					try:
+						per_unit = flt(berat_item)
+					except Exception:
+						continue
+					if per_unit <= 0:
+						continue
+					rows.append((raw[base].strip().lower(), qty, per_unit))
+	except OSError:
+		pass
+	_dough_weight_cache = rows
+	return rows
+
+
+def csv_estimasi(item_name: str, qty: float) -> float | None:
+	name = (item_name or "").strip().lower()
+	if not name:
+		return None
+	best = None
+	best_qty = -1
+	for csv_name, csv_qty, per_unit in _dough_weight_rows():
+		if (csv_name in name or name in csv_name) and csv_qty <= qty and csv_qty > best_qty:
+			best, best_qty = per_unit, csv_qty
+	return round(best * qty, 2) if best else None
 
 
 # ------------------------------------------------------------------ pure logic
@@ -53,11 +107,14 @@ def slip_lines_from_ps_items(
 				"category": "frozen" if "frozen" in category else "dry",
 				"net_weight": flt(item.get("net_weight")),
 			}
-			if line["category"] == "frozen":
-				weight = estimate_weight(qty, item.get("weight_per_unit"))
-				if weight is not None:
-					line["estimated_weight"] = weight
-					line["berat"] = weight
+			# Estimasi dari master dough weight; fallback weight_per_unit item master.
+			est = csv_estimasi(line["item_name"], qty)
+			if est is None and line["category"] == "frozen":
+				est = estimate_weight(qty, item.get("weight_per_unit"))
+			if est is not None:
+				line["estimated_weight"] = est
+				if line["category"] == "frozen":
+					line["berat"] = est
 			lines.append(line)
 	return lines
 
@@ -734,7 +791,7 @@ body{{font-family:Arial,Helvetica,sans-serif;font-size:8px;margin:0}}
 .body{{flex:1;display:flex;min-height:0}}
 .left{{width:38%;border-right:1.5px solid #111;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:1.6mm}}
 .ratio .n{{font-size:24px;font-weight:bold}}
-.ratio .tot{{font-size:10px;color:#111}}
+.ratio .tot{{font-size:11px;font-weight:bold;color:#111}}
 .wgrp{{display:flex;flex-direction:column;align-items:center}}
 .bw{{font-size:7.5px;letter-spacing:.14em;color:#111}}
 .kg{{font-size:24px;font-weight:bold;line-height:1.05;min-height:1em}}

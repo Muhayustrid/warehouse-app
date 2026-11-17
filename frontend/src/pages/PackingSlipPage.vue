@@ -89,7 +89,7 @@ function addFilterRow() {
 function toggleFilter() {
 	showFilter.value = !showFilter.value
 }
-defineExpose({ toggleFilter })
+defineExpose({ toggleFilter, printSheet })
 
 // ===== Sheet view (embedded): edit Koli/Berat langsung di kartu customer =====
 function cardKoli(s) {
@@ -459,10 +459,6 @@ function fmtQty(value) {
 					<button v-if="!embedded" type="button" class="btn btn-sm" :class="{ 'btn-secondary': appliedFilters.length }" @click="showFilter = !showFilter">
 						<Filter :size="13" :stroke-width="2" />
 						<span>Filter{{ appliedFilters.length ? ` (${appliedFilters.length})` : '' }}</span>
-					</button>
-					<button v-if="embedded" type="button" class="btn btn-sm" :disabled="loading" @click="printSheet">
-						<Printer :size="13" :stroke-width="2" />
-						<span>Cetak Packing List</span>
 					</button>
 					<div v-if="showFilter" class="ps-filter-panel">
 						<div class="ps-filter-head">

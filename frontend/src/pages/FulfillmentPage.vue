@@ -7,6 +7,7 @@ import {
 	FileText,
 	Filter,
 	Inbox,
+	Printer,
 	RefreshCw,
 	Search,
 	Tag,
@@ -357,6 +358,14 @@ function statusLabel(row) {
 						>
 							<FileText :size="14" :stroke-width="2" />
 							<span>Cetak Pick List Gabungan</span>
+						</button>
+						<button
+							type="button"
+							class="btn ff-packing-btn"
+							@click="packingRef?.printSheet()"
+						>
+							<Printer :size="14" :stroke-width="2" />
+							<span>Cetak Packing List</span>
 						</button>
 						<button
 							type="button"
@@ -1057,6 +1066,23 @@ function statusLabel(row) {
 .ff-manifest-btn:hover {
 	background: var(--brand-dark, #2a567f);
 	border-color: var(--brand-dark, #2a567f);
+}
+/* Tombol Cetak Packing List: kuning ala sheet packing (label tetap hitam-putih) */
+.ff-packing-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 34px;
+	padding: 0 12px;
+	font-size: 13px;
+	font-weight: 600;
+	border-radius: 6px;
+	border: 1.5px solid #111;
+	background: #ffe94a;
+	color: #111;
+}
+.ff-packing-btn:hover {
+	background: #f5dd35;
 }
 .ff-manifest-btn:disabled {
 	opacity: 0.6;
