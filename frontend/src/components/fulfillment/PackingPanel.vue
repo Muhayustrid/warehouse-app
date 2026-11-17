@@ -486,129 +486,7 @@ function onConfirmReset() {
 						</div>
 					</div>
 
-					<!-- Package Configurator (Split Dry & Frozen + Multi-Koli) -->
-					<div class="package-config-section">
-						<div class="config-section-title">
-							<strong>Pengaturan Koli / Kemasan</strong>
-							<span>Barang Dry dan Frozen otomatis dipisahkan. Tentukan jumlah koli fisik untuk masing-masing kategori:</span>
-						</div>
-
-						<div class="config-grid">
-							<!-- Card Dry -->
-							<div v-if="hasDryItems" class="pkg-category-card">
-								<div class="pkg-cat-header">
-									<span class="badge b-dry">Dry</span>
-									<span class="pkg-cat-count">{{ dryItems.length }} Item ({{ fmtQty(dryQty) }} Unit)</span>
-								</div>
-								<div class="pkg-cat-body">
-									<div class="pkg-counter-row">
-										<label class="pkg-counter-label">Jumlah Koli:</label>
-										<div class="stepper-counter">
-											<button
-												type="button"
-												class="counter-btn"
-												:disabled="dryPackages <= 1 || busy"
-												@click="dryPackages--"
-											>
-												<Minus :size="14" :stroke-width="2.5" />
-											</button>
-											<span class="counter-val">{{ dryPackages }}</span>
-											<button
-												type="button"
-												class="counter-btn"
-												:disabled="busy"
-												@click="dryPackages++"
-											>
-												<Plus :size="14" :stroke-width="2.5" />
-											</button>
-										</div>
-									</div>
-									<span class="pkg-hint">
-										{{ dryPackages > 1 ? `Item Dry dikemas berurutan ke ${dryPackages} koli.` : 'Seluruh item Dry dikemas dalam 1 koli.' }}
-									</span>
-								</div>
-							</div>
-
-							<!-- Card Frozen -->
-							<div v-if="hasFrozenItems" class="pkg-category-card">
-								<div class="pkg-cat-header">
-									<span class="badge b-frozen">Frozen</span>
-									<span class="pkg-cat-count">{{ frozenItems.length }} Item ({{ fmtQty(frozenQty) }} Unit)</span>
-								</div>
-								<div class="pkg-cat-body">
-									<div class="pkg-counter-row">
-										<label class="pkg-counter-label">Jumlah Koli:</label>
-										<div class="stepper-counter">
-											<button
-												type="button"
-												class="counter-btn"
-												:disabled="frozenPackages <= 1 || busy"
-												@click="frozenPackages--"
-											>
-												<Minus :size="14" :stroke-width="2.5" />
-											</button>
-											<span class="counter-val">{{ frozenPackages }}</span>
-											<button
-												type="button"
-												class="counter-btn"
-												:disabled="busy"
-												@click="frozenPackages++"
-											>
-												<Plus :size="14" :stroke-width="2.5" />
-											</button>
-										</div>
-									</div>
-									<span class="pkg-hint">
-										{{ frozenPackages > 1 ? `Item Frozen dikemas berurutan ke ${frozenPackages} koli.` : 'Seluruh item Frozen dikemas dalam 1 koli.' }}
-									</span>
-								</div>
-							</div>
-						</div>
-
-						<!-- Total Summary Banner -->
-						<div class="total-koli-summary">
-							<Package :size="16" :stroke-width="2" />
-							<span>
-								Total Kemasan yang akan dibuat: <strong>{{ totalPackages }} Koli</strong>
-								<template v-if="hasDryItems && hasFrozenItems">
-									({{ dryPackages }} Koli Dry + {{ frozenPackages }} Koli Frozen)
-								</template>
-							</span>
-						</div>
-
-						<!-- Live Preview of Koli Allocation: sheet excel per kategori, grup per koli -->
-					<div v-if="totalPackages > 0" class="koli-preview-block">
-						<div class="koli-preview-head">
-							<div class="koli-preview-title">
-								<Boxes :size="15" :stroke-width="2" class="preview-icon" />
-								<strong>Alokasi Barang per Koli:</strong>
-								<span class="badge" :class="isCustomized ? 'b-custom' : 'b-auto'">
-									{{ isCustomized ? '✎ Disesuaikan Manual' : 'Otomatis' }}
-								</span>
-							</div>
-							<button
-								v-if="isCustomized"
-								type="button"
-								class="btn btn-xs btn-outline btn-reset-auto"
-								title="Kembalikan susunan barang ke hitungan otomatis"
-								@click="resetToAuto"
-							>
-								<RotateCcw :size="12" />
-								<span>Reset ke Otomatis</span>
-							</button>
-						</div>
-
-						<div class="preview-sub-row">
-							<span class="preview-sub">
-								💡 Seret (drag) baris barang ke koli lain, atau klik baris untuk memindahkan jumlah tertentu.
-							</span>
-						</div>
-
-						<div v-if="hasEmptyKoli" class="empty-koli-warning">
-							<AlertTriangle :size="14" />
-							<span>Ada koli yang masih kosong. Pastikan setiap koli terisi barang sebelum mengemas.</span>
-						</div>
-
+					<!-- Tabel alokasi koli ala excel, per kategori -->
 						<div class="koli-excel-grid">
 							<div v-for="cat in ['Dry', 'Frozen']" :key="cat" class="koli-excel-cat">
 								<div class="ke-title">{{ cat.toUpperCase() }}</div>
@@ -643,14 +521,7 @@ function onConfirmReset() {
 												<td class="num">{{ it.qty }}</td>
 												<td class="num">{{ it.uom || '' }}</td>
 												<template v-if="itemIdx === 0">
-													<td class="num ke-colly" :rowspan="koli.items.length">
-														<div>Koli {{ koli.case_no }}/{{ totalPackages }}</div>
-														<select v-model="koli.box_size" class="koli-box-select" title="Ukuran box (B/K)" aria-label="Ukuran box">
-															<option value="">—</option>
-															<option value="B">B</option>
-															<option value="K">K</option>
-														</select>
-													</td>
+													<td class="num ke-colly" :rowspan="koli.items.length">{{ kolisOf(cat).indexOf(koli) + 1 }}</td>
 													<td class="num ke-weight" :rowspan="koli.items.length"></td>
 												</template>
 											</tr>
@@ -660,11 +531,7 @@ function onConfirmReset() {
 							</div>
 						</div>
 					</div>
-					</div>
 				</div>
-			</div>
-
-			<!-- State 2B: Fully Packed -> Submitted Packing Slips Card -->
 			<div v-else class="panel slips-card">
 				<div class="panel-head slips-head">
 					<div class="slips-title-col">
