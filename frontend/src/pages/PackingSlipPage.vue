@@ -93,7 +93,7 @@ defineExpose({ toggleFilter, printSheet })
 
 // ===== Sheet view (embedded): edit Koli/Berat langsung di kartu customer =====
 function cardKoli(s) {
-	return (s.lines || []).reduce((sum, l) => sum + Math.max(1, Number(l.koli) || 1), 0)
+	return (s.lines || []).reduce((sum, l) => sum + (Number(l.koli) || 0), 0)
 }
 
 // ===== Drag & drop kiriman ke driver =====
@@ -150,14 +150,60 @@ const driverGroups = computed(() => {
 
 // Kartu: tabel DRY dan FROZEN terpisah (seperti picking list), masing-masing ada Total.
 function cardSections(s) {
+	// Grup koli = baris berurutan dengan koli_no sama; hanya run berurutan
+	// yang di-merge (rowspan), jadi baris normal tidak pernah ikut tergabung.
+	const decorate = (lines) => {
+		const rows = lines.map((l, idx) => ({ l, idx, span: 0, covered: false }))
+		let i = 0
+		while (i < rows.length) {
+			const k = Number(rows[i].l.koli_no) || 1
+			let j = i
+			while (j + 1 < rows.length && (Number(rows[j + 1].l.koli_no) || 1) === k) j++
+			if (j > i) {
+				rows[i].span = j - i + 1
+				for (let x = i + 1; x <= j; x++) rows[x].covered = true
+			}
+			i = j + 1
+		}
+		return rows
+	}
 	return [
-		{ label: 'Dry', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen') },
-		{ label: 'Frozen', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen') },
+		{ label: 'Dry', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen'), rows: decorate(s.lines.filter((l) => l.category !== 'frozen')) },
+		{ label: 'Frozen', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen'), rows: decorate(s.lines.filter((l) => l.category === 'frozen')) },
 	].filter((sec) => sec.lines.length)
 }
 
+// Klik kanan baris kartu: gabung/pisah koli tanpa buka editor penuh.
+const rowMenu = ref(null) // { s, sec, idx, x, y }
+function onRowContextMenu(s, sec, idx, e) {
+	if (!s.editable) return
+	e.preventDefault()
+	rowMenu.value = { s, sec, idx, x: e.clientX, y: e.clientY }
+}
+function mergeRowUp() {
+	const m = rowMenu.value
+	rowMenu.value = null
+	if (!m || m.idx === 0) return
+	const prev = m.sec.lines[m.idx - 1]
+	const cur = m.sec.lines[m.idx]
+	cur.koli_no = prev.koli_no
+	cur.koli = 0 // anggota grup: koli dihitung sekali di baris pertama grup
+	saveCard(m.s)
+}
+function splitRow() {
+	const m = rowMenu.value
+	rowMenu.value = null
+	if (!m) return
+	const cur = m.sec.lines[m.idx]
+	const frozen = cur.category === 'frozen'
+	const nos = m.s.lines.filter((l) => (l.category === 'frozen') === frozen).map((l) => Number(l.koli_no) || 1)
+	cur.koli_no = Math.max(...nos) + 1
+	cur.koli = 1
+	saveCard(m.s)
+}
+
 function secKoli(sec) {
-	return sec.lines.reduce((a, l) => a + (Number(l.koli) || 1), 0)
+	return sec.lines.reduce((a, l) => a + (Number(l.koli) || 0), 0)
 }
 
 function groupKoli(g) {
@@ -638,22 +684,24 @@ function fmtQty(value) {
 									</thead>
 									<tbody>
 										<tr
-											v-for="(l, i) in sec.lines"
+											v-for="(r, i) in sec.rows"
 											:key="i"
 											:draggable="!!s.editable"
-											@dragstart="onSheetRowDragStart(s, sec, i, $event)"
+											@dragstart="onSheetRowDragStart(s, sec, r.idx, $event)"
 											@dragover.prevent
-											@drop.prevent="onSheetRowDrop(s, sec, i)"
+											@drop.prevent="onSheetRowDrop(s, sec, r.idx)"
+											@contextmenu.prevent="onRowContextMenu(s, sec, r.idx, $event)"
 										>
-											<td>{{ l.item_name }}</td>
-											<td class="num" :class="{ 'qty-hl': l.category === 'frozen' }">
-												<input v-model.number="l.qty" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" />
+											<td>{{ r.l.item_name }}</td>
+											<td class="num" :class="{ 'qty-hl': r.l.category === 'frozen' }">
+												<input v-model.number="r.l.qty" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" />
 											</td>
-											<td><input v-model="l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td><input v-model="l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td class="hand"></td>
-											<td class="hand"></td>
-											<td class="num">{{ l.estimated_weight || '' }}</td>
+											<td v-if="r.span > 0" class="num" :rowspan="r.span"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
+											<td v-else-if="!r.covered"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
+											<td v-if="!r.covered"><input v-model="r.l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
+											<td v-if="!r.covered" class="hand"></td>
+											<td v-if="!r.covered" class="hand"></td>
+											<td v-if="!r.covered" class="num">{{ r.l.estimated_weight || '' }}</td>
 										</tr>
 										<tr class="tf">
 											<td colspan="2">Total {{ sec.label }}</td>
@@ -930,6 +978,15 @@ function fmtQty(value) {
 		</div>
 
 		<PrintPreviewModal :open="printModalOpen" :title="printModalTitle" :items="printModalItems" @close="printModalOpen = false" />
+
+		<!-- Menu klik kanan baris kartu: gabung/pisah koli -->
+		<template v-if="rowMenu">
+			<div class="ctx-overlay" @click="rowMenu = null" @contextmenu.prevent="rowMenu = null"></div>
+			<div class="ctx-menu" :style="{ left: rowMenu.x + 'px', top: rowMenu.y + 'px' }">
+				<button v-if="rowMenu.idx > 0" class="ctx-item" @click="mergeRowUp">Gabung ke koli di atas</button>
+				<button class="ctx-item" @click="splitRow">Pisah jadi koli sendiri</button>
+			</div>
+		</template>
 	</div>
 </template>
 
@@ -1054,6 +1111,17 @@ function fmtQty(value) {
 .drv-head small { font-size: 9px; color: #888; }
 .sc-sect { font-weight: 700; font-size: 11px; margin: 6px 2px 2px; }
 .sc-addrow { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+.ctx-overlay { position: fixed; inset: 0; z-index: 90; }
+.ctx-menu {
+	position: fixed; z-index: 91; background: #fff; border: 1px solid #d1d5db;
+	border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); padding: 4px; min-width: 190px;
+}
+.ctx-item {
+	display: block; width: 100%; text-align: left; padding: 6px 10px; border: 0;
+	background: none; font-size: 12.5px; cursor: pointer; border-radius: 4px;
+}
+.ctx-item:hover { background: #eef2ff; }
 .sc-tbl tbody tr[draggable='true']:hover { background: #fff8d6; }
 .sheet-foot { margin-top: 8px; }
 .sf-total { font-size: 14px; font-weight: bold; }

@@ -106,6 +106,7 @@ def slip_lines_from_ps_items(
 		if not items:
 			continue
 		category = (categories[idx - 1] if categories and idx - 1 < len(categories) else "frozen").lower()
+		first_in_koli = True
 		for item in items:
 			qty = flt(item.get("qty"))
 			if qty <= 0:
@@ -124,7 +125,8 @@ def slip_lines_from_ps_items(
 				"qty": qty,
 				"uom": item.get("stock_uom") or "",
 				"koli_no": idx,
-				"koli": 1,
+				# koli dihitung sekali per koli fisik: baris pertama = 1, lanjutan = 0.
+				"koli": 1 if first_in_koli else 0,
 				"berat": "",
 				"category": "frozen" if "frozen" in line_category else "dry",
 				"net_weight": flt(item.get("net_weight")),
@@ -137,6 +139,7 @@ def slip_lines_from_ps_items(
 				line["estimated_weight"] = est
 				if line["category"] == "frozen":
 					line["berat"] = est
+			first_in_koli = False
 			lines.append(line)
 	return lines
 
