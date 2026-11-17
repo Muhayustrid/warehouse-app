@@ -692,8 +692,7 @@ def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 	koli_sum = sheet_koli_total(lines)
 	return (
 		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
-		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly :</span>"
-		f"<span class='wblank'></span></div>"
+		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly :</span></div>"
 		f"{body}</div>"
 	)
 
@@ -725,32 +724,39 @@ def packing_sheet_html(company: str | None = None, date: str | None = None) -> s
 	if not company:
 		frappe.throw("Company is required.", frappe.ValidationError)
 	res = load_packing_sheet(company, date or "")
-	total_koli = 0
-	# Kartu dikelompokkan per driver (tampilan terduplikasi per driver/mobil).
 	groups: dict[tuple[str, str], list[str]] = {}
+	koli_per_group: dict[tuple[str, str], int] = {}
 	order: list[tuple[str, str]] = []
 	for slip in res["slips"]:
 		if not slip["lines"]:
 			continue
-		total_koli += sheet_koli_total(slip["lines"])
 		key = (slip.get("driver") or "", slip.get("vehicle_no") or "")
 		if key not in groups:
 			groups[key] = []
 			order.append(key)
+			koli_per_group[key] = 0
 		groups[key].append(sheet_card_html(slip["customer_name"], slip["lines"]))
+		koli_per_group[key] += sheet_koli_total(slip["lines"])
 	body = ""
 	for driver, vehicle_no in order:
-		body += "".join(groups[(driver, vehicle_no)])
-		if driver or vehicle_no:
-			body += (
-				f"<div class='mobil'><span>MOBIL : {escape_html(vehicle_no)}</span>"
-				f"<span>DRIVER : {escape_html(driver)}</span></div>"
-			)
+		key = (driver, vehicle_no)
+		body += "".join(groups[key])
+		body += (
+			f"<div class='boxfoot'><div class='total'>TOTAL {koli_per_group[key]} KOLI</div>"
+			"<table class='boxtable'>"
+			"<tr><th></th><th>BERANGKAT</th><th>PULANG</th></tr>"
+			"<tr><td>BOX ABU</td><td></td><td></td></tr>"
+			"<tr><td>KRANJANG BESAR</td><td></td><td></td></tr>"
+			"<tr><td>KRANJANG KECIL</td><td></td><td></td></tr>"
+			"</table>"
+			f"<div class='mobil'><span>MOBIL : {escape_html(vehicle_no)}</span>"
+			f"<span>DRIVER : {escape_html(driver)}</span></div></div>"
+		)
 	title = f"Packing List {company} {date or ''}".strip()
-	return _sheet_page(body, total_koli, res.get("driver") or "", res.get("vehicle_no") or "", title)
+	return _sheet_page(body, title)
 
 
-def _sheet_page(body: str, total_koli: int, driver: str, vehicle_no: str, title: str) -> str:
+def _sheet_page(body: str, title: str) -> str:
 	return f"""<!doctype html><html><head><meta charset='utf-8'><title>{escape_html(title)}</title>
 <style>
 @page{{size:A4 portrait;margin:8mm}}
@@ -761,28 +767,19 @@ body{{font-family:Arial,Helvetica,sans-serif;font-size:9px;margin:0;-webkit-prin
 .cap{{display:flex;gap:3mm;align-items:center;background:#ffe94a;border-bottom:1.5px solid #111;padding:0.8mm 2mm}}
 .cap .cust{{flex:1;font-weight:bold;font-size:10px}}
 .cap .dry,.cap .colly{{white-space:nowrap;font-size:9px}}
-.cap .wblank{{display:inline-block;width:11mm;height:3.6mm;background:#fff;border:1px solid #111}}
 table{{width:100%;border-collapse:collapse}}
 th,td{{border:1px solid #111;padding:0.6mm 1.5mm;text-align:left}}
 th{{background:#ffe94a;font-size:8.5px}}
 td.qty,td.k,td.w,td.est{{text-align:center}}
 td.hand{{width:11mm}}
 tr.tf td{{background:#ffe94a;font-weight:bold}}
-.boxwrap{{margin-top:5mm;display:flex;gap:8mm}}
-.total{{font-size:12px;font-weight:bold;margin-top:3mm}}
 .boxtable td,.boxtable th{{height:6mm}}
+.boxfoot{{break-inside:avoid;margin-top:3mm}}
+.total{{font-size:12px;font-weight:bold;margin-top:3mm}}
 .mobil{{margin-top:3mm;font-size:10px;font-weight:bold}}
 .mobil span{{display:inline-block;margin-right:10mm}}
 </style></head><body>
 <div class='grid'>{body or "<p>Belum ada packing pada tanggal ini.</p>"}</div>
-<div class='total'>TOTAL {total_koli} KOLI</div>
-<div class='boxwrap'><table class='boxtable'>
-<tr><th></th><th>BERANGKAT</th><th>PULANG</th></tr>
-<tr><td>BOX ABU</td><td></td><td></td></tr>
-<tr><td>KRANJANG BESAR</td><td></td><td></td></tr>
-<tr><td>KRANJANG KECIL</td><td></td><td></td></tr>
-</table></div>
-<div class='mobil'><span>MOBIL : {escape_html(vehicle_no)}</span><span>DRIVER : {escape_html(driver)}</span></div>
 <script>window.print()</script></body></html>"""
 
 

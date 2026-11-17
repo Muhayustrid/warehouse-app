@@ -95,7 +95,6 @@ defineExpose({ toggleFilter, printSheet })
 function cardKoli(s) {
 	return (s.lines || []).reduce((sum, l) => sum + Math.max(1, Number(l.koli) || 1), 0)
 }
-const totalKoli = computed(() => filteredSlips.value.reduce((sum, s) => sum + cardKoli(s), 0))
 
 // ===== Drag & drop kiriman ke driver =====
 // Satu kiriman area bisa dibawakan beberapa driver: assignment per kartu
@@ -159,6 +158,10 @@ function cardSections(s) {
 
 function secKoli(sec) {
 	return sec.lines.reduce((a, l) => a + (Number(l.koli) || 1), 0)
+}
+
+function groupKoli(g) {
+	return g.slips.reduce((sum, s) => sum + cardKoli(s), 0)
 }
 
 // Drag baris item: urutkan di dalam kategori yang sama pada kartu yang sama.
@@ -585,9 +588,11 @@ function fmtQty(value) {
 				</button>
 				<span class="muted">Berlaku untuk semua packing tanggal {{ fromDate }}</span>
 				<span class="drv-sep"></span>
-				<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver baru" />
-				<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil baru" @keyup.enter="addDriver" />
-				<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
+				<span class="drv-add">
+					<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver baru" />
+					<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil baru" @keyup.enter="addDriver" />
+					<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
+				</span>
 			</div>
 
 			<p v-if="error" class="ps-error">{{ error }}</p>
@@ -618,7 +623,6 @@ function fmtQty(value) {
 								</button>
 								<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
 								<span class="sc-dry">Colly :</span>
-								<span class="sc-wblank" title="Diisi tulis tangan"></span>
 								<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
 							</div>
 							<template v-for="sec in cardSections(s)" :key="sec.cat">
@@ -670,17 +674,18 @@ function fmtQty(value) {
 							</div>
 						</div>
 					</div>
-				</div>
 
-				<div class="sheet-foot">
-					<div class="sf-total">TOTAL {{ totalKoli }} KOLI</div>
-					<table class="sf-box">
-						<tr><th></th><th>BERANGKAT</th><th>PULANG</th></tr>
-						<tr><td>BOX ABU</td><td></td><td></td></tr>
-						<tr><td>KRANJANG BESAR</td><td></td><td></td></tr>
-						<tr><td>KRANJANG KECIL</td><td></td><td></td></tr>
-					</table>
-					<div class="sf-mobil"><span>MOBIL : {{ vehicleNo || '—' }}</span><span>DRIVER : {{ driver || '—' }}</span></div>
+					<!-- Catatan per driver: total koli, tabel truk, MOBIL/DRIVER -->
+					<div class="sheet-foot">
+						<div class="sf-total">TOTAL {{ groupKoli(g) }} KOLI</div>
+						<table class="sf-box">
+							<tr><th></th><th>BERANGKAT</th><th>PULANG</th></tr>
+							<tr><td>BOX ABU</td><td></td><td></td></tr>
+							<tr><td>KRANJANG BESAR</td><td></td><td></td></tr>
+							<tr><td>KRANJANG KECIL</td><td></td><td></td></tr>
+						</table>
+						<div class="sf-mobil"><span>MOBIL : {{ g.vehicle_no || '—' }}</span><span>DRIVER : {{ g.driver || '—' }}</span></div>
+					</div>
 				</div>
 			</template>
 
@@ -1029,6 +1034,8 @@ function fmtQty(value) {
 
 /* Section per driver + tabel DRY/FROZEN + add-row inline */
 .drv-sep { width: 1px; height: 26px; background: #d0d5dd; margin: 0 4px; }
+.drv-add { display: inline-flex; gap: 6px; align-items: center; }
+.drv-add .input { width: 160px; }
 .drv-section { margin-bottom: 18px; }
 .drv-section.drop-hot { outline: 2px dashed #2b6cb0; outline-offset: 4px; border-radius: 8px; }
 .drv-head { display: inline-flex; align-items: center; gap: 10px; border: 1.5px dashed #111; background: #fffdf2; padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; cursor: default; }

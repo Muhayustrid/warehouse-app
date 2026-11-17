@@ -1,6 +1,6 @@
-import{c as t}from"./index-B1FRgTEg.js";/**
+import{c as e}from"./index-DLg3OWnF.js";/**
  * @license lucide-vue-next v0.544.0 - ISC
  *
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
- */const h=t("chevron-right",[["path",{d:"m9 18 6-6-6-6",key:"mthhwq"}]]);export{h as C};
+ */const a=e("plus",[["path",{d:"M5 12h14",key:"1ays0h"}],["path",{d:"M12 5v14",key:"s699le"}]]);export{a as P};
