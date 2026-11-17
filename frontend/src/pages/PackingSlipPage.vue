@@ -135,6 +135,84 @@ function onCardDragStart(s, event) {
 	event.dataTransfer.effectAllowed = 'move'
 }
 
+// ===== Section per driver: tampilan sheet terduplikasi untuk tiap driver/mobil =====
+const driverGroups = computed(() => {
+	const groups = dayDrivers.value.map((d) => ({
+		driver: d.driver,
+		vehicle_no: d.vehicle_no,
+		slips: filteredSlips.value.filter((s) => s.driver && s.driver === d.driver),
+	}))
+	const assigned = new Set(groups.flatMap((g) => g.slips.map((s) => s.name)))
+	const un = filteredSlips.value.filter((s) => !assigned.has(s.name))
+	if (un.length) groups.push({ driver: '', vehicle_no: '', slips: un })
+	return groups
+})
+
+// Kartu: tabel DRY dan FROZEN terpisah (seperti picking list), masing-masing ada Total.
+function cardSections(s) {
+	return [
+		{ label: 'Dry', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen') },
+		{ label: 'Frozen', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen') },
+	].filter((sec) => sec.lines.length)
+}
+
+function secKoli(sec) {
+	return sec.lines.reduce((a, l) => a + (Number(l.koli) || 1), 0)
+}
+
+// Drag baris item: urutkan di dalam kategori yang sama pada kartu yang sama.
+const dragRow = ref(null) // { name, catFrozen, idx }
+function onSheetRowDragStart(s, sec, idx, e) {
+	dragRow.value = { name: s.name, catFrozen: sec.cat === 'frozen', idx }
+	e.dataTransfer.effectAllowed = 'move'
+}
+
+function onSheetRowDrop(s, sec, idx) {
+	const d = dragRow.value
+	dragRow.value = null
+	if (!d || !s.editable || d.name !== s.name || d.catFrozen !== (sec.cat === 'frozen') || d.idx === idx) return
+	const subset = []
+	s.lines.forEach((l, i) => {
+		if ((l.category === 'frozen') === d.catFrozen) subset.push(i)
+	})
+	const [moved] = s.lines.splice(subset[d.idx], 1)
+	s.lines.splice(subset[idx], 0, moved)
+	saveCard(s)
+}
+
+// Add-row langsung di kartu sheet: item beda koli tanpa buka editor penuh.
+const addRowCard = ref(null) // { name, item_code, qty, category }
+
+async function confirmCardRow(s) {
+	const row = addRowCard.value
+	if (!row) return
+	const dnItem = (s.dn_items || []).find((it) => it.item_code === row.item_code)
+	if (!dnItem) {
+		error.value = 'Pilih item dari daftar DN terlebih dahulu.'
+		return
+	}
+	if (!(Number(row.qty) > 0)) {
+		error.value = 'Qty harus lebih dari 0.'
+		return
+	}
+	const frozen = row.category === 'frozen'
+	const koliNos = s.lines
+		.filter((l) => (l.category === 'frozen') === frozen)
+		.map((l) => Number(l.koli_no) || 1)
+	s.lines.push({
+		item_code: dnItem.item_code,
+		item_name: dnItem.item_name || dnItem.item_code,
+		qty: Number(row.qty),
+		uom: dnItem.stock_uom || dnItem.uom || '',
+		koli_no: (koliNos.length ? Math.max(...koliNos) : 0) + 1,
+		koli: 1,
+		berat: '',
+		category: row.category,
+	})
+	addRowCard.value = null
+	await saveCard(s)
+}
+
 async function onDropToDriver(d) {
 	const s = dragSlip.value
 	dragSlip.value = null
@@ -153,7 +231,8 @@ async function saveCard(s) {
 	if (!s.editable) return
 	error.value = ''
 	try {
-		await savePackingSlip(s.sales_order, s.lines, driver.value, vehicleNo.value)
+		// Pertahankan driver per kartu; global hanya fallback untuk kartu tanpa driver.
+		await savePackingSlip(s.sales_order, s.lines, s.driver || driver.value, s.vehicle_no || vehicleNo.value)
 	} catch (e) {
 		error.value = e.message || `Gagal menyimpan ${s.customer_name}.`
 	}
@@ -510,55 +589,77 @@ function fmtQty(value) {
 			<template v-else-if="embedded">
 				<!-- Panel driver: lepas kartu customer ke driver yang bawa -->
 				<div class="drv-panel">
-					<div
-						v-for="(d, i) in dayDrivers"
-						:key="i"
-						class="drv-zone"
-						@dragover.prevent
-						@drop.prevent="onDropToDriver(d)"
-					>
-						<b>{{ d.driver || '(tanpa nama)' }}</b>
-						<span>{{ d.vehicle_no || '—' }}</span>
-						<small>Lepas kartu kiriman di sini</small>
-					</div>
 					<div class="drv-add">
 						<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver" />
 						<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil" @keyup.enter="addDriver" />
 						<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
 					</div>
 				</div>
-				<div class="sheet-grid">
-					<div v-for="s in filteredSlips" :key="s.name" class="sheet-card" :draggable="!!s.editable" @dragstart="onCardDragStart(s, $event)" @dragend="dragSlip = null">
-						<div class="sc-cap">
-							<button type="button" class="sc-name" title="Buka editor penuh" @click="openSlip(s)">
-								{{ s.customer_name }}
-							</button>
-							<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
-							<span class="sc-dry">Colly : {{ (s.totals?.total_dry_colly || 0) + (s.totals?.total_frozen_colly || 0) }}</span>
-							<span class="sc-wblank" title="Diisi tulis tangan"></span>
-							<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
+				<div v-for="(g, gi) in driverGroups" :key="gi" class="drv-section">
+					<div class="drv-head" @dragover.prevent @drop.prevent="onDropToDriver(g)">
+						<b>{{ g.driver || 'Belum ada driver' }}</b>
+						<span>{{ g.vehicle_no || '—' }}</span>
+						<small>Lepas kartu kiriman di sini</small>
+					</div>
+					<div class="sheet-grid">
+						<div v-for="s in g.slips" :key="s.name" class="sheet-card" :draggable="!!s.editable" @dragstart="onCardDragStart(s, $event)" @dragend="dragSlip = null">
+							<div class="sc-cap">
+								<button type="button" class="sc-name" title="Buka editor penuh" @click="openSlip(s)">
+									{{ s.customer_name }}
+								</button>
+								<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
+								<span class="sc-dry">Colly : {{ (s.totals?.total_dry_colly || 0) + (s.totals?.total_frozen_colly || 0) }}</span>
+								<span class="sc-wblank" title="Diisi tulis tangan"></span>
+								<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
+							</div>
+							<template v-for="sec in cardSections(s)" :key="sec.cat">
+								<div class="sc-sect">{{ sec.label }}</div>
+								<table class="sc-tbl">
+									<thead>
+										<tr><th>Item</th><th>Qty</th><th>Koli</th><th>Berat</th><th>B / K</th><th>Picker</th><th>Estimasi</th></tr>
+									</thead>
+									<tbody>
+										<tr
+											v-for="(l, i) in sec.lines"
+											:key="i"
+											:draggable="!!s.editable"
+											@dragstart="onSheetRowDragStart(s, sec, i, $event)"
+											@dragover.prevent
+											@drop.prevent="onSheetRowDrop(s, sec, i)"
+										>
+											<td>{{ l.item_name }}</td>
+											<td class="num" :class="{ 'qty-hl': l.category === 'frozen' }">{{ l.qty }}</td>
+											<td><input v-model="l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
+											<td><input v-model="l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
+											<td class="hand"></td>
+											<td class="hand"></td>
+											<td class="num">{{ l.estimated_weight || '' }}</td>
+										</tr>
+										<tr class="tf">
+											<td colspan="2">Total {{ sec.label }}</td>
+											<td>{{ secKoli(sec) }}</td>
+											<td colspan="4"></td>
+										</tr>
+									</tbody>
+								</table>
+							</template>
+							<div v-if="s.editable" class="sc-addrow">
+								<template v-if="addRowCard && addRowCard.name === s.name">
+									<select v-model="addRowCard.item_code" class="input input-sm">
+										<option value="" disabled>Item…</option>
+										<option v-for="it in s.dn_items || []" :key="it.item_code" :value="it.item_code">{{ it.item_name || it.item_code }}</option>
+									</select>
+									<select v-model="addRowCard.category" class="input input-sm">
+										<option value="dry">Dry</option>
+										<option value="frozen">Frozen</option>
+									</select>
+									<input v-model.number="addRowCard.qty" class="input input-sm" type="number" min="1" title="Qty" />
+									<button type="button" class="btn btn-sm" @click="confirmCardRow(s)">OK</button>
+									<button type="button" class="btn btn-sm" @click="addRowCard = null">Batal</button>
+								</template>
+								<button v-else type="button" class="btn btn-sm" @click="addRowCard = { name: s.name, item_code: '', qty: 1, category: 'dry' }">+ Baris</button>
+							</div>
 						</div>
-						<table class="sc-tbl">
-							<thead>
-								<tr><th>Item</th><th>Qty</th><th>Koli</th><th>Berat</th><th>B / K</th><th>Picker</th><th>Estimasi</th></tr>
-							</thead>
-							<tbody>
-								<tr v-for="(l, i) in s.lines" :key="i">
-									<td>{{ l.item_name }}</td>
-									<td class="num" :class="{ 'qty-hl': l.category === 'frozen' }">{{ l.qty }}</td>
-									<td><input v-model="l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
-									<td><input v-model="l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
-									<td class="hand"></td>
-									<td class="hand"></td>
-									<td class="num">{{ l.estimated_weight || '' }}</td>
-								</tr>
-								<tr class="tf">
-									<td colspan="2">Total</td>
-									<td>{{ cardKoli(s) }}</td>
-									<td colspan="4"></td>
-								</tr>
-							</tbody>
-						</table>
 					</div>
 				</div>
 
@@ -907,10 +1008,6 @@ function fmtQty(value) {
 .sc-driver { margin-left: auto; font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }
 .sheet-card.dragging { opacity: 0.5; }
 .drv-panel { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-bottom: 10px; }
-.drv-zone { display: flex; flex-direction: column; justify-content: center; min-width: 130px; border: 1.5px dashed #111; background: #fffdf2; padding: 6px 10px; border-radius: 6px; }
-.drv-zone b { font-size: 12.5px; }
-.drv-zone span { font-size: 11px; color: #444; }
-.drv-zone small { font-size: 9px; color: #888; }
 .drv-add { display: flex; gap: 6px; align-items: center; }
 .sc-tbl { width: 100%; border-collapse: collapse; font-size: 10.5px; }
 .sc-tbl th, .sc-tbl td { border: 1px solid #111; padding: 2px 4px; text-align: left; }
@@ -921,6 +1018,16 @@ function fmtQty(value) {
 .sc-in { width: 100%; border: 0; background: #f8f8f8; text-align: center; font: inherit; padding: 0; }
 .sc-in:focus { background: #fff; outline: 1px solid #111; }
 .sc-tbl .tf td { background: #ffe94a; font-weight: bold; }
+
+/* Section per driver + tabel DRY/FROZEN + add-row inline */
+.drv-section { margin-bottom: 18px; }
+.drv-head { display: inline-flex; align-items: center; gap: 10px; border: 1.5px dashed #111; background: #fffdf2; padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; cursor: default; }
+.drv-head b { font-size: 12.5px; }
+.drv-head span { font-size: 11px; color: #444; }
+.drv-head small { font-size: 9px; color: #888; }
+.sc-sect { font-weight: 700; font-size: 11px; margin: 6px 2px 2px; }
+.sc-addrow { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.sc-tbl tbody tr[draggable='true']:hover { background: #fff8d6; }
 .sheet-foot { margin-top: 8px; }
 .sf-total { font-size: 14px; font-weight: bold; }
 .sf-box { border-collapse: collapse; margin-top: 6px; }

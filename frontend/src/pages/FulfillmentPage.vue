@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import {
 	AlertTriangle,
 	ChevronRight,
-	FileText,
 	Filter,
 	Inbox,
 	Printer,
@@ -14,7 +13,6 @@ import {
 	X,
 } from 'lucide-vue-next'
 import {
-	fetchCombinedPickListHtml,
 	fetchOrderQueue,
 	fetchPackingSlips,
 	fetchPackingSlipsLabelsHtml,
@@ -63,7 +61,6 @@ function tabFromQuery() {
 
 const activeTab = ref(tabFromQuery())
 const pickDate = ref(new Date(Date.now() + 86400000).toISOString().slice(0, 10))
-const pickPrinting = ref(false)
 
 const printModalOpen = ref(false)
 const printModalTitle = ref('')
@@ -214,21 +211,6 @@ watch(activeTab, (v) => {
 	if (v === 'packing') loadPackingSummary()
 })
 
-async function printCombinedPickList() {
-	if (pickPrinting.value) return
-	pickPrinting.value = true
-	try {
-		const res = await fetchCombinedPickListHtml(company.value, pickDate.value)
-		printModalTitle.value = 'Pick List Gabungan'
-		printModalItems.value = [{ label: 'Pick List', name: pickDate.value, html: res }]
-		printModalOpen.value = true
-	} catch (e) {
-		error.value = e.message || 'Gagal memuat pick list gabungan.'
-	} finally {
-		pickPrinting.value = false
-	}
-}
-
 // Semua label koli untuk packing slip yang sudah diinput pada tanggal kirim terpilih.
 const labelPrinting = ref(false)
 async function printAllLabels() {
@@ -350,15 +332,6 @@ function statusLabel(row) {
 							aria-label="Tanggal kirim"
 							title="Tanggal kirim"
 						/>
-						<button
-							type="button"
-							class="btn ff-manifest-btn"
-							:disabled="pickPrinting"
-							@click="printCombinedPickList"
-						>
-							<FileText :size="14" :stroke-width="2" />
-							<span>Cetak Pick List Gabungan</span>
-						</button>
 						<button
 							type="button"
 							class="btn ff-packing-btn"

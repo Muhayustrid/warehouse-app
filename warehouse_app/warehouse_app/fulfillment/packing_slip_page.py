@@ -109,7 +109,7 @@ def slip_lines_from_ps_items(
 			}
 			# Estimasi dari master dough weight; fallback weight_per_unit item master.
 			est = csv_estimasi(line["item_name"], qty)
-			if est is None and line["category"] == "frozen":
+			if est is None:
 				est = estimate_weight(qty, item.get("weight_per_unit"))
 			if est is not None:
 				line["estimated_weight"] = est
@@ -638,33 +638,45 @@ def sheet_koli_total(lines: list[dict]) -> int:
 
 def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 	"""One customer card of the combined packing sheet (pure, testable): yellow
-	caption row (customer, Dry count, Colly total) + table Item/Qty/Koli/Berat/
-	B/K/Picker/Estimasi. B/K and Picker stay blank (hand-filled on paper)."""
-	rows = []
-	dry_koli = 0
-	for line in lines:
-		koli = max(1, int(flt(line.get("koli")) or 1))
-		if line.get("category") == "dry":
-			dry_koli += koli
-		est = line.get("estimated_weight")
-		est_s = f"{flt(est):g}" if est not in (None, "") else ""
-		rows.append(
-			f"<tr><td class='it'>{escape_html(line.get('item_name') or '')}</td>"
-			f"<td class='qty'>{flt(line.get('qty')):g}</td><td class='k'>{koli}</td>"
-			f"<td class='w'>{escape_html(str(line.get('berat') or ''))}</td>"
-			f"<td class='hand'></td><td class='hand'></td><td class='est'>{est_s}</td></tr>"
+	caption row (customer, Dry count, Colly total) + DRY and FROZEN tables
+	(Item/Qty/Koli/Berat/B-K/Picker/Estimasi), each with its own Total row.
+	B/K and Picker stay blank (hand-filled on paper)."""
+
+	def cat_table(cat_lines: list[dict], label: str) -> str:
+		rows = []
+		koli_sum = 0
+		for line in cat_lines:
+			koli = max(1, int(flt(line.get("koli")) or 1))
+			koli_sum += koli
+			est = line.get("estimated_weight")
+			est_s = f"{flt(est):g}" if est not in (None, "") else ""
+			rows.append(
+				f"<tr><td class='it'>{escape_html(line.get('item_name') or '')}</td>"
+				f"<td class='qty'>{flt(line.get('qty')):g}</td><td class='k'>{koli}</td>"
+				f"<td class='w'>{escape_html(str(line.get('berat') or ''))}</td>"
+				f"<td class='hand'></td><td class='hand'></td><td class='est'>{est_s}</td></tr>"
+			)
+		head = (
+			"<tr><th>Item</th><th>Qty</th><th>Koli</th><th>Berat</th>"
+			"<th>B / K</th><th>Picker</th><th>Estimasi</th></tr>"
 		)
-	head = (
-		"<tr><th>Item</th><th>Qty</th><th>Koli</th><th>Berat</th>"
-		"<th>B / K</th><th>Picker</th><th>Estimasi</th></tr>"
-	)
+		foot = f"<tr class='tf'><td colspan='2'>Total {label}</td><td>{koli_sum}</td><td colspan='4'></td></tr>"
+		return f"<div class='sect'>{label}</div><table>{head}{''.join(rows)}{foot}</table>"
+
+	dry = [l for l in lines if l.get("category") != "frozen"]
+	frozen = [l for l in lines if l.get("category") == "frozen"]
+	body = ""
+	if dry:
+		body += cat_table(dry, "DRY")
+	if frozen:
+		body += cat_table(frozen, "FROZEN")
+	dry_koli = sum(max(1, int(flt(l.get("koli")) or 1)) for l in dry)
 	koli_sum = sheet_koli_total(lines)
-	foot = f"<tr class='tf'><td colspan='2'>Total</td><td>{koli_sum}</td><td colspan='4'></td></tr>"
 	return (
 		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
 		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly : {koli_sum}</span>"
 		f"<span class='wblank'></span></div>"
-		f"<table>{head}{''.join(rows)}{foot}</table></div>"
+		f"{body}</div>"
 	)
 
 
@@ -683,6 +695,7 @@ def load_packing_sheet(company: str, date: str) -> dict:
 		slip["totals"] = full["totals"]
 		slip["driver"] = full["driver"]
 		slip["vehicle_no"] = full["vehicle_no"]
+		slip["dn_items"] = full["dn_items"]
 	return res
 
 
@@ -694,24 +707,39 @@ def packing_sheet_html(company: str | None = None, date: str | None = None) -> s
 	if not company:
 		frappe.throw("Company is required.", frappe.ValidationError)
 	res = load_packing_sheet(company, date or "")
-	cards = []
 	total_koli = 0
+	# Kartu dikelompokkan per driver (tampilan terduplikasi per driver/mobil).
+	groups: dict[tuple[str, str], list[str]] = {}
+	order: list[tuple[str, str]] = []
 	for slip in res["slips"]:
 		if not slip["lines"]:
 			continue
 		total_koli += sheet_koli_total(slip["lines"])
-		cards.append(sheet_card_html(slip["customer_name"], slip["lines"]))
+		key = (slip.get("driver") or "", slip.get("vehicle_no") or "")
+		if key not in groups:
+			groups[key] = []
+			order.append(key)
+		groups[key].append(sheet_card_html(slip["customer_name"], slip["lines"]))
+	body = ""
+	for driver, vehicle_no in order:
+		body += "".join(groups[(driver, vehicle_no)])
+		if driver or vehicle_no:
+			body += (
+				f"<div class='mobil'><span>MOBIL : {escape_html(vehicle_no)}</span>"
+				f"<span>DRIVER : {escape_html(driver)}</span></div>"
+			)
 	title = f"Packing List {company} {date or ''}".strip()
-	return _sheet_page("".join(cards), total_koli, res.get("driver") or "", res.get("vehicle_no") or "", title)
+	return _sheet_page(body, total_koli, res.get("driver") or "", res.get("vehicle_no") or "", title)
 
 
 def _sheet_page(body: str, total_koli: int, driver: str, vehicle_no: str, title: str) -> str:
 	return f"""<!doctype html><html><head><meta charset='utf-8'><title>{escape_html(title)}</title>
 <style>
 @page{{size:A4 portrait;margin:8mm}}
-body{{font-family:Arial,Helvetica,sans-serif;font-size:9px;margin:0}}
+body{{font-family:Arial,Helvetica,sans-serif;font-size:9px;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 .grid{{column-count:2;column-gap:5mm}}
 .card{{break-inside:avoid;margin-bottom:4mm;border:1.5px solid #111;background:#fff}}
+.sect{{font-weight:bold;font-size:8.5px;padding:0.6mm 1.5mm}}
 .cap{{display:flex;gap:3mm;align-items:center;background:#ffe94a;border-bottom:1.5px solid #111;padding:0.8mm 2mm}}
 .cap .cust{{flex:1;font-weight:bold;font-size:10px}}
 .cap .dry,.cap .colly{{white-space:nowrap;font-size:9px}}

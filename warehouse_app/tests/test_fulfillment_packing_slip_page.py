@@ -76,6 +76,12 @@ class TestSlipLinesFromPsItems(unittest.TestCase):
 		self.assertEqual(len(lines), 1)
 		self.assertEqual(lines[0]["koli_no"], 2)
 
+	def test_dry_fallback_estimasi(self):
+		# Dry tanpa match CSV: fallback estimasi = weight_per_unit x qty.
+		ps_items = [[_item(item_name="Paper Bag Ropi", qty=10, net_weight=0.05, weight_per_unit=0.05)]]
+		lines = slip_lines_from_ps_items(ps_items, categories=["dry"])
+		self.assertEqual(lines[0]["estimated_weight"], 0.5)
+
 
 class TestSlipTotals(unittest.TestCase):
 	def test_totals(self):
@@ -142,7 +148,12 @@ class TestSheetCard(unittest.TestCase):
 		html = sheet_card_html("CUST", self._lines())
 		self.assertIn("Dry : 1", html)
 		self.assertIn("Colly : 2", html)  # colly total, tulisan sama kaya Dry
-		self.assertIn("<td>2</td>", html)  # baris Total
+		self.assertIn("DRY", html)
+		self.assertIn("FROZEN", html)
+		self.assertIn("Total DRY", html)
+		self.assertIn("Total FROZEN", html)
+		self.assertLess(html.index("DRY"), html.index("FROZEN"))  # dry dulu, kayak picking list
+		self.assertIn("<td>1</td>", html)  # total per tabel (1 koli dry + 1 koli frozen)
 
 	def test_koli_total(self):
 		self.assertEqual(sheet_koli_total(self._lines()), 2)
