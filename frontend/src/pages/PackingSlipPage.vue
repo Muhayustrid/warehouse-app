@@ -573,26 +573,30 @@ function fmtQty(value) {
 				</div>
 			</div>
 
-			<!-- Driver: default global + tambah driver baru, satu baris rapi -->
+			<!-- Driver: default global + tambah driver baru, dua kelompok rapi -->
 			<div class="ps-driver-row">
-				<label>
-					<span>Driver</span>
-					<input v-model="driver" class="input input-sm" type="text" placeholder="Nama driver" />
-				</label>
-				<label>
-					<span>No. Mobil</span>
-					<input v-model="vehicleNo" class="input input-sm" type="text" placeholder="B 1234 XYZ" />
-				</label>
-				<button type="button" class="btn btn-sm btn-primary" :disabled="savingDriver" @click="saveDriver">
-					Simpan Driver
-				</button>
-				<span class="muted">Berlaku untuk semua packing tanggal {{ fromDate }}</span>
-				<span class="drv-sep"></span>
-				<span class="drv-add">
-					<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver baru" />
-					<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil baru" @keyup.enter="addDriver" />
-					<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
-				</span>
+				<div class="drv-main">
+					<label>
+						<span>Driver</span>
+						<input v-model="driver" class="input input-sm" type="text" placeholder="Nama driver" />
+					</label>
+					<label>
+						<span>No. Mobil</span>
+						<input v-model="vehicleNo" class="input input-sm" type="text" placeholder="B 1234 XYZ" />
+					</label>
+					<button type="button" class="btn btn-sm btn-primary" :disabled="savingDriver" @click="saveDriver">
+						Simpan Driver
+					</button>
+					<span class="muted">Berlaku utk semua packing {{ fromDate }}</span>
+				</div>
+				<div class="drv-extra">
+					<span class="drv-sep"></span>
+					<span class="drv-add">
+						<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver baru" />
+						<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil baru" @keyup.enter="addDriver" />
+						<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
+					</span>
+				</div>
 			</div>
 
 			<p v-if="error" class="ps-error">{{ error }}</p>
@@ -945,7 +949,7 @@ function fmtQty(value) {
 /* Filter ala ERPNext: panel inline di bawah toolbar (bukan absolute, agar
 	tidak terpotong overflow:hidden pada .board-card induk) */
 .ps-filter-wrap { width: 100%; }
-.ps-filter-panel { background: #fff; border: 1px solid #d1d8dd; border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08); padding: 10px 12px; max-width: 560px; }
+.ps-filter-panel { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px; width: 100%; }
 .ps-filter-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .ps-filter-x { border: 0; background: none; font-size: 16px; line-height: 1; cursor: pointer; color: #6b7280; padding: 2px 4px; }
 .ps-filter-x:hover { color: #111; }
@@ -981,7 +985,9 @@ function fmtQty(value) {
 .ps-paper-head { background: #f7a600; color: #fff; padding: 14px; text-align: center; }
 .ps-paper-head h1 { font-size: 26px; letter-spacing: 0.12em; margin: 0 0 6px; font-weight: 800; }
 .ps-to { font-size: 14px; margin: 2px 0; }
-.ps-driver-row { display: flex; gap: 16px; align-items: center; padding: 10px 14px; border-bottom: 1px solid #eee; flex-wrap: wrap; }
+.ps-driver-row { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #eee; flex-wrap: wrap; }
+.drv-main, .drv-extra { display: flex; gap: 10px; align-items: center; flex-wrap: nowrap; }
+.drv-main .muted { white-space: nowrap; }
 .ps-driver-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .ps-driver-row input { width: 180px; }
 .ps-no { margin-left: auto; }
