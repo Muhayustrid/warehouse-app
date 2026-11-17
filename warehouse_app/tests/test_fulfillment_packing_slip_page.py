@@ -27,6 +27,19 @@ class TestCsvEstimasi(unittest.TestCase):
 	def test_no_match(self):
 		self.assertIsNone(csv_estimasi("Paper Bag Ropi", 50))
 
+	def test_per_unit_weight_table_bottom(self):
+		# Tabel "Item,Weight" di bawah CSV: Coklat = 0,74/kg walaupun baris
+		# bulk-nya di master kosong.
+		self.assertAlmostEqual(csv_estimasi("Dough Ropi Coklat", 5), 3.7)
+
+
+class TestSheetCardColly(unittest.TestCase):
+	def test_cap_colly_without_number(self):
+		# Colly di caption kartu dicatat tulis tangan: tanpa angka.
+		html = sheet_card_html("RS Uji", [_item()])
+		self.assertIn("Colly :", html)
+		self.assertNotRegex(html, r"Colly : \d")
+
 
 def _item(**overrides):
 	row = {
@@ -147,7 +160,7 @@ class TestSheetCard(unittest.TestCase):
 	def test_totals_and_dry_count(self):
 		html = sheet_card_html("CUST", self._lines())
 		self.assertIn("Dry : 1", html)
-		self.assertIn("Colly : 2", html)  # colly total, tulisan sama kaya Dry
+		self.assertIn("Colly :", html)  # colly tanpa angka, diisi tulis tangan
 		self.assertIn("DRY", html)
 		self.assertIn("FROZEN", html)
 		self.assertIn("Total DRY", html)

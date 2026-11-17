@@ -40,6 +40,16 @@ def _dough_weight_rows() -> list[tuple[str, float, float]]:
 			import csv as _csv
 
 			for raw in _csv.reader(f):
+				# Tabel "Item,Weight" di bawah CSV: kolom 1 = berat per unit (kg),
+				# berlaku untuk semua rasa termasuk yang tidak punya tabel Qty.
+				first = raw[0].strip().lower() if raw else ""
+				if first and first != "item" and len(raw) > 1:
+					try:
+						per_unit_w = flt(raw[1].split("-")[0].strip().replace(",", "."))
+					except Exception:
+						per_unit_w = 0
+					if 0 < per_unit_w < 10:  # <10 kg = berat satuan, bukan qty bulk
+						rows.append((first, 1.0, per_unit_w))
 				# CSV punya 2 grup kolom: DOUGH (0-3) dan CREAM/GEMPI (5-8).
 				for base in (0, 5):
 					if len(raw) < base + 4 or not raw[base] or raw[base].strip().lower() == "item":
@@ -408,10 +418,11 @@ def _lines_from_dn(dn_name: str) -> list[dict]:
 		else:
 			dry_koli += 1
 			koli_no = dry_koli
+		qty = flt(it.qty)
 		line = {
 			"item_code": it.item_code,
 			"item_name": it.item_name or it.item_code,
-			"qty": flt(it.qty),
+			"qty": qty,
 			"uom": it.stock_uom or it.uom,
 			"koli_no": koli_no,
 			"koli": 1,
@@ -419,6 +430,13 @@ def _lines_from_dn(dn_name: str) -> list[dict]:
 			"category": category,
 			"net_weight": 0,
 		}
+		# Estimasi sama seperti jalur Packing Slip: CSV master, lalu Item master.
+		est = csv_estimasi(line["item_name"], qty)
+		if est is None:
+			wpu = frappe.db.get_value("Item", it.item_code, "weight_per_unit")
+			est = estimate_weight(qty, wpu)
+		if est is not None:
+			line["estimated_weight"] = est
 		lines.append(line)
 	return lines
 
@@ -674,7 +692,7 @@ def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 	koli_sum = sheet_koli_total(lines)
 	return (
 		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
-		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly : {koli_sum}</span>"
+		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly :</span>"
 		f"<span class='wblank'></span></div>"
 		f"{body}</div>"
 	)

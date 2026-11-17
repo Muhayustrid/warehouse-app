@@ -133,6 +133,7 @@ function addDriver() {
 function onCardDragStart(s, event) {
 	dragSlip.value = s
 	event.dataTransfer.effectAllowed = 'move'
+	event.dataTransfer.setData('text/plain', s.name || '')
 }
 
 // ===== Section per driver: tampilan sheet terduplikasi untuk tiap driver/mobil =====
@@ -162,9 +163,13 @@ function secKoli(sec) {
 
 // Drag baris item: urutkan di dalam kategori yang sama pada kartu yang sama.
 const dragRow = ref(null) // { name, catFrozen, idx }
+const dropHot = ref(null) // index section yang sedang di-hover saat drag kartu
 function onSheetRowDragStart(s, sec, idx, e) {
+	// Row, bukan kartu: hentikan bubble agar kartu tidak ikut ter-drag.
+	e.stopPropagation()
 	dragRow.value = { name: s.name, catFrozen: sec.cat === 'frozen', idx }
 	e.dataTransfer.effectAllowed = 'move'
+	e.dataTransfer.setData('text/plain', `${s.name}:${idx}`)
 }
 
 function onSheetRowDrop(s, sec, idx) {
@@ -565,7 +570,7 @@ function fmtQty(value) {
 				</div>
 			</div>
 
-			<!-- Driver + No. Mobil: dipakai bersama oleh semua packing hari ini -->
+			<!-- Driver: default global + tambah driver baru, satu baris rapi -->
 			<div class="ps-driver-row">
 				<label>
 					<span>Driver</span>
@@ -579,6 +584,10 @@ function fmtQty(value) {
 					Simpan Driver
 				</button>
 				<span class="muted">Berlaku untuk semua packing tanggal {{ fromDate }}</span>
+				<span class="drv-sep"></span>
+				<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver baru" />
+				<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil baru" @keyup.enter="addDriver" />
+				<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
 			</div>
 
 			<p v-if="error" class="ps-error">{{ error }}</p>
@@ -587,16 +596,16 @@ function fmtQty(value) {
 
 			<!-- ===== Sheet ala papan klip (embedded): kartu per customer, edit langsung ===== -->
 			<template v-else-if="embedded">
-				<!-- Panel driver: lepas kartu customer ke driver yang bawa -->
-				<div class="drv-panel">
-					<div class="drv-add">
-						<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver" />
-						<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil" @keyup.enter="addDriver" />
-						<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
-					</div>
-				</div>
-				<div v-for="(g, gi) in driverGroups" :key="gi" class="drv-section">
-					<div class="drv-head" @dragover.prevent @drop.prevent="onDropToDriver(g)">
+				<div
+					v-for="(g, gi) in driverGroups"
+					:key="gi"
+					class="drv-section"
+					:class="{ 'drop-hot': dropHot === gi }"
+					@dragover.prevent="dropHot = gi"
+					@dragleave="dropHot === gi && (dropHot = null)"
+					@drop.prevent="dropHot = null; onDropToDriver(g)"
+				>
+					<div class="drv-head">
 						<b>{{ g.driver || 'Belum ada driver' }}</b>
 						<span>{{ g.vehicle_no || '—' }}</span>
 						<small>Lepas kartu kiriman di sini</small>
@@ -608,7 +617,7 @@ function fmtQty(value) {
 									{{ s.customer_name }}
 								</button>
 								<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
-								<span class="sc-dry">Colly : {{ (s.totals?.total_dry_colly || 0) + (s.totals?.total_frozen_colly || 0) }}</span>
+								<span class="sc-dry">Colly :</span>
 								<span class="sc-wblank" title="Diisi tulis tangan"></span>
 								<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
 							</div>
@@ -1007,7 +1016,6 @@ function fmtQty(value) {
 .sc-wblank { display: inline-block; width: 42px; height: 16px; background: #fff; border: 1px solid #111; }
 .sc-driver { margin-left: auto; font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }
 .sheet-card.dragging { opacity: 0.5; }
-.drv-panel { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-bottom: 10px; }
 .drv-add { display: flex; gap: 6px; align-items: center; }
 .sc-tbl { width: 100%; border-collapse: collapse; font-size: 10.5px; }
 .sc-tbl th, .sc-tbl td { border: 1px solid #111; padding: 2px 4px; text-align: left; }
@@ -1020,7 +1028,9 @@ function fmtQty(value) {
 .sc-tbl .tf td { background: #ffe94a; font-weight: bold; }
 
 /* Section per driver + tabel DRY/FROZEN + add-row inline */
+.drv-sep { width: 1px; height: 26px; background: #d0d5dd; margin: 0 4px; }
 .drv-section { margin-bottom: 18px; }
+.drv-section.drop-hot { outline: 2px dashed #2b6cb0; outline-offset: 4px; border-radius: 8px; }
 .drv-head { display: inline-flex; align-items: center; gap: 10px; border: 1.5px dashed #111; background: #fffdf2; padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; cursor: default; }
 .drv-head b { font-size: 12.5px; }
 .drv-head span { font-size: 11px; color: #444; }
