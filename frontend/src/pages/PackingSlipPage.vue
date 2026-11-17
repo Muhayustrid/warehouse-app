@@ -150,14 +150,38 @@ const driverGroups = computed(() => {
 
 // Kartu: tabel DRY dan FROZEN terpisah (seperti picking list), masing-masing ada Total.
 function cardSections(s) {
+	// Merge sel Koli ala Excel: baris dengan nomor koli sama digabung rowspan.
+	const build = (cat) =>
+		s.lines
+			.filter((l) => (cat === 'frozen' ? l.category === 'frozen' : l.category !== 'frozen'))
+			.map((l, i) => ({ l, i, koli: Number(l.koli) || 1 }))
+	const decorate = (rows) => {
+		const counts = {}
+		rows.forEach((r) => (counts[r.koli] = (counts[r.koli] || 0) + 1))
+		const seen = {}
+		rows.forEach((r) => {
+			seen[r.koli] = (seen[r.koli] || 0) + 1
+			r.span = seen[r.koli] === 1 ? counts[r.koli] : 0
+		})
+		return rows
+	}
 	return [
-		{ label: 'Dry', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen') },
-		{ label: 'Frozen', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen') },
+		{ label: 'Dry', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen'), rows: decorate(build('dry')) },
+		{ label: 'Frozen', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen'), rows: decorate(build('frozen')) },
 	].filter((sec) => sec.lines.length)
 }
 
 function secKoli(sec) {
 	return sec.lines.reduce((a, l) => a + (Number(l.koli) || 1), 0)
+}
+
+// Koli di-merge (rowspan): ubah nomor koli = ubah semua baris dalam grup tersebut.
+function onCardKoliChange(s, sec, r) {
+	const v = Number(r.l.koli) || 1
+	sec.rows.forEach((x) => {
+		if (x.koli === r.koli) x.l.koli = v
+	})
+	saveCard(s)
 }
 
 function groupKoli(g) {
@@ -638,20 +662,22 @@ function fmtQty(value) {
 									</thead>
 									<tbody>
 										<tr
-											v-for="(l, i) in sec.lines"
+											v-for="(r, i) in sec.rows"
 											:key="i"
 											:draggable="!!s.editable"
-											@dragstart="onSheetRowDragStart(s, sec, i, $event)"
+											@dragstart="onSheetRowDragStart(s, sec, r.i, $event)"
 											@dragover.prevent
-											@drop.prevent="onSheetRowDrop(s, sec, i)"
+											@drop.prevent="onSheetRowDrop(s, sec, r.i)"
 										>
-											<td>{{ l.item_name }}</td>
-											<td class="num" :class="{ 'qty-hl': l.category === 'frozen' }">{{ l.qty }}</td>
-											<td><input v-model="l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td><input v-model="l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
+											<td>{{ r.l.item_name }}</td>
+											<td class="num" :class="{ 'qty-hl': r.l.category === 'frozen' }">
+												<input v-model.number="r.l.qty" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" />
+											</td>
+											<td v-if="r.span > 0" class="num" :rowspan="r.span"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="onCardKoliChange(s, sec, r)" /></td>
+											<td><input v-model="r.l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
 											<td class="hand"></td>
 											<td class="hand"></td>
-											<td class="num">{{ l.estimated_weight || '' }}</td>
+											<td class="num">{{ r.l.estimated_weight || '' }}</td>
 										</tr>
 										<tr class="tf">
 											<td colspan="2">Total {{ sec.label }}</td>

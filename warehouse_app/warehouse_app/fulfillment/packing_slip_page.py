@@ -889,9 +889,9 @@ body{{font-family:Arial,Helvetica,sans-serif;font-size:8px;margin:0}}
 .wgrp{{display:flex;flex-direction:column;align-items:center}}
 .bw{{font-size:7.5px;letter-spacing:.14em;color:#111}}
 .kg{{font-size:24px;font-weight:bold;line-height:1.05;min-height:1em}}
-.right{{flex:1;padding-left:1.8mm;display:flex;flex-direction:column;justify-content:center}}
+.right{{flex:1;padding-left:1.8mm;padding-right:1.5mm;display:flex;flex-direction:column;justify-content:center}}
 .cust{{font-size:12.5px;font-weight:bold;line-height:1.2;text-transform:uppercase}}
-.items{{font-size:9px;line-height:1.3;margin-top:0.6mm}}
+.items{{font-size:9px;line-height:1.35;margin-top:0.6mm;word-break:break-word}}
 .badge{{align-self:flex-start;display:inline-block;background:#fff;border:1.5px solid #111;border-radius:2px;padding:0.3mm 2mm;font-size:9.5px;font-weight:bold;margin-top:1mm}}
 </style></head><body>
 {body or "<div class='label'>Tidak ada label.</div>"}
