@@ -1,24 +1,20 @@
 <script setup>
-import { computed, ref, watch, watchEffect } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
 	AlertTriangle,
 	ArrowLeft,
 	ArrowRight,
 	ArrowRightLeft,
-	Boxes,
-	CheckCircle2,
 	ExternalLink,
 	LoaderCircle,
-	Minus,
 	Package,
 	PackageCheck,
-	Plus,
 	RotateCcw,
 	X,
 } from 'lucide-vue-next'
 import { fmtDate, fmtDateTime, fmtQty } from '@/lib/format'
-import { toast } from '@/lib/toast'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import SheetCard from './SheetCard.vue'
 
 const props = defineProps({
 	workspace: { type: Object, required: true },
@@ -73,339 +69,98 @@ const dryItems = computed(() => {
 const hasDryItems = computed(() => dryItems.value.length > 0)
 const hasFrozenItems = computed(() => frozenItems.value.length > 0)
 
-const dryQty = computed(() => dryItems.value.reduce((acc, it) => acc + Number(it.qty || 0), 0))
-const frozenQty = computed(() => frozenItems.value.reduce((acc, it) => acc + Number(it.qty || 0), 0))
 
-const dryPackages = ref(1)
-const frozenPackages = ref(1)
-
-watchEffect(() => {
-	if (!hasDryItems.value) {
-		dryPackages.value = 0
-	} else if (dryPackages.value < 1) {
-		dryPackages.value = 1
+// Sheet-driven allocation: kartu sheet (SheetCard) adalah sumber kebenaran.
+const sheetSlip = computed(() => {
+	const dryNames = new Set(dryItems.value.map((d) => d.name))
+	const lines = []
+	const counters = { dry: 0, frozen: 0 }
+	for (const it of deliveryNote.value?.items || []) {
+		const cat = dryNames.has(it.name) ? 'dry' : 'frozen'
+		if (!hasDryItems.value && cat === 'dry') continue
+		if (!hasFrozenItems.value && cat === 'frozen') continue
+		lines.push({
+			item_code: it.item_code,
+			item_name: it.item_name || it.item_code,
+			qty: Number(it.qty || 0),
+			uom: it.uom || it.stock_uom || '',
+			koli_no: ++counters[cat],
+			koli: 1,
+			berat: '',
+			category: cat,
+			dn_detail: it.name,
+		})
 	}
-
-	if (!hasFrozenItems.value) {
-		frozenPackages.value = 0
-	} else if (frozenPackages.value < 1) {
-		frozenPackages.value = 1
+	return {
+		name: deliveryNote.value?.name || '',
+		customer_name: props.workspace?.sales_order?.customer_name || '',
+		driver: '',
+		vehicle_no: '',
+		editable: hasDeliveryNote.value && isDnDraft.value && !isFullyPacked.value,
+		dn_items: deliveryNote.value?.items || [],
+		lines,
 	}
 })
 
-const totalPackages = computed(() => {
-	return (hasDryItems.value ? dryPackages.value : 0) + (hasFrozenItems.value ? frozenPackages.value : 0)
+const sheetCats = computed(() => {
+	const cats = []
+	if (sheetSlip.value.lines.some((l) => l.category === 'dry')) cats.push('dry')
+	if (sheetSlip.value.lines.some((l) => l.category === 'frozen')) cats.push('frozen')
+	return cats
 })
 
-function simulateSequentialBins(items, numPackages, startCaseNo, categoryLabel) {
-	if (numPackages <= 0 || !items?.length) return []
-	if (numPackages === 1) {
-		return [
-			{
-				case_no: startCaseNo,
-				category: categoryLabel,
-				box_size: '',
-				total_qty: items.reduce((acc, it) => acc + Number(it.qty || 0), 0),
-				items: items.map((it) => ({
-					item_code: it.item_code,
-					item_name: it.item_name || it.item_code,
-					qty: Number(it.qty || 0),
-					dn_detail: it.name,
-					uom: it.uom,
-				})),
-			},
-		]
-	}
-
-	const totalQty = items.reduce((acc, it) => acc + Number(it.qty || 0), 0)
-	const targetPerPkg = totalQty / numPackages
-	const packages = Array.from({ length: numPackages }, (_, i) => ({
-		case_no: startCaseNo + i,
-		category: categoryLabel,
-		box_size: '',
-		total_qty: 0,
-		items: [],
-	}))
-
-	let currentPkg = 0
-
-	for (const item of items) {
-		let remaining = Number(item.qty || 0)
-		if (remaining <= 0) continue
-
-		while (remaining > 0.0001) {
-			if (currentPkg >= numPackages - 1) {
-				const take = Math.round(remaining)
-				packages[currentPkg].items.push({
-					item_code: item.item_code,
-					item_name: item.item_name || item.item_code,
-					qty: take,
-					dn_detail: item.name,
-					uom: item.uom,
-				})
-				packages[currentPkg].total_qty += take
-				break
-			}
-
-			const capLeft = targetPerPkg - packages[currentPkg].total_qty
-			if (capLeft <= 0.0001) {
-				currentPkg++
-				continue
-			}
-
-			if (remaining <= capLeft) {
-				const take = Math.round(remaining)
-				packages[currentPkg].items.push({
-					item_code: item.item_code,
-					item_name: item.item_name || item.item_code,
-					qty: take,
-					dn_detail: item.name,
-					uom: item.uom,
-				})
-				packages[currentPkg].total_qty += take
-				remaining = 0
-			} else {
-				if (packages[currentPkg].total_qty > 0.0001) {
-					currentPkg++
-					continue
-				} else {
-					const take = Math.min(Math.round(remaining), Math.max(1, Math.ceil(capLeft)))
-					packages[currentPkg].items.push({
-						item_code: item.item_code,
-						item_name: item.item_name || item.item_code,
-						qty: take,
-						dn_detail: item.name,
-						uom: item.uom,
-					})
-					packages[currentPkg].total_qty += take
-					remaining -= take
-					currentPkg++
-				}
-			}
-		}
-	}
-
-	return packages
-}
-
-const isCustomized = ref(false)
-const allocatedKoliList = ref([])
-
-function generateAutoAllocation() {
+// 1 case per grup baris berurutan dengan koli_no sama (angka Colly = tampilan sheet)
+function linesToKolis(lines) {
 	const list = []
 	let caseNo = 1
-	if (hasDryItems.value && dryPackages.value > 0) {
-		const dryKolis = simulateSequentialBins(dryItems.value, dryPackages.value, caseNo, 'Dry')
-		list.push(...dryKolis)
-		caseNo += dryKolis.length
-	}
-	if (hasFrozenItems.value && frozenPackages.value > 0) {
-		const frozenKolis = simulateSequentialBins(frozenItems.value, frozenPackages.value, caseNo, 'Frozen')
-		list.push(...frozenKolis)
+	for (const cat of ['dry', 'frozen']) {
+		const catLines = lines.filter((l) => l.category === cat)
+		let i = 0
+		while (i < catLines.length) {
+			const k = Number(catLines[i].koli_no) || 1
+			let j = i
+			while (j + 1 < catLines.length && (Number(catLines[j + 1].koli_no) || 1) === k) j++
+			const group = catLines.slice(i, j + 1)
+			list.push({
+				case_no: caseNo++,
+				category: cat === 'dry' ? 'Dry' : 'Frozen',
+				box_size: '',
+				total_qty: group.reduce((s, l) => s + Number(l.qty || 0), 0),
+				items: group.map((l) => ({
+					item_code: l.item_code,
+					item_name: l.item_name,
+					qty: Number(l.qty || 0),
+					dn_detail: l.dn_detail,
+					uom: l.uom,
+				})),
+			})
+			i = j + 1
+		}
 	}
 	return list
 }
 
+const allocatedKoliList = ref([])
+
+const totalPackages = computed(() => allocatedKoliList.value.length)
+
 watch(
-	[
-		() => dryPackages.value,
-		() => frozenPackages.value,
-		() => deliveryNote.value?.name,
-		() => dryItems.value.length,
-		() => frozenItems.value.length,
-	],
+	() => sheetSlip.value.lines,
 	() => {
-		isCustomized.value = false
-		allocatedKoliList.value = generateAutoAllocation()
+		allocatedKoliList.value = linesToKolis(sheetSlip.value.lines)
 	},
 	{ immediate: true },
 )
 
-function recalcKoliTotals(koli) {
-	if (!koli) return
-	koli.total_qty = (koli.items || []).reduce((sum, it) => sum + Number(it.qty || 0), 0)
+function onSheetSave(slip) {
+	allocatedKoliList.value = linesToKolis(slip.lines)
 }
-
-function kolisOf(cat) {
-	return allocatedKoliList.value.filter((k) => k.category === cat)
-}
-
-function koliIdxOf(koli) {
-	return allocatedKoliList.value.indexOf(koli)
-}
-
-function resetToAuto() {
-	isCustomized.value = false
-	allocatedKoliList.value = generateAutoAllocation()
-	toast.info('Alokasi barang dikembalikan ke hitungan otomatis.')
-}
-
-// Drag & Drop State & Handlers
-const draggedItem = ref(null)
-const activeDropTarget = ref(null)
-
-function onDragStart(event, koliIdx, itemIdx, item) {
-	draggedItem.value = { koliIndex: koliIdx, itemIndex: itemIdx, item: { ...item } }
-	if (event.dataTransfer) {
-		event.dataTransfer.effectAllowed = 'move'
-		event.dataTransfer.setData('text/plain', JSON.stringify({ koliIdx, itemIdx }))
-	}
-}
-
-function onDragEnd() {
-	draggedItem.value = null
-	activeDropTarget.value = null
-}
-
-function onDragOver(koliIdx) {
-	if (draggedItem.value && draggedItem.value.koliIndex !== koliIdx) {
-		activeDropTarget.value = koliIdx
-	}
-}
-
-function onDragLeave(koliIdx) {
-	if (activeDropTarget.value === koliIdx) {
-		activeDropTarget.value = null
-	}
-}
-
-function onDrop(targetKoliIdx) {
-	if (!draggedItem.value) return
-	const sourceKoliIdx = draggedItem.value.koliIndex
-	const itemIdx = draggedItem.value.itemIndex
-	activeDropTarget.value = null
-
-	if (sourceKoliIdx === targetKoliIdx) return
-
-	const sourceKoli = allocatedKoliList.value[sourceKoliIdx]
-	const targetKoli = allocatedKoliList.value[targetKoliIdx]
-	if (!sourceKoli || !targetKoli) return
-
-	if (sourceKoli.category !== targetKoli.category) {
-		toast.warning(`Item ${sourceKoli.category} tidak dapat dipindahkan ke koli ${targetKoli.category}.`)
-		draggedItem.value = null
-		return
-	}
-
-	const itemToMove = sourceKoli.items[itemIdx]
-	if (!itemToMove) return
-
-	sourceKoli.items.splice(itemIdx, 1)
-
-	const existing = targetKoli.items.find((it) => it.item_code === itemToMove.item_code)
-	if (existing) {
-		existing.qty += itemToMove.qty
-	} else {
-		targetKoli.items.push(itemToMove)
-	}
-
-	recalcKoliTotals(sourceKoli)
-	recalcKoliTotals(targetKoli)
-
-	isCustomized.value = true
-	toast.success(`${itemToMove.item_name} dipindahkan ke Koli ${targetKoli.case_no}.`)
-	draggedItem.value = null
-}
-
-// Click-to-Move Modal State & Handlers
-const moveModalOpen = ref(false)
-const moveState = ref({
-	sourceKoliIdx: 0,
-	itemIdx: 0,
-	item: null,
-	sourceKoli: null,
-	moveQty: 1,
-	targetKoliIdx: null,
-	eligibleTargets: [],
-})
-
-function openMoveModal(koliIdx, itemIdx, item) {
-	const sourceKoli = allocatedKoliList.value[koliIdx]
-	if (!sourceKoli) return
-
-	const eligible = allocatedKoliList.value
-		.map((k, idx) => ({ ...k, originalIdx: idx }))
-		.filter((k) => k.originalIdx !== koliIdx && k.category === sourceKoli.category)
-
-	if (!eligible.length) {
-		toast.info(`Hanya ada 1 koli untuk kategori ${sourceKoli.category}. Tambahkan koli pada pengaturan di atas jika ingin membagi barang.`)
-		return
-	}
-
-	moveState.value = {
-		sourceKoliIdx: koliIdx,
-		itemIdx: itemIdx,
-		item: item,
-		sourceKoli: sourceKoli,
-		moveQty: item.qty,
-		targetKoliIdx: eligible[0].originalIdx,
-		eligibleTargets: eligible,
-	}
-	moveModalOpen.value = true
-}
-
-function setMovePercentage(pct) {
-	if (!moveState.value.item) return
-	const total = Number(moveState.value.item.qty)
-	if (pct === 100) {
-		moveState.value.moveQty = total
-	} else {
-		moveState.value.moveQty = Math.max(1, Math.round((total * pct) / 100))
-	}
-}
-
-function confirmMove() {
-	const { sourceKoliIdx, itemIdx, item, moveQty, targetKoliIdx } = moveState.value
-	const qty = Number(moveQty)
-	if (isNaN(qty) || qty <= 0 || qty > item.qty) {
-		toast.warning('Jumlah pemindahan tidak valid.')
-		return
-	}
-	if (targetKoliIdx === null || targetKoliIdx === undefined) {
-		toast.warning('Pilih koli tujuan.')
-		return
-	}
-
-	const sourceKoli = allocatedKoliList.value[sourceKoliIdx]
-	const targetKoli = allocatedKoliList.value[targetKoliIdx]
-	if (!sourceKoli || !targetKoli) return
-
-	if (qty >= item.qty) {
-		sourceKoli.items.splice(itemIdx, 1)
-	} else {
-		item.qty -= qty
-	}
-
-	const existing = targetKoli.items.find((it) => it.item_code === item.item_code)
-	if (existing) {
-		existing.qty += qty
-	} else {
-		targetKoli.items.push({
-			...item,
-			qty: qty,
-		})
-	}
-
-	recalcKoliTotals(sourceKoli)
-	recalcKoliTotals(targetKoli)
-
-	isCustomized.value = true
-	toast.success(`${qty}x ${item.item_name} dipindahkan ke Koli ${targetKoli.case_no}.`)
-	moveModalOpen.value = false
-}
-
-const hasEmptyKoli = computed(() => {
-	if (totalPackages.value <= 1) return false
-	return allocatedKoliList.value.some((k) => !k.items || k.items.length === 0)
-})
-
 const canPackAll = computed(() => {
 	return (
 		hasDeliveryNote.value &&
 		isDnDraft.value &&
 		!isFullyPacked.value &&
 		totalPackages.value > 0 &&
-		!hasEmptyKoli.value &&
 		!props.busy
 	)
 })
@@ -424,11 +179,7 @@ const resetConfirmOptions = {
 
 function onPackAll() {
 	if (!canPackAll.value) return
-	emit('pack-all', {
-		dryPackages: hasDryItems.value ? dryPackages.value : 0,
-		frozenPackages: hasFrozenItems.value ? frozenPackages.value : 0,
-		customSlips: allocatedKoliList.value,
-	})
+	emit('pack-all', { customSlips: allocatedKoliList.value })
 }
 
 function onPromptReset() {
@@ -487,49 +238,15 @@ function onConfirmReset() {
 					</div>
 
 					<!-- Tabel alokasi koli ala excel, per kategori -->
-						<div class="koli-excel-grid">
-							<div v-for="cat in ['Dry', 'Frozen']" :key="cat" class="koli-excel-cat">
-								<div class="ke-title">{{ cat.toUpperCase() }}</div>
-								<table class="ke-tbl">
-									<thead>
-										<tr><th>Item</th><th>Qty</th><th>Unit</th><th>Colly</th><th>Weight (Kg)</th></tr>
-									</thead>
-									<tbody>
-										<template v-for="koli in kolisOf(cat)" :key="koli.case_no">
-											<tr
-												v-if="!koli.items || !koli.items.length"
-												class="ke-empty"
-												@dragover.prevent="onDragOver(koliIdxOf(koli))"
-												@dragleave="onDragLeave(koliIdxOf(koli))"
-												@drop.prevent="onDrop(koliIdxOf(koli))"
-											>
-												<td colspan="5">Koli {{ koli.case_no }}/{{ totalPackages }} kosong — tarik barang ke sini</td>
-											</tr>
-											<tr
-												v-for="(it, itemIdx) in koli.items"
-												:key="it.item_code + '-' + itemIdx"
-												draggable="true"
-												title="Klik untuk atur jumlah atau seret ke koli lain"
-												@dragstart="onDragStart($event, koliIdxOf(koli), itemIdx, it)"
-												@dragend="onDragEnd"
-												@dragover.prevent="onDragOver(koliIdxOf(koli))"
-												@dragleave="onDragLeave(koliIdxOf(koli))"
-												@drop.prevent="onDrop(koliIdxOf(koli))"
-												@click="openMoveModal(koliIdxOf(koli), itemIdx, it)"
-											>
-												<td>{{ it.item_name }}</td>
-												<td class="num">{{ it.qty }}</td>
-												<td class="num">{{ it.uom || '' }}</td>
-												<template v-if="itemIdx === 0">
-													<td class="num ke-colly" :rowspan="koli.items.length">{{ kolisOf(cat).indexOf(koli) + 1 }}</td>
-													<td class="num ke-weight" :rowspan="koli.items.length"></td>
-												</template>
-											</tr>
-										</template>
-									</tbody>
-								</table>
-							</div>
-						</div>
+					<div class="sheet-cards">
+						<SheetCard
+							v-for="cat in sheetCats"
+							:key="cat"
+							:slip="sheetSlip"
+							:sheet-tab="cat"
+							@save="onSheetSave"
+						/>
+					</div>
 					</div>
 				</div>
 			<div v-else class="panel slips-card">
@@ -645,78 +362,6 @@ function onConfirmReset() {
 		<!-- Move Item Modal -->
 		<Teleport to="body">
 			<Transition name="fade">
-				<div v-if="moveModalOpen" class="move-modal-layer" @click.self="moveModalOpen = false">
-					<div class="move-modal-card" role="dialog" aria-modal="true" aria-labelledby="move-modal-title">
-						<div class="move-modal-head">
-							<div class="move-head-title">
-								<ArrowRightLeft :size="16" class="move-icon" />
-								<h4 id="move-modal-title">Pindahkan Barang Antar Koli</h4>
-							</div>
-							<button type="button" class="btn-modal-close" @click="moveModalOpen = false">
-								<X :size="16" />
-							</button>
-						</div>
-
-						<div class="move-modal-body">
-							<div class="move-item-info">
-								<span class="m-item-name">{{ moveState.item?.item_name }}</span>
-								<span class="m-item-avail">
-									Tersedia di <strong>Koli {{ moveState.sourceKoli?.case_no }}</strong>: {{ moveState.item?.qty }} Unit
-								</span>
-							</div>
-
-							<!-- Qty to Move Input -->
-							<div class="move-form-group">
-								<label class="move-label">Jumlah Unit yang Dipindahkan:</label>
-								<div class="move-qty-input-row">
-									<input
-										v-model.number="moveState.moveQty"
-										type="number"
-										min="1"
-										:max="moveState.item?.qty"
-										class="input input-sm move-number-input"
-									/>
-									<span class="move-uom-tag">Unit</span>
-									<button type="button" class="btn btn-xs btn-outline" @click="setMovePercentage(50)">
-										50%
-									</button>
-									<button type="button" class="btn btn-xs btn-outline" @click="setMovePercentage(100)">
-										Semua (100%)
-									</button>
-								</div>
-							</div>
-
-							<!-- Target Koli Selection -->
-							<div class="move-form-group">
-								<label class="move-label">Pilih Koli Tujuan:</label>
-								<div class="target-koli-options">
-									<button
-										v-for="target in moveState.eligibleTargets"
-										:key="target.originalIdx"
-										type="button"
-										class="target-koli-btn"
-										:class="{ 'is-selected': moveState.targetKoliIdx === target.originalIdx }"
-										@click="moveState.targetKoliIdx = target.originalIdx"
-									>
-										<Package :size="14" />
-										<span>Koli {{ target.case_no }}</span>
-										<small>({{ target.items?.length || 0 }} Item · {{ target.total_qty }} Unit)</small>
-									</button>
-								</div>
-							</div>
-						</div>
-
-						<div class="move-modal-foot">
-							<button type="button" class="btn btn-sm" @click="moveModalOpen = false">
-								Batal
-							</button>
-							<button type="button" class="btn btn-sm btn-primary" @click="confirmMove">
-								<span>Pindahkan {{ moveState.moveQty }} Unit</span>
-								<ArrowRight :size="13" />
-							</button>
-						</div>
-					</div>
-				</div>
 			</Transition>
 		</Teleport>
 
@@ -1046,8 +691,8 @@ function onConfirmReset() {
 }
 
 /* Excel-sheet allocation tables (ala packing sheet) */
-.koli-excel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
-@media (max-width: 1000px) { .koli-excel-grid { grid-template-columns: 1fr; } }
+.sheet-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+@media (max-width: 1000px) { .sheet-cards { grid-template-columns: 1fr; } }
 .ke-title { background: #FFC000; border: 1.5px solid #111; border-bottom: 0; text-align: center; font-weight: 700; font-size: 12px; letter-spacing: 1px; padding: 4px; }
 .ke-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
 .ke-tbl th, .ke-tbl td { border: 1px solid #111; padding: 3px 6px; text-align: left; }

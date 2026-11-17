@@ -1,13 +1,14 @@
 <script setup>
+// kolom + resize lebar kolom (HTML5, tanpa dependensi), add row mendukung
 // Halaman Packing Slip per Sales Order: daftar SO, editor bergaya Excel
 // (header oranye PACKING LIST, tabel Frozen kiri / Dry kanan), drag baris &
-// kolom + resize lebar kolom (HTML5, tanpa dependensi), add row mendukung
 // 1 item di banyak koli dan 1 koli campuran, input Driver + No. Mobil.
 // Edit terkunci setelah Delivery Note disubmit.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, Filter, GripVertical, Plus, Printer, Save, Tag, X } from 'lucide-vue-next'
 import PrintPreviewModal from '@/components/fulfillment/PrintPreviewModal.vue'
+import SheetCard from '@/components/fulfillment/SheetCard.vue'
 import {
 	fetchPackingSheet,
 	fetchPackingSheetHtml,
@@ -145,69 +146,6 @@ const driverGroups = computed(() => {
 	return groups
 })
 
-// Kartu: tabel DRY dan FROZEN terpisah (seperti picking list), masing-masing ada Total.
-// Tab Dry/Frozen: layar & cetak packing sheet hanya menampilkan satu kategori.
-const sheetTab = computed({ get: () => props.sheetTab, set: (v) => emit('sheet-tab', v) })
-
-defineExpose({ toggleFilter, printSheet })
-
-function cardSections(s) {
-	// Grup koli = baris berurutan dengan koli_no sama; hanya run berurutan
-	// yang di-merge (rowspan), jadi baris normal tidak pernah ikut tergabung.
-	const decorate = (lines) => {
-		const rows = lines.map((l, idx) => ({ l, idx, span: 0, covered: false }))
-		let i = 0
-		while (i < rows.length) {
-			const k = Number(rows[i].l.koli_no) || 1
-			let j = i
-			while (j + 1 < rows.length && (Number(rows[j + 1].l.koli_no) || 1) === k) j++
-			if (j > i) {
-				rows[i].span = j - i + 1
-				for (let x = i + 1; x <= j; x++) rows[x].covered = true
-			}
-			i = j + 1
-		}
-		return rows
-	}
-	// Label sengaja dibalik (alur gudang): isi frozen -> "Dry", isi dry -> "Frozen".
-	// Satu section saja, sesuai tab aktif.
-	const cat = sheetTab.value
-	const lines = s.lines.filter((l) => l.category === cat)
-	return [{ label: cat === 'dry' ? 'Dry' : 'Frozen', cat, lines, rows: decorate(lines) }]
-}
-
-// Klik kanan baris kartu: gabung/pisah koli tanpa buka editor penuh.
-const rowMenu = ref(null) // { s, sec, idx, x, y }
-function onRowContextMenu(s, sec, idx, e) {
-	if (!s.editable) return
-	e.preventDefault()
-	rowMenu.value = { s, sec, idx, x: e.clientX, y: e.clientY }
-}
-function mergeRowUp() {
-	const m = rowMenu.value
-	rowMenu.value = null
-	if (!m || m.idx === 0) return
-	const prev = m.sec.lines[m.idx - 1]
-	const cur = m.sec.lines[m.idx]
-	cur.koli_no = prev.koli_no
-	cur.koli = 0 // anggota grup: koli dihitung sekali di baris pertama grup
-	saveCard(m.s)
-}
-function splitRow() {
-	const m = rowMenu.value
-	rowMenu.value = null
-	if (!m) return
-	const cur = m.sec.lines[m.idx]
-	const frozen = cur.category === 'frozen'
-	const nos = m.s.lines.filter((l) => (l.category === 'frozen') === frozen).map((l) => Number(l.koli_no) || 1)
-	cur.koli_no = Math.max(...nos) + 1
-	cur.koli = 1
-	saveCard(m.s)
-}
-
-function secKoli(sec) {
-	return sec.lines.reduce((a, l) => a + (Number(l.koli) || 0), 0)
-}
 
 function groupKoli(g) {
 	// Hanya kategori tab aktif yang dihitung.
@@ -215,63 +153,6 @@ function groupKoli(g) {
 		(sum, s) => sum + s.lines.filter((l) => l.category === sheetTab.value).reduce((a, l) => a + (Number(l.koli) || 0), 0),
 		0
 	)
-}
-
-// Drag baris item: urutkan di dalam kategori yang sama pada kartu yang sama.
-const dragRow = ref(null) // { name, catFrozen, idx }
-const dropHot = ref(null) // index section yang sedang di-hover saat drag kartu
-function onSheetRowDragStart(s, sec, idx, e) {
-	// Row, bukan kartu: hentikan bubble agar kartu tidak ikut ter-drag.
-	e.stopPropagation()
-	dragRow.value = { name: s.name, catFrozen: sec.cat === 'frozen', idx }
-	e.dataTransfer.effectAllowed = 'move'
-	e.dataTransfer.setData('text/plain', `${s.name}:${idx}`)
-}
-
-function onSheetRowDrop(s, sec, idx) {
-	const d = dragRow.value
-	dragRow.value = null
-	if (!d || !s.editable || d.name !== s.name || d.catFrozen !== (sec.cat === 'frozen') || d.idx === idx) return
-	const subset = []
-	s.lines.forEach((l, i) => {
-		if ((l.category === 'frozen') === d.catFrozen) subset.push(i)
-	})
-	const [moved] = s.lines.splice(subset[d.idx], 1)
-	s.lines.splice(subset[idx], 0, moved)
-	saveCard(s)
-}
-
-// Add-row langsung di kartu sheet: item beda koli tanpa buka editor penuh.
-const addRowCard = ref(null) // { name, item_code, qty, category }
-
-async function confirmCardRow(s) {
-	const row = addRowCard.value
-	if (!row) return
-	const dnItem = (s.dn_items || []).find((it) => it.item_code === row.item_code)
-	if (!dnItem) {
-		error.value = 'Pilih item dari daftar DN terlebih dahulu.'
-		return
-	}
-	if (!(Number(row.qty) > 0)) {
-		error.value = 'Qty harus lebih dari 0.'
-		return
-	}
-	const frozen = row.category === 'frozen'
-	const koliNos = s.lines
-		.filter((l) => (l.category === 'frozen') === frozen)
-		.map((l) => Number(l.koli_no) || 1)
-	s.lines.push({
-		item_code: dnItem.item_code,
-		item_name: dnItem.item_name || dnItem.item_code,
-		qty: Number(row.qty),
-		uom: dnItem.stock_uom || dnItem.uom || '',
-		koli_no: (koliNos.length ? Math.max(...koliNos) : 0) + 1,
-		koli: 1,
-		berat: '',
-		category: row.category,
-	})
-	addRowCard.value = null
-	await saveCard(s)
 }
 
 async function onDropToDriver(d) {
@@ -586,6 +467,11 @@ function fmtQty(value) {
 }
 </script>
 
+
+const sheetTab = computed({ get: () => props.sheetTab, set: (v) => emit('sheet-tab', v) })
+
+defineExpose({ toggleFilter, printSheet })
+
 <template>
 	<div class="ps-page">
 		<!-- ================= List ================= -->
@@ -676,64 +562,7 @@ function fmtQty(value) {
 					<div class="sheet-grid">
 						<template v-for="s in g.slips" :key="s.name">
 						<div v-if="s.lines.some((l) => l.category === sheetTab)" class="sheet-card" :draggable="!!s.editable" @dragstart="onCardDragStart(s, $event)" @dragend="dragSlip = null">
-							<div class="sc-cap">
-								<button type="button" class="sc-name" title="Buka editor penuh" @click="openSlip(s)">
-									{{ s.customer_name }}
-								</button>
-								<span class="sc-dry">{{ sheetTab === 'dry' ? 'Dry' : 'Frozen' }} :</span>
-								<span class="sc-blank" title="Koli tulis tangan"></span>
-								<span class="sc-dry">Koli</span>
-								<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
-							</div>
-							<template v-for="sec in cardSections(s)" :key="sec.cat">
-								<div class="sc-sect">{{ sec.label }}</div>
-								<table class="sc-tbl">
-									<thead>
-										<tr><th>Item</th><th>Qty</th><th>Unit</th><th>Colly</th><th>Weight (Kg)</th></tr>
-									</thead>
-									<tbody>
-										<tr
-											v-for="(r, i) in sec.rows"
-											:key="i"
-											:draggable="!!s.editable"
-											@dragstart="onSheetRowDragStart(s, sec, r.idx, $event)"
-											@dragover.prevent
-											@drop.prevent="onSheetRowDrop(s, sec, r.idx)"
-											@contextmenu.prevent="onRowContextMenu(s, sec, r.idx, $event)"
-										>
-											<td>{{ r.l.item_name }}</td>
-											<td class="num" :class="{ 'qty-hl': r.l.category === 'frozen' }">
-												<input v-model.number="r.l.qty" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" />
-											</td>
-											<td class="num">{{ r.l.uom || '' }}</td>
-											<td v-if="r.span > 0" class="num" :rowspan="r.span"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td v-else-if="!r.covered" class="num"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td v-if="!r.covered" class="num"><input v-model="r.l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
-										</tr>
-										<tr class="tf">
-											<td colspan="3">Total {{ sec.label }}</td>
-											<td class="num">{{ secKoli(sec) }}</td>
-											<td></td>
-										</tr>
-									</tbody>
-								</table>
-							</template>
-							<div v-if="s.editable" class="sc-addrow">
-								<template v-if="addRowCard && addRowCard.name === s.name">
-									<select v-model="addRowCard.item_code" class="input input-sm">
-										<option value="" disabled>Item…</option>
-										<option v-for="it in s.dn_items || []" :key="it.item_code" :value="it.item_code">{{ it.item_name || it.item_code }}</option>
-									</select>
-									<select v-model="addRowCard.category" class="input input-sm">
-										<option value="dry">Dry</option>
-										<option value="frozen">Frozen</option>
-									</select>
-									<input v-model.number="addRowCard.qty" class="input input-sm" type="number" min="1" title="Qty" />
-									<button type="button" class="btn btn-sm" @click="confirmCardRow(s)">OK</button>
-									<button type="button" class="btn btn-sm" @click="addRowCard = null">Batal</button>
-								</template>
-								<button v-else type="button" class="btn btn-sm" @click="addRowCard = { name: s.name, item_code: '', qty: 1, category: sheetTab }">+ Baris</button>
-							</div>
+							<SheetCard :slip="s" :sheet-tab="sheetTab" @save="saveCard" />
 						</div>
 					</template>
 				</div>
@@ -988,13 +817,6 @@ function fmtQty(value) {
 		<PrintPreviewModal :open="printModalOpen" :title="printModalTitle" :items="printModalItems" @close="printModalOpen = false" />
 
 		<!-- Menu klik kanan baris kartu: gabung/pisah koli -->
-		<template v-if="rowMenu">
-			<div class="ctx-overlay" @click="rowMenu = null" @contextmenu.prevent="rowMenu = null"></div>
-			<div class="ctx-menu" :style="{ left: rowMenu.x + 'px', top: rowMenu.y + 'px' }">
-				<button v-if="rowMenu.idx > 0" class="ctx-item" @click="mergeRowUp">Gabung ke koli di atas</button>
-				<button class="ctx-item" @click="splitRow">Pisah jadi koli sendiri</button>
-			</div>
-		</template>
 	</div>
 </template>
 
