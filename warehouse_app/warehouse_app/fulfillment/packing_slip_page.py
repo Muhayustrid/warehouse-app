@@ -692,7 +692,7 @@ def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 	koli_sum = sheet_koli_total(lines)
 	return (
 		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
-		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly :</span></div>"
+		f"<span class='dry'>Dry : {dry_koli}</span><span class='blank'></span><span class='colly'>Colly</span></div>"
 		f"{body}</div>"
 	)
 
@@ -767,6 +767,7 @@ body{{font-family:Arial,Helvetica,sans-serif;font-size:9px;margin:0;-webkit-prin
 .cap{{display:flex;gap:3mm;align-items:center;background:#ffe94a;border-bottom:1.5px solid #111;padding:0.8mm 2mm}}
 .cap .cust{{flex:1;font-weight:bold;font-size:10px}}
 .cap .dry,.cap .colly{{white-space:nowrap;font-size:9px}}
+.cap .blank{{display:inline-block;width:14mm;height:4mm;background:#fff;border:1px solid #111}}
 table{{width:100%;border-collapse:collapse}}
 th,td{{border:1px solid #111;padding:0.6mm 1.5mm;text-align:left}}
 th{{background:#ffe94a;font-size:8.5px}}

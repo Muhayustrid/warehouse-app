@@ -542,7 +542,7 @@ function fmtQty(value) {
 					<input v-model="toDate" class="input input-sm" type="date" aria-label="Sampai tanggal" @change="load" />
 				</div>
 				<!-- Di mode embedded tombol Filter ada di toolbar Fulfillment -->
-				<div :class="{ 'ps-filter-wrap': !embedded }" style="width:100%">
+				<div class="ps-filter-wrap">
 					<button v-if="!embedded" type="button" class="btn btn-sm" :class="{ 'btn-secondary': appliedFilters.length }" @click="showFilter = !showFilter">
 						<Filter :size="13" :stroke-width="2" />
 						<span>Filter{{ appliedFilters.length ? ` (${appliedFilters.length})` : '' }}</span>
@@ -626,7 +626,8 @@ function fmtQty(value) {
 									{{ s.customer_name }}
 								</button>
 								<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
-								<span class="sc-dry">Colly :</span>
+								<span class="sc-blank" title="Koli tulis tangan"></span>
+								<span class="sc-dry">Colly</span>
 								<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
 							</div>
 							<template v-for="sec in cardSections(s)" :key="sec.cat">
@@ -946,10 +947,10 @@ function fmtQty(value) {
 .ps-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .ps-filters, .ps-actions { display: flex; gap: 8px; align-items: center; }
 
-/* Filter ala ERPNext: panel inline di bawah toolbar (bukan absolute, agar
-	tidak terpotong overflow:hidden pada .board-card induk) */
-.ps-filter-wrap { width: 100%; }
-.ps-filter-panel { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px; width: 100%; }
+/* Filter ala ERPNext: dropdown ngambang di bawah toolbar, rata kanan
+	(dekat tombol Filter). Wrap-nya position:relative sebagai anchor. */
+.ps-filter-wrap { position: relative; width: 100%; }
+.ps-filter-panel { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; width: min(680px, 100%); background: #fff; border: 1px solid #d1d8dd; border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); padding: 10px 12px; }
 .ps-filter-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .ps-filter-x { border: 0; background: none; font-size: 16px; line-height: 1; cursor: pointer; color: #6b7280; padding: 2px 4px; }
 .ps-filter-x:hover { color: #111; }
@@ -1025,6 +1026,7 @@ function fmtQty(value) {
 .sc-name:hover { text-decoration: underline; }
 .sc-dry { white-space: nowrap; font-size: 11px; }
 .sc-wblank { display: inline-block; width: 42px; height: 16px; background: #fff; border: 1px solid #111; }
+.sc-blank { width: 48px; height: 14px; background: #fff; border: 1.5px solid #111; display: inline-block; }
 .sc-driver { margin-left: auto; font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }
 .sheet-card.dragging { opacity: 0.5; }
 .drv-add { display: flex; gap: 6px; align-items: center; }

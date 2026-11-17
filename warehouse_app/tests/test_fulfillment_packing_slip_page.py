@@ -37,8 +37,8 @@ class TestSheetCardColly(unittest.TestCase):
 	def test_cap_colly_without_number(self):
 		# Colly di caption kartu dicatat tulis tangan: tanpa angka.
 		html = sheet_card_html("RS Uji", [_item()])
-		self.assertIn("Colly :", html)
-		self.assertNotRegex(html, r"Colly : \d")
+		self.assertIn("Colly", html)
+		self.assertNotRegex(html, r"Colly\s*:\s*\d")
 
 
 def _item(**overrides):
@@ -160,7 +160,8 @@ class TestSheetCard(unittest.TestCase):
 	def test_totals_and_dry_count(self):
 		html = sheet_card_html("CUST", self._lines())
 		self.assertIn("Dry : 1", html)
-		self.assertIn("Colly :", html)  # colly tanpa angka, diisi tulis tangan
+		self.assertIn("Colly", html)  # colly tanpa angka/titik dua, diisi tulis tangan
+		self.assertIn("blank", html)  # kotak kosong antara Dry dan Colly
 		self.assertIn("DRY", html)
 		self.assertIn("FROZEN", html)
 		self.assertIn("Total DRY", html)
