@@ -110,6 +110,8 @@ const activeFilterCount = computed(() => {
 // Tab Packing: tombol Filter di toolbar membuka panel filter ala ERPNext
 // pada list Packing Slip (komunikasi lewat ref + defineExpose).
 const packingRef = ref(null)
+// Tab kategori sheet Packing (dry/frozen) — dimiliki di sini, ikut toolbar.
+const sheetTab = ref('dry')
 const packingFilterCount = ref(0)
 
 function onFilterClick() {
@@ -217,7 +219,7 @@ async function printAllLabels() {
 	if (labelPrinting.value) return
 	labelPrinting.value = true
 	try {
-		const tab = packingRef?.sheetTab || 'dry'
+		const tab = sheetTab.value
 		const res = await fetchPackingSlipsLabelsHtml(company.value, pickDate.value, tab)
 		printModalTitle.value = `Label Koli ${tab === 'dry' ? 'Dry' : 'Frozen'}`
 		printModalItems.value = [{ label: 'Label Koli', name: pickDate.value, html: res }]
@@ -352,6 +354,10 @@ function statusLabel(row) {
 						</button>
 					</template>
 					<!-- Filter: di tab Packing membuka panel filter ala ERPNext pada list Packing Slip -->
+					<div v-if="activeTab === 'packing'" class="sheet-tabs">
+						<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'dry' }" @click="sheetTab = 'dry'">Dry</button>
+						<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'frozen' }" @click="sheetTab = 'frozen'">Frozen</button>
+					</div>
 				<div ref="filterPopoverRef" class="ff-filter-popover-wrap">
 					<button
 						type="button"
@@ -569,7 +575,7 @@ function statusLabel(row) {
 				</div>
 			</div>
 			</template>
-			<PackingSlipPage v-else ref="packingRef" :date="pickDate" embedded @closed="loadPackingSummary" @filters-changed="packingFilterCount = $event" />
+			<PackingSlipPage v-else ref="packingRef" :date="pickDate" :sheet-tab="sheetTab" @sheet-tab="sheetTab = $event" embedded @closed="loadPackingSummary" @filters-changed="packingFilterCount = $event" />
 		</div>
 
 		<PrintPreviewModal
@@ -582,6 +588,18 @@ function statusLabel(row) {
 </template>
 
 <style scoped>
+/* Tab Dry/Frozen segmented control (toolbar, ikut tab Packing) */
+.sheet-tabs {
+	display: inline-flex; width: max-content;
+	border: 1.5px solid #111; border-radius: 8px; overflow: hidden;
+}
+.sheet-tab {
+	padding: 6px 22px; border: none; background: #fff;
+	font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.sheet-tab + .sheet-tab { border-left: 1.5px solid #111; }
+.sheet-tab.active { background: #ffe94a; }
+
 .ff-page-container {
 	max-width: 1400px; /* sama lebar dengan halaman Inventory Report (.content) */
 	margin: 0 auto;

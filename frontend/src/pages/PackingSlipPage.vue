@@ -26,9 +26,11 @@ const props = defineProps({
 	autoOpen: { type: String, default: '' },
 	// Tanggal kirim tunggal (dari toolbar Fulfillment); menggantikan rentang lokal.
 	date: { type: String, default: '' },
+	// Tab kategori sheet ('dry'/'frozen') — dimiliki FulfillmentPage saat embedded.
+	sheetTab: { type: String, default: 'dry' },
 })
 
-const emit = defineEmits(['closed', 'editing', 'filters-changed'])
+const emit = defineEmits(['closed', 'editing', 'filters-changed', 'sheet-tab'])
 
 const route = useRoute()
 
@@ -145,9 +147,9 @@ const driverGroups = computed(() => {
 
 // Kartu: tabel DRY dan FROZEN terpisah (seperti picking list), masing-masing ada Total.
 // Tab Dry/Frozen: layar & cetak packing sheet hanya menampilkan satu kategori.
-const sheetTab = ref('dry')
+const sheetTab = computed({ get: () => props.sheetTab, set: (v) => emit('sheet-tab', v) })
 
-defineExpose({ toggleFilter, printSheet, sheetTab })
+defineExpose({ toggleFilter, printSheet })
 
 function cardSections(s) {
 	// Grup koli = baris berurutan dengan koli_no sama; hanya run berurutan
@@ -657,10 +659,6 @@ function fmtQty(value) {
 
 			<!-- ===== Sheet ala papan klip (embedded): kartu per customer, edit langsung ===== -->
 			<template v-else-if="embedded">
-				<div class="sheet-tabs">
-					<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'dry' }" @click="sheetTab = 'dry'">Dry</button>
-					<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'frozen' }" @click="sheetTab = 'frozen'">Frozen</button>
-				</div>
 				<div
 					v-for="(g, gi) in driverGroups"
 					:key="gi"
@@ -1097,16 +1095,6 @@ function fmtQty(value) {
 .sc-name:hover { text-decoration: underline; }
 .sc-dry { white-space: nowrap; font-size: 11px; }
 
-.sheet-tabs {
-	display: inline-flex; margin-bottom: 12px; width: max-content;
-	border: 1.5px solid #111; border-radius: 8px; overflow: hidden;
-}
-.sheet-tab {
-	padding: 7px 26px; border: none; background: #fff;
-	font-weight: 600; font-size: 13px; cursor: pointer;
-}
-.sheet-tab + .sheet-tab { border-left: 1.5px solid #111; }
-.sheet-tab.active { background: #ffe94a; }
 .sc-wblank { display: inline-block; width: 42px; height: 16px; background: #fff; border: 1px solid #111; }
 .sc-blank { width: 48px; height: 14px; background: #fff; border: 1.5px solid #111; display: inline-block; }
 .sc-driver { margin-left: auto; font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }
