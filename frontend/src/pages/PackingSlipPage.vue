@@ -169,7 +169,8 @@ function cardSections(s) {
 	// Label sengaja dibalik (alur gudang): isi frozen -> "Dry", isi dry -> "Frozen".
 	// Satu section saja, sesuai tab aktif.
 	const cat = sheetTab.value
-	return [{ label: cat === 'dry' ? 'Dry' : 'Frozen', cat, rows: decorate(s.lines.filter((l) => l.category === cat)) }]
+	const lines = s.lines.filter((l) => l.category === cat)
+	return [{ label: cat === 'dry' ? 'Dry' : 'Frozen', cat, lines, rows: decorate(lines) }]
 }
 
 // Klik kanan baris kartu: gabung/pisah koli tanpa buka editor penuh.
