@@ -5,7 +5,7 @@ import unittest
 
 from warehouse_app.warehouse_app.fulfillment.packing_slip_page import (
 	_labels_page,
-	_koli_badges,
+	_label_groups,
 	csv_estimasi,
 	packing_summary,
 	sheet_card_html,
@@ -57,11 +57,24 @@ class TestSheetCardColly(unittest.TestCase):
 		)
 		self.assertEqual([l["category"] for l in lines], ["frozen", "dry"])
 
-	def test_label_koli_any_frozen_is_frozen(self):
-		# Mixed koli: badge determined by content, not first line order.
-		self.assertEqual(_koli_badges([["dry", "frozen"]]), ["FROZEN"])
-		self.assertEqual(_koli_badges([["frozen", "dry", "dry"]]), ["FROZEN"])
-		self.assertEqual(_koli_badges([["dry", "dry"]]), ["DRY"])
+	def test_label_groups_split_mixed_koli(self):
+		# Mixed koli splits into a FROZEN group and a DRY group (frozen first);
+		# weight per group counts only that category's items.
+		lines = [
+			{"item_code": "PEL260076", "item_name": "Paper Bag Ropi", "qty": 1,
+			 "net_weight": 0, "berat": "", "koli_no": 1, "category": "dry"},
+			{"item_code": "PJ260013", "item_name": "Dough Ropi Coklat", "qty": 2,
+			 "net_weight": 3.7, "berat": "", "koli_no": 1, "category": "frozen"},
+			{"item_code": "PJ260013", "item_name": "Dough Ropi Coklat", "qty": 1,
+			 "net_weight": 3.7, "berat": "5", "koli_no": 2, "category": "frozen"},
+		]
+		groups = _label_groups(lines)
+		self.assertEqual([(g["category"], g["koli_no"]) for g in groups],
+						 [("frozen", 1), ("frozen", 2), ("dry", 1)])
+		self.assertEqual(groups[0]["master"], 7.4)
+		self.assertEqual(groups[2]["master"], 0.0)
+		self.assertEqual(groups[2]["hand"], "")
+		self.assertEqual(groups[1]["hand"], "5")
 
 	def test_dry_exception_overrides_frozen_group(self):
 		ps_items = [[_item(item_group="Produk Jadi Pabrik", item_code="PJ260009", qty=1)]]

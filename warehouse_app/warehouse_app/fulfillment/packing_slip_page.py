@@ -823,10 +823,21 @@ tr.tf td{{background:#ffe94a;font-weight:bold}}
 <script>window.print()</script></body></html>"""
 
 
-def _koli_badges(koli_line_categories: list[list[str]]) -> list[str]:
-	"""Physical koli badge: any frozen content -> FROZEN, else DRY
-	(independent of first-line order)."""
-	return ["FROZEN" if "frozen" in cats else "DRY" for cats in koli_line_categories]
+def _label_groups(lines: list[dict]) -> list[dict]:
+	"""One label group per (category, koli): a mixed koli splits into a FROZEN
+	and a DRY label. FROZEN first, then koli order; weight per category."""
+	groups: dict[tuple, dict] = {}
+	for line in lines:
+		key = (line["category"], line["koli_no"])
+		g = groups.setdefault(
+			key,
+			{"category": line["category"], "koli_no": line["koli_no"], "items": [], "master": 0.0, "hand": ""},
+		)
+		g["items"].append(f"{line['item_code']} - {line['item_name']}")
+		g["master"] += flt(line.get("net_weight")) * flt(line.get("qty"))
+		if line.get("berat"):
+			g["hand"] = str(line["berat"])
+	return sorted(groups.values(), key=lambda g: (0 if g["category"] == "frozen" else 1, g["koli_no"]))
 
 
 def _slip_label_divs(name: str) -> str:
@@ -835,30 +846,24 @@ def _slip_label_divs(name: str) -> str:
 	header = data["header"]
 	lines = data["lines"]
 
-	koli_items: dict[int, list[str]] = {}
-	koli_master: dict[int, float] = {}
-	koli_hand: dict[int, str] = {}
-	koli_cats: dict[int, list[str]] = {}
-	for line in lines:
-		n = line["koli_no"]
-		koli_cats.setdefault(n, []).append(line["category"])
-		koli_items.setdefault(n, []).append(f"{line['item_code']} - {line['item_name']}")
-		# Berat dari data master (Item.net_weight x qty); fallback timbangan manual.
-		koli_master[n] = koli_master.get(n, 0) + flt(line.get("net_weight")) * flt(line.get("qty"))
-		koli_hand.setdefault(n, str(line.get("berat") or ""))
-
-	badges = _koli_badges([koli_cats[n] for n in sorted(koli_cats)])
-	total = len(koli_cats)
+	# Numbering per category: FROZEN 1/N, DRY 1/M (mixed koli -> two labels).
+	groups = _label_groups(lines)
+	counts: dict[str, int] = {}
+	seen: dict[str, int] = {}
+	for g in groups:
+		counts[g["category"]] = counts.get(g["category"], 0) + 1
 	labels = []
-	for n, category in zip(sorted(koli_cats), badges):
-		master = koli_master.get(n) or 0
-		weight = f"{master:g}" if master > 0 else (koli_hand.get(n) or "")
-		items = "<br>".join(escape_html(i) for i in koli_items[n])
+	for g in groups:
+		seen[g["category"]] = seen.get(g["category"], 0) + 1
+		category = g["category"].upper()
+		master = g["master"]
+		weight = f"{master:g}" if master > 0 else g["hand"]
+		items = "<br>".join(escape_html(i) for i in g["items"])
 		labels.append(
 			f"""<div class='label'>
 <div class='co'>PT. JUARA ROTI INDONESIA</div>
 <div class='body'>
-<div class='left'><div class='ratio'><span class='n'>{n}</span><span class='tot'>/{total}</span></div><div class='wgrp'><div class='bw'>BERAT</div><div class='kg'>{escape_html(str(weight)) if str(weight).strip() else '—'}</div></div></div>
+<div class='left'><div class='ratio'><span class='n'>{seen[g['category']]}</span><span class='tot'>/{counts[g['category']]}</span></div><div class='wgrp'><div class='bw'>{category}</div><div class='kg'>{escape_html(str(weight)) if str(weight).strip() else '—'}</div></div></div>
 <div class='right'>
 <div class='cust'>{escape_html(header.get('customer_name') or '')}</div>
 <div class='items'>{items}</div>
