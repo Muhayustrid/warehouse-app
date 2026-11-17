@@ -8,7 +8,6 @@ import {
 	Boxes,
 	CheckCircle2,
 	ExternalLink,
-	GripVertical,
 	LoaderCircle,
 	Minus,
 	Package,
@@ -225,6 +224,14 @@ watch(
 function recalcKoliTotals(koli) {
 	if (!koli) return
 	koli.total_qty = (koli.items || []).reduce((sum, it) => sum + Number(it.qty || 0), 0)
+}
+
+function kolisOf(cat) {
+	return allocatedKoliList.value.filter((k) => k.category === cat)
+}
+
+function koliIdxOf(koli) {
+	return allocatedKoliList.value.indexOf(koli)
 }
 
 function resetToAuto() {
@@ -569,90 +576,90 @@ function onConfirmReset() {
 							</span>
 						</div>
 
-						<!-- Live Preview of Koli Allocation (Sequential Filling & Drag-Drop/Click Customization) -->
-						<div v-if="totalPackages > 1" class="koli-preview-block">
-							<div class="koli-preview-head">
-								<div class="koli-preview-title">
-									<Boxes :size="15" :stroke-width="2" class="preview-icon" />
-									<strong>Alokasi Barang per Koli:</strong>
-									<span class="badge" :class="isCustomized ? 'b-custom' : 'b-auto'">
-										{{ isCustomized ? '✎ Disesuaikan Manual' : 'Otomatis' }}
-									</span>
-								</div>
-								<button
-									v-if="isCustomized"
-									type="button"
-									class="btn btn-xs btn-outline btn-reset-auto"
-									title="Kembalikan susunan barang ke hitungan otomatis"
-									@click="resetToAuto"
-								>
-									<RotateCcw :size="12" />
-									<span>Reset ke Otomatis</span>
-								</button>
-							</div>
-
-							<div class="preview-sub-row">
-								<span class="preview-sub">
-									💡 Geser (drag & drop) pil barang ke koli lain, atau klik pil barang untuk memindahkan jumlah tertentu.
+						<!-- Live Preview of Koli Allocation: sheet excel per kategori, grup per koli -->
+					<div v-if="totalPackages > 0" class="koli-preview-block">
+						<div class="koli-preview-head">
+							<div class="koli-preview-title">
+								<Boxes :size="15" :stroke-width="2" class="preview-icon" />
+								<strong>Alokasi Barang per Koli:</strong>
+								<span class="badge" :class="isCustomized ? 'b-custom' : 'b-auto'">
+									{{ isCustomized ? '✎ Disesuaikan Manual' : 'Otomatis' }}
 								</span>
 							</div>
+							<button
+								v-if="isCustomized"
+								type="button"
+								class="btn btn-xs btn-outline btn-reset-auto"
+								title="Kembalikan susunan barang ke hitungan otomatis"
+								@click="resetToAuto"
+							>
+								<RotateCcw :size="12" />
+								<span>Reset ke Otomatis</span>
+							</button>
+						</div>
 
-							<div v-if="hasEmptyKoli" class="empty-koli-warning">
-								<AlertTriangle :size="14" />
-								<span>Ada koli yang masih kosong. Pastikan setiap koli terisi barang sebelum mengemas.</span>
-							</div>
+						<div class="preview-sub-row">
+							<span class="preview-sub">
+								💡 Seret (drag) baris barang ke koli lain, atau klik baris untuk memindahkan jumlah tertentu.
+							</span>
+						</div>
 
-							<div class="koli-preview-grid">
-								<div
-									v-for="(koli, koliIdx) in allocatedKoliList"
-									:key="koli.case_no"
-									class="koli-sim-card"
-									:class="{
-										'drop-target-active': activeDropTarget === koliIdx,
-										'koli-card-empty': !koli.items || !koli.items.length,
-									}"
-									@dragover.prevent="onDragOver(koliIdx)"
-									@dragleave="onDragLeave(koliIdx)"
-									@drop.prevent="onDrop(koliIdx)"
-								>
-									<div class="koli-sim-head">
-										<div class="koli-sim-meta">
-											<span class="koli-num-badge">Koli {{ koli.case_no }} / {{ totalPackages }}</span>
-											<span class="badge" :class="koli.category === 'Frozen' ? 'b-frozen' : 'b-dry'">
-												{{ koli.category }}
-											</span>
-											<select v-model="koli.box_size" class="koli-box-select" title="Ukuran box (B/K)" aria-label="Ukuran box">
-												<option value="">—</option>
-												<option value="B">B</option>
-												<option value="K">K</option>
-											</select>
-										</div>
-										<span class="koli-sim-count">{{ koli.items?.length || 0 }} Item · {{ koli.total_qty }} Unit</span>
-									</div>
+						<div v-if="hasEmptyKoli" class="empty-koli-warning">
+							<AlertTriangle :size="14" />
+							<span>Ada koli yang masih kosong. Pastikan setiap koli terisi barang sebelum mengemas.</span>
+						</div>
 
-									<div v-if="koli.items && koli.items.length" class="koli-sim-items">
-										<span
-											v-for="(it, itemIdx) in koli.items"
-											:key="it.item_code"
-											class="slip-item-pill draggable-pill"
-											draggable="true"
-											title="Klik untuk atur jumlah atau seret (drag) langsung ke koli lain"
-											@dragstart="onDragStart($event, koliIdx, itemIdx, it)"
-											@dragend="onDragEnd"
-											@click="openMoveModal(koliIdx, itemIdx, it)"
-										>
-											<GripVertical :size="11" class="grip-icon" />
-											<span class="sip-name">{{ it.item_name }}</span>
-											<span class="sip-qty">×{{ it.qty }}</span>
-										</span>
-									</div>
-
-									<div v-else class="empty-koli-dropzone">
-										<span>Tarik (drag) barang ke sini atau klik barang di koli lain</span>
-									</div>
-								</div>
+						<div class="koli-excel-grid">
+							<div v-for="cat in ['Dry', 'Frozen']" :key="cat" class="koli-excel-cat">
+								<div class="ke-title">{{ cat.toUpperCase() }}</div>
+								<table class="ke-tbl">
+									<thead>
+										<tr><th>Item</th><th>Qty</th><th>Unit</th><th>Colly</th><th>Weight (Kg)</th></tr>
+									</thead>
+									<tbody>
+										<template v-for="koli in kolisOf(cat)" :key="koli.case_no">
+											<tr
+												v-if="!koli.items || !koli.items.length"
+												class="ke-empty"
+												@dragover.prevent="onDragOver(koliIdxOf(koli))"
+												@dragleave="onDragLeave(koliIdxOf(koli))"
+												@drop.prevent="onDrop(koliIdxOf(koli))"
+											>
+												<td colspan="5">Koli {{ koli.case_no }}/{{ totalPackages }} kosong — tarik barang ke sini</td>
+											</tr>
+											<tr
+												v-for="(it, itemIdx) in koli.items"
+												:key="it.item_code + '-' + itemIdx"
+												draggable="true"
+												title="Klik untuk atur jumlah atau seret ke koli lain"
+												@dragstart="onDragStart($event, koliIdxOf(koli), itemIdx, it)"
+												@dragend="onDragEnd"
+												@dragover.prevent="onDragOver(koliIdxOf(koli))"
+												@dragleave="onDragLeave(koliIdxOf(koli))"
+												@drop.prevent="onDrop(koliIdxOf(koli))"
+												@click="openMoveModal(koliIdxOf(koli), itemIdx, it)"
+											>
+												<td>{{ it.item_name }}</td>
+												<td class="num">{{ it.qty }}</td>
+												<td class="num">{{ it.uom || '' }}</td>
+												<template v-if="itemIdx === 0">
+													<td class="num ke-colly" :rowspan="koli.items.length">
+														<div>Koli {{ koli.case_no }}/{{ totalPackages }}</div>
+														<select v-model="koli.box_size" class="koli-box-select" title="Ukuran box (B/K)" aria-label="Ukuran box">
+															<option value="">—</option>
+															<option value="B">B</option>
+															<option value="K">K</option>
+														</select>
+													</td>
+													<td class="num ke-weight" :rowspan="koli.items.length"></td>
+												</template>
+											</tr>
+										</template>
+									</tbody>
+								</table>
 							</div>
 						</div>
+					</div>
 					</div>
 				</div>
 			</div>
@@ -1170,6 +1177,21 @@ function onConfirmReset() {
 .preview-icon {
 	color: var(--brand, #3368a0);
 }
+
+/* Excel-sheet allocation tables (ala packing sheet) */
+.koli-excel-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+@media (max-width: 1000px) { .koli-excel-grid { grid-template-columns: 1fr; } }
+.ke-title { background: #FFC000; border: 1.5px solid #111; border-bottom: 0; text-align: center; font-weight: 700; font-size: 12px; letter-spacing: 1px; padding: 4px; }
+.ke-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ke-tbl th, .ke-tbl td { border: 1px solid #111; padding: 3px 6px; text-align: left; }
+.ke-tbl th { background: #FFC000; font-size: 11px; font-weight: 700; text-align: center; }
+.ke-tbl .num { text-align: center; }
+.ke-tbl tbody tr[draggable='true'] { cursor: grab; }
+.ke-tbl tbody tr[draggable='true']:hover { background: #fff8d6; }
+.ke-colly { min-width: 90px; vertical-align: middle; }
+.ke-colly .koli-box-select { margin-top: 4px; }
+.ke-weight { min-width: 80px; }
+.ke-empty td { text-align: center; color: #888; font-style: italic; background: #fafafa; }
 
 .koli-preview-grid {
 	display: flex;
