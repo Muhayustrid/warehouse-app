@@ -492,7 +492,7 @@ def get_packing_sheet(company=None, date=None):
 
 
 @frappe.whitelist(methods=["GET"])
-def get_packing_sheet_html(company=None, date=None):
-	return packing_sheet_html(company=company, date=date)
+def get_packing_sheet_html(company=None, date=None, category=None):
+	return packing_sheet_html(company=company, date=date, category=category)
 
 

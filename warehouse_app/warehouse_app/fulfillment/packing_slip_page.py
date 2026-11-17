@@ -697,11 +697,10 @@ def sheet_koli_total(lines: list[dict]) -> int:
 
 
 def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
-	"""One customer card of the combined packing sheet (pure, testable): yellow
-	caption row (customer, inverted Dry/Frozen note, blank koli box) + DRY and
-	FROZEN tables (Item/Qty/Koli/Berat/B-K/Picker/Estimasi), each with its own
-	Total row. Note is inverted on purpose: frozen content -> "Dry", dry
-	content -> "Frozen". B/K and Picker stay blank (hand-filled on paper)."""
+	"""One customer card of the packing sheet (pure, testable): yellow caption
+	row (customer, Dry/Frozen note, blank koli box) + DRY and FROZEN tables
+	(Item/Qty/Koli/Berat/B-K/Picker/Estimasi), each with its own Total row.
+	Labels match the content. B/K and Picker stay blank (hand-filled)."""
 
 	def cat_table(cat_lines: list[dict], label: str) -> str:
 		rows = []
@@ -726,14 +725,13 @@ def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 
 	dry = [l for l in lines if l.get("category") != "frozen"]
 	frozen = [l for l in lines if l.get("category") == "frozen"]
-	# Keterangan sengaja dibalik (alur gudang): isi frozen -> tulisan Dry,
-	# isi dry -> tulisan Frozen; angka koli diisi manual dari gudang.
-	caption = " / ".join(w for has, w in ((bool(frozen), "Dry"), (bool(dry), "Frozen")) if has)
+	# Keterangan sesuai isi; angka koli diisi manual dari gudang.
+	caption = " / ".join(w for has, w in ((bool(dry), "Dry"), (bool(frozen), "Frozen")) if has)
 	body = ""
 	if dry:
-		body += cat_table(dry, "FROZEN")
+		body += cat_table(dry, "DRY")
 	if frozen:
-		body += cat_table(frozen, "DRY")
+		body += cat_table(frozen, "FROZEN")
 	return (
 		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
 		f"<span class='dry'>{caption} :</span><span class='blank'></span><span class='colly'>Koli</span></div>"
@@ -760,10 +758,14 @@ def load_packing_sheet(company: str, date: str) -> dict:
 	return res
 
 
-def packing_sheet_html(company: str | None = None, date: str | None = None) -> str:
-	"""A4 print of the combined packing sheet: per-customer yellow cards,
-	blank B/K + Picker to hand-fill, TOTAL KOLI, truck box table, MOBIL/DRIVER."""
+def packing_sheet_html(company: str | None = None, date: str | None = None, category: str | None = None) -> str:
+	"""A4 print of the packing sheet: per-customer yellow cards, blank B/K +
+	Picker to hand-fill, TOTAL KOLI, truck box table, MOBIL/DRIVER.
+	`category` ("dry"/"frozen") prints only that category's lines."""
 	require_read()
+	category = (category or "").lower() or None
+	if category not in (None, "dry", "frozen"):
+		frappe.throw("Category must be dry or frozen.", frappe.ValidationError)
 	company = company or frappe.defaults.get_user_default("Company")
 	if not company:
 		frappe.throw("Company is required.", frappe.ValidationError)
@@ -772,15 +774,16 @@ def packing_sheet_html(company: str | None = None, date: str | None = None) -> s
 	koli_per_group: dict[tuple[str, str], int] = {}
 	order: list[tuple[str, str]] = []
 	for slip in res["slips"]:
-		if not slip["lines"]:
+		lines = [l for l in slip["lines"] if l.get("category") == category] if category else slip["lines"]
+		if not lines:
 			continue
 		key = (slip.get("driver") or "", slip.get("vehicle_no") or "")
 		if key not in groups:
 			groups[key] = []
 			order.append(key)
 			koli_per_group[key] = 0
-		groups[key].append(sheet_card_html(slip["customer_name"], slip["lines"]))
-		koli_per_group[key] += sheet_koli_total(slip["lines"])
+		groups[key].append(sheet_card_html(slip["customer_name"], lines))
+		koli_per_group[key] += sheet_koli_total(lines)
 	body = ""
 	for driver, vehicle_no in order:
 		key = (driver, vehicle_no)

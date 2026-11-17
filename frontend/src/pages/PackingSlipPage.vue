@@ -92,10 +92,6 @@ function toggleFilter() {
 defineExpose({ toggleFilter, printSheet })
 
 // ===== Sheet view (embedded): edit Koli/Berat langsung di kartu customer =====
-function cardKoli(s) {
-	return (s.lines || []).reduce((sum, l) => sum + (Number(l.koli) || 0), 0)
-}
-
 // ===== Drag & drop kiriman ke driver =====
 // Satu kiriman area bisa dibawakan beberapa driver: assignment per kartu
 // (per SO/DN) via custom_driver di Packing Slip, bukan satu driver per hari.
@@ -149,6 +145,9 @@ const driverGroups = computed(() => {
 })
 
 // Kartu: tabel DRY dan FROZEN terpisah (seperti picking list), masing-masing ada Total.
+// Tab Dry/Frozen: layar & cetak packing sheet hanya menampilkan satu kategori.
+const sheetTab = ref('dry')
+
 function cardSections(s) {
 	// Grup koli = baris berurutan dengan koli_no sama; hanya run berurutan
 	// yang di-merge (rowspan), jadi baris normal tidak pernah ikut tergabung.
@@ -168,17 +167,9 @@ function cardSections(s) {
 		return rows
 	}
 	// Label sengaja dibalik (alur gudang): isi frozen -> "Dry", isi dry -> "Frozen".
-	return [
-		{ label: 'Frozen', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen'), rows: decorate(s.lines.filter((l) => l.category !== 'frozen')) },
-		{ label: 'Dry', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen'), rows: decorate(s.lines.filter((l) => l.category === 'frozen')) },
-	].filter((sec) => sec.lines.length)
-}
-
-// Caption kartu juga dibalik: tulisan Dry muncul saat ada isi frozen, dst.
-function captionWords(s) {
-	const hasFrozen = (s.lines || []).some((l) => l.category === 'frozen')
-	const hasDry = (s.lines || []).some((l) => l.category !== 'frozen')
-	return [hasFrozen ? 'Dry' : '', hasDry ? 'Frozen' : ''].filter(Boolean).join(' / ')
+	// Satu section saja, sesuai tab aktif.
+	const cat = sheetTab.value
+	return [{ label: cat === 'dry' ? 'Dry' : 'Frozen', cat, rows: decorate(s.lines.filter((l) => l.category === cat)) }]
 }
 
 // Klik kanan baris kartu: gabung/pisah koli tanpa buka editor penuh.
@@ -215,7 +206,11 @@ function secKoli(sec) {
 }
 
 function groupKoli(g) {
-	return g.slips.reduce((sum, s) => sum + cardKoli(s), 0)
+	// Hanya kategori tab aktif yang dihitung.
+	return g.slips.reduce(
+		(sum, s) => sum + s.lines.filter((l) => l.category === sheetTab.value).reduce((a, l) => a + (Number(l.koli) || 0), 0),
+		0
+	)
 }
 
 // Drag baris item: urutkan di dalam kategori yang sama pada kartu yang sama.
@@ -302,9 +297,10 @@ async function saveCard(s) {
 
 async function printSheet() {
 	try {
-		const html = await fetchPackingSheetHtml(company.value, fromDate.value)
-		printModalTitle.value = `Cetak Packing List (${fromDate.value})`
-		printModalItems.value = [{ label: 'Packing List', name: fromDate.value, html }]
+		const html = await fetchPackingSheetHtml(company.value, fromDate.value, sheetTab.value)
+		const label = sheetTab.value === 'dry' ? 'Dry' : 'Frozen'
+		printModalTitle.value = `Cetak Packing List ${label} (${fromDate.value})`
+		printModalItems.value = [{ label: `Packing List ${label}`, name: fromDate.value, html }]
 		printModalOpen.value = true
 	} catch (e) {
 		error.value = e.message || 'Gagal memuat packing list gabungan.'
@@ -659,6 +655,10 @@ function fmtQty(value) {
 
 			<!-- ===== Sheet ala papan klip (embedded): kartu per customer, edit langsung ===== -->
 			<template v-else-if="embedded">
+				<div class="sheet-tabs">
+					<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'dry' }" @click="sheetTab = 'dry'">Dry</button>
+					<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'frozen' }" @click="sheetTab = 'frozen'">Frozen</button>
+				</div>
 				<div
 					v-for="(g, gi) in driverGroups"
 					:key="gi"
@@ -674,12 +674,13 @@ function fmtQty(value) {
 						<small>Lepas kartu kiriman di sini</small>
 					</div>
 					<div class="sheet-grid">
-						<div v-for="s in g.slips" :key="s.name" class="sheet-card" :draggable="!!s.editable" @dragstart="onCardDragStart(s, $event)" @dragend="dragSlip = null">
+						<template v-for="s in g.slips" :key="s.name">
+						<div v-if="s.lines.some((l) => l.category === sheetTab)" class="sheet-card" :draggable="!!s.editable" @dragstart="onCardDragStart(s, $event)" @dragend="dragSlip = null">
 							<div class="sc-cap">
 								<button type="button" class="sc-name" title="Buka editor penuh" @click="openSlip(s)">
 									{{ s.customer_name }}
 								</button>
-								<span class="sc-dry">{{ captionWords(s) }} :</span>
+								<span class="sc-dry">{{ sheetTab === 'dry' ? 'Dry' : 'Frozen' }} :</span>
 								<span class="sc-blank" title="Koli tulis tangan"></span>
 								<span class="sc-dry">Koli</span>
 								<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
@@ -733,10 +734,11 @@ function fmtQty(value) {
 									<button type="button" class="btn btn-sm" @click="confirmCardRow(s)">OK</button>
 									<button type="button" class="btn btn-sm" @click="addRowCard = null">Batal</button>
 								</template>
-								<button v-else type="button" class="btn btn-sm" @click="addRowCard = { name: s.name, item_code: '', qty: 1, category: 'dry' }">+ Baris</button>
+								<button v-else type="button" class="btn btn-sm" @click="addRowCard = { name: s.name, item_code: '', qty: 1, category: sheetTab }">+ Baris</button>
 							</div>
 						</div>
-					</div>
+					</template>
+				</div>
 
 					<!-- Catatan per driver: total koli, tabel truk, MOBIL/DRIVER -->
 					<div class="sheet-foot">
@@ -1092,6 +1094,13 @@ function fmtQty(value) {
 .sc-name { flex: 1; border: 0; background: none; padding: 0; font-weight: bold; font-size: 12.5px; text-align: left; cursor: pointer; color: inherit; }
 .sc-name:hover { text-decoration: underline; }
 .sc-dry { white-space: nowrap; font-size: 11px; }
+
+.sheet-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.sheet-tab {
+	padding: 5px 18px; border: 1.5px solid #111; background: #fff; font-weight: 600;
+	font-size: 13px; cursor: pointer; border-radius: 4px 4px 0 0;
+}
+.sheet-tab.active { background: #ffe94a; }
 .sc-wblank { display: inline-block; width: 42px; height: 16px; background: #fff; border: 1px solid #111; }
 .sc-blank { width: 48px; height: 14px; background: #fff; border: 1.5px solid #111; display: inline-block; }
 .sc-driver { margin-left: auto; font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }

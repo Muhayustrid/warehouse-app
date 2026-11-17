@@ -206,12 +206,12 @@ class TestSheetCard(unittest.TestCase):
 		self.assertIn("Dry / Frozen :", html)  # kartu campuran: kedua keterangan tampil
 		self.assertIn("Koli", html)  # koli tanpa angka/titik dua, diisi tulis tangan
 		self.assertIn("blank", html)  # kotak kosong sebelum Koli
-		# Header tabel juga dibalik: tabel dry items berjudul FROZEN, dst.
-		self.assertIn("FROZEN", html)
+		# Label sesuai isi (normal): tabel dry berjudul DRY, frozen berjudul FROZEN.
 		self.assertIn("DRY", html)
-		self.assertIn("Total FROZEN", html)
+		self.assertIn("FROZEN", html)
 		self.assertIn("Total DRY", html)
-		self.assertLess(html.index("FROZEN"), html.index("DRY"))  # dry items dulu, judul FROZEN
+		self.assertIn("Total FROZEN", html)
+		self.assertLess(html.index("DRY"), html.index("FROZEN"))  # dry dulu, kayak picking list
 		self.assertIn("<td>1</td>", html)  # total per tabel (1 koli dry + 1 koli frozen)
 
 	def test_koli_total(self):

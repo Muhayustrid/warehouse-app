@@ -208,8 +208,8 @@ export function fetchPackingSheet(company, date) {
 }
 
 // Cetak Packing List gabungan (layout kertas papan klip).
-export function fetchPackingSheetHtml(company, date) {
-	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_sheet_html', { company, date })
+export function fetchPackingSheetHtml(company, date, category) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_sheet_html', { company, date, category })
 }
 
 // Driver + no. mobil dipakai bersama oleh semua packing pada `date`.
