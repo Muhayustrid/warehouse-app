@@ -689,7 +689,7 @@ function fmtQty(value) {
 								<div class="sc-sect">{{ sec.label }}</div>
 								<table class="sc-tbl">
 									<thead>
-										<tr><th>Item</th><th>Qty</th><th>Koli</th><th>Berat</th><th>B / K</th><th>Picker</th><th>Estimasi</th></tr>
+										<tr><th>Item</th><th>Qty</th><th>Unit</th><th>Colly</th><th>Weight (Kg)</th></tr>
 									</thead>
 									<tbody>
 										<tr
@@ -705,17 +705,15 @@ function fmtQty(value) {
 											<td class="num" :class="{ 'qty-hl': r.l.category === 'frozen' }">
 												<input v-model.number="r.l.qty" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" />
 											</td>
+											<td class="num">{{ r.l.uom || '' }}</td>
 											<td v-if="r.span > 0" class="num" :rowspan="r.span"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td v-else-if="!r.covered"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td v-if="!r.covered"><input v-model="r.l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
-											<td v-if="!r.covered" class="hand"></td>
-											<td v-if="!r.covered" class="hand"></td>
-											<td v-if="!r.covered" class="num">{{ r.l.estimated_weight || '' }}</td>
+											<td v-else-if="!r.covered" class="num"><input v-model="r.l.koli" class="sc-in" type="number" min="1" :disabled="!s.editable" @change="saveCard(s)" /></td>
+											<td v-if="!r.covered" class="num"><input v-model="r.l.berat" class="sc-in" type="text" :disabled="!s.editable" @change="saveCard(s)" /></td>
 										</tr>
 										<tr class="tf">
-											<td colspan="2">Total {{ sec.label }}</td>
-											<td>{{ secKoli(sec) }}</td>
-											<td colspan="4"></td>
+											<td colspan="3">Total {{ sec.label }}</td>
+											<td class="num">{{ secKoli(sec) }}</td>
+											<td></td>
 										</tr>
 									</tbody>
 								</table>
@@ -1102,10 +1100,9 @@ function fmtQty(value) {
 .drv-add { display: flex; gap: 6px; align-items: center; }
 .sc-tbl { width: 100%; border-collapse: collapse; font-size: 10.5px; }
 .sc-tbl th, .sc-tbl td { border: 1px solid #111; padding: 2px 4px; text-align: left; }
-.sc-tbl th { background: #ffe94a; font-size: 9.5px; }
+.sc-tbl th { background: #FFC000; font-size: 10px; font-weight: 700; text-align: center; }
 .sc-tbl .num { text-align: center; }
 .sc-tbl .qty-hl { background: #ffe94a; font-weight: 600; }
-.sc-tbl .hand { width: 34px; }
 .sc-in { width: 100%; border: 0; background: #f8f8f8; text-align: center; font: inherit; padding: 0; }
 .sc-in:focus { background: #fff; outline: 1px solid #111; }
 .sc-tbl .tf td { background: #ffe94a; font-weight: bold; }
@@ -1120,7 +1117,7 @@ function fmtQty(value) {
 .drv-head b { font-size: 12.5px; }
 .drv-head span { font-size: 11px; color: #444; }
 .drv-head small { font-size: 9px; color: #888; }
-.sc-sect { font-weight: 700; font-size: 11px; margin: 6px 2px 2px; }
+.sc-sect { font-weight: 700; font-size: 12px; margin: 0; background: #FFC000; border: 1px solid #111; border-top: 0; text-align: center; padding: 3px 6px; letter-spacing: 1px; text-transform: uppercase; }
 .sc-addrow { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
 .ctx-overlay { position: fixed; inset: 0; z-index: 90; }
