@@ -41,6 +41,29 @@ class TestSheetCardColly(unittest.TestCase):
 		self.assertNotRegex(html, r"Colly\s*:\s*\d")
 
 
+	def test_profile_classification_overrides_box_size(self):
+		# Frozen Item Group dari profile menang atas custom_box_size koli:
+		# koli B (dry) berisi item frozen tetap masuk FROZEN, dan sebaliknya.
+		ps_items = [
+			[_item(item_group="Produk Jadi Pabrik", qty=1)],
+			[_item(item_code="BB260001", item_name="Terigu", item_group="Bahan Baku", qty=1)],
+		]
+		lines = slip_lines_from_ps_items(
+			ps_items,
+			categories=["dry", "frozen"],
+			frozen={"Produk Jadi Pabrik"},
+			dry_exceptions=set(),
+		)
+		self.assertEqual([l["category"] for l in lines], ["frozen", "dry"])
+
+	def test_dry_exception_overrides_frozen_group(self):
+		ps_items = [[_item(item_group="Produk Jadi Pabrik", item_code="PJ260009", qty=1)]]
+		lines = slip_lines_from_ps_items(
+			ps_items, frozen={"Produk Jadi Pabrik"}, dry_exceptions={"PJ260009"}
+		)
+		self.assertEqual(lines[0]["category"], "dry")
+
+
 def _item(**overrides):
 	row = {
 		"item_code": "PJ260010",

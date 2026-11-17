@@ -93,10 +93,14 @@ def csv_estimasi(item_name: str, qty: float) -> float | None:
 def slip_lines_from_ps_items(
 	ps_items: list[list[dict]],
 	categories: list[str] | None = None,
+	frozen: set | None = None,
+	dry_exceptions: set | None = None,
 ) -> list[dict]:
 	"""Flatten per-koli Packing Slip item lists into editor lines: one line per
 	koli (items may repeat across koli). Frozen rows carry estimated_weight
-	(weight_per_unit x qty); dry rows are hand-weighed (blank)."""
+	(weight_per_unit x qty); dry rows are hand-weighed (blank).
+	When a profile frozen set is given, classification is per item via its
+	item_group (Frozen Item Group settings), overriding the koli box_size."""
 	lines: list[dict] = []
 	for idx, items in enumerate(ps_items, start=1):
 		if not items:
@@ -106,6 +110,14 @@ def slip_lines_from_ps_items(
 			qty = flt(item.get("qty"))
 			if qty <= 0:
 				continue
+			line_category = category
+			if frozen is not None:
+				if dry_exceptions and item.get("item_code") in dry_exceptions:
+					line_category = "dry"
+				elif item.get("item_group") in frozen:
+					line_category = "frozen"
+				else:
+					line_category = "dry"
 			line = {
 				"item_code": item.get("item_code") or "",
 				"item_name": item.get("item_name") or "",
@@ -114,7 +126,7 @@ def slip_lines_from_ps_items(
 				"koli_no": idx,
 				"koli": 1,
 				"berat": "",
-				"category": "frozen" if "frozen" in category else "dry",
+				"category": "frozen" if "frozen" in line_category else "dry",
 				"net_weight": flt(item.get("net_weight")),
 			}
 			# Estimasi dari master dough weight; fallback weight_per_unit item master.
@@ -338,6 +350,24 @@ def load_packing_slip(name: str) -> dict:
 		limit_page_length=0,
 	)
 	if siblings:
+		# Classification per item from Frozen Item Group settings (profile),
+		# so mixed dry/frozen koli split correctly; box_size stays only as the
+		# physical koli marker when no profile exists.
+		docs = [frappe.get_doc("Packing Slip", s.name) for s in siblings]
+		company = frappe.db.get_value("Delivery Note", dn_name, "company")
+		frozen_set, dry_exc = _frozen_profile(company)
+		item_groups: dict = {}
+		if frozen_set is not None:
+			codes = sorted({it.item_code for d in docs for it in d.items})
+			item_groups = {
+				r.name: r.item_group
+				for r in frappe.get_all(
+					"Item",
+					filters={"name": ["in", codes or ["-"]]},
+					fields=["name", "item_group"],
+					limit_page_length=0,
+				)
+			}
 		categories = ["frozen" if (s.custom_box_size == "K") else "dry" for s in siblings]
 		ps_items = [
 			[
@@ -347,12 +377,15 @@ def load_packing_slip(name: str) -> dict:
 					"qty": flt(it.qty),
 					"net_weight": flt(it.net_weight),
 					"stock_uom": it.stock_uom,
+					**({"item_group": item_groups.get(it.item_code, "")} if frozen_set is not None else {}),
 				}
-				for it in frappe.get_doc("Packing Slip", s.name).items
+				for it in d.items
 			]
-			for s in siblings
+			for d in docs
 		]
-		lines = slip_lines_from_ps_items(ps_items, categories=categories)
+		lines = slip_lines_from_ps_items(
+			ps_items, categories=categories, frozen=frozen_set, dry_exceptions=dry_exc
+		)
 		# Hand-weighed weight per koli persists on the doc (net_weight_pkg).
 		for line in lines:
 			sibling = siblings[line["koli_no"] - 1]
@@ -383,19 +416,25 @@ def load_packing_slip(name: str) -> dict:
 	}
 
 
-def _lines_from_dn(dn_name: str) -> list[dict]:
-	"""Fallback editor lines from DN items (packing not run yet): one line per
-	item, frozen/dry via Item master category, sequential koli numbers."""
-	company = frappe.db.get_value("Delivery Note", dn_name, "company")
+def _frozen_profile(company: str) -> tuple[set | None, set]:
+	"""(frozen item groups, dry exceptions) of the company's profile;
+	(None, set()) when there is no profile."""
 	profile = frappe.get_all(
 		"Warehouse Fulfillment Profile",
 		filters={"company": company},
 		fields=["name", "enabled", "frozen_item_group", "include_child_item_groups", "dry_item_exceptions"],
 		limit_page_length=1,
 	)
-	profile = profile[0] if profile else None
-	frozen = resolve_frozen(profile) if profile else None
-	dry_exceptions = resolve_dry_exceptions(profile) if profile else set()
+	if not profile:
+		return None, set()
+	return resolve_frozen(profile[0]), resolve_dry_exceptions(profile[0])
+
+
+def _lines_from_dn(dn_name: str) -> list[dict]:
+	"""Fallback editor lines from DN items (packing not run yet): one line per
+	item, frozen/dry via Item master category, sequential koli numbers."""
+	company = frappe.db.get_value("Delivery Note", dn_name, "company")
+	frozen, dry_exceptions = _frozen_profile(company)
 	items = frappe.get_all(
 		"Delivery Note Item",
 		filters={"parent": dn_name},
