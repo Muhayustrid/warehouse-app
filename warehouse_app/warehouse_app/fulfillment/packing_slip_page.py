@@ -605,7 +605,8 @@ def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 	foot = f"<tr class='tf'><td colspan='2'>Total</td><td>{koli_sum}</td><td colspan='4'></td></tr>"
 	return (
 		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
-		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly <b>{koli_sum}</b></span></div>"
+		f"<span class='dry'>Dry : {dry_koli}</span><span class='colly'>Colly : {koli_sum}</span>"
+		f"<span class='wblank'></span></div>"
 		f"<table>{head}{''.join(rows)}{foot}</table></div>"
 	)
 
@@ -623,6 +624,8 @@ def load_packing_sheet(company: str, date: str) -> dict:
 			continue
 		slip["lines"] = full["lines"]
 		slip["totals"] = full["totals"]
+		slip["driver"] = full["driver"]
+		slip["vehicle_no"] = full["vehicle_no"]
 	return res
 
 
@@ -654,9 +657,8 @@ body{{font-family:Arial,Helvetica,sans-serif;font-size:9px;margin:0}}
 .card{{break-inside:avoid;margin-bottom:4mm;border:1.5px solid #111;background:#fff}}
 .cap{{display:flex;gap:3mm;align-items:center;background:#ffe94a;border-bottom:1.5px solid #111;padding:0.8mm 2mm}}
 .cap .cust{{flex:1;font-weight:bold;font-size:10px}}
-.cap .dry,.cap .colly{{white-space:nowrap}}
-.cap .colly{{text-align:center;background:#fff;border:1px solid #111;padding:0 2mm}}
-.cap .colly b{{font-size:12px}}
+.cap .dry,.cap .colly{{white-space:nowrap;font-size:9px}}
+.cap .wblank{{display:inline-block;width:11mm;height:3.6mm;background:#fff;border:1px solid #111}}
 table{{width:100%;border-collapse:collapse}}
 th,td{{border:1px solid #111;padding:0.6mm 1.5mm;text-align:left}}
 th{{background:#ffe94a;font-size:8.5px}}
@@ -689,20 +691,22 @@ def _slip_label_divs(name: str) -> str:
 
 	koli_categories: dict[int, str] = {}
 	koli_items: dict[int, list[str]] = {}
+	koli_master: dict[int, float] = {}
+	koli_hand: dict[int, str] = {}
 	for line in lines:
 		n = line["koli_no"]
 		koli_categories.setdefault(n, line["category"])
 		koli_items.setdefault(n, []).append(f"{line['item_code']} - {line['item_name']}")
+		# Berat dari data master (Item.net_weight x qty); fallback timbangan manual.
+		koli_master[n] = koli_master.get(n, 0) + flt(line.get("net_weight")) * flt(line.get("qty"))
+		koli_hand.setdefault(n, str(line.get("berat") or ""))
 
 	total = len(koli_categories)
 	labels = []
 	for n in sorted(koli_categories):
 		category = koli_categories[n].upper()
-		weight = ""
-		for line in lines:
-			if line["koli_no"] == n:
-				weight = line.get("berat") or line.get("estimated_weight") or ""
-				break
+		master = koli_master.get(n) or 0
+		weight = f"{master:g}" if master > 0 else (koli_hand.get(n) or "")
 		items = "<br>".join(escape_html(i) for i in koli_items[n])
 		labels.append(
 			f"""<div class='label'>
@@ -724,20 +728,20 @@ def _labels_page(body: str, title: str) -> str:
 	return f"""<!doctype html><html><head><meta charset='utf-8'><title>{title}</title>
 <style>
 @page{{size:60mm 40mm;margin:1.5mm}}
-body{{font-family:Arial,Helvetica,sans-serif;font-size:7px;margin:0}}
-.label{{width:57mm;height:37mm;border:1px solid #333;page-break-after:always;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;margin:0 auto;background:#fff}}
-.co{{text-align:center;font-size:8.5px;font-weight:bold;letter-spacing:.15em;border-bottom:1.5px solid #333;padding:1mm 0 0.8mm}}
+body{{font-family:Arial,Helvetica,sans-serif;font-size:8px;margin:0}}
+.label{{width:57mm;height:37mm;border:1.5px solid #111;page-break-after:always;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;margin:0 auto;background:#fff}}
+.co{{text-align:center;font-size:10.5px;font-weight:bold;letter-spacing:.12em;border-bottom:2px solid #111;padding:1mm 0 0.8mm}}
 .body{{flex:1;display:flex;min-height:0}}
-.left{{width:38%;border-right:1.5px solid #333;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:1.6mm}}
-.ratio .n{{font-size:18px;font-weight:bold}}
-.ratio .tot{{font-size:8px;color:#333}}
+.left{{width:38%;border-right:1.5px solid #111;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:1.6mm}}
+.ratio .n{{font-size:24px;font-weight:bold}}
+.ratio .tot{{font-size:10px;color:#111}}
 .wgrp{{display:flex;flex-direction:column;align-items:center}}
-.bw{{font-size:6.5px;letter-spacing:.14em;color:#666}}
-.kg{{font-size:20px;font-weight:bold;line-height:1.05;min-height:1em}}
+.bw{{font-size:7.5px;letter-spacing:.14em;color:#111}}
+.kg{{font-size:24px;font-weight:bold;line-height:1.05;min-height:1em}}
 .right{{flex:1;padding-left:1.8mm;display:flex;flex-direction:column;justify-content:center}}
-.cust{{font-size:10px;font-weight:bold;line-height:1.2;text-transform:uppercase}}
-.items{{font-size:7.5px;line-height:1.3;margin-top:0.6mm}}
-.badge{{align-self:flex-start;display:inline-block;background:#ffe07a;border:1px solid #d9a300;border-radius:2px;padding:0.3mm 2mm;font-size:8px;font-weight:bold;margin-top:1mm}}
+.cust{{font-size:12.5px;font-weight:bold;line-height:1.2;text-transform:uppercase}}
+.items{{font-size:9px;line-height:1.3;margin-top:0.6mm}}
+.badge{{align-self:flex-start;display:inline-block;background:#fff;border:1.5px solid #111;border-radius:2px;padding:0.3mm 2mm;font-size:9.5px;font-weight:bold;margin-top:1mm}}
 </style></head><body>
 {body or "<div class='label'>Tidak ada label.</div>"}
 <script>window.print()</script></body></html>"""

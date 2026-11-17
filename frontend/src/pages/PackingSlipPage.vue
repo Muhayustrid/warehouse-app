@@ -97,6 +97,58 @@ function cardKoli(s) {
 }
 const totalKoli = computed(() => filteredSlips.value.reduce((sum, s) => sum + cardKoli(s), 0))
 
+// ===== Drag & drop kiriman ke driver =====
+// Satu kiriman area bisa dibawakan beberapa driver: assignment per kartu
+// (per SO/DN) via custom_driver di Packing Slip, bukan satu driver per hari.
+const dayDrivers = ref([])
+const dragSlip = ref(null)
+const newDriver = ref('')
+const newVehicle = ref('')
+
+function syncDayDrivers() {
+	const seen = new Map()
+	const add = (name, vehicle) => {
+		const key = String(name || '').trim()
+		if (!key || seen.has(key)) return
+		seen.set(key, { driver: key, vehicle_no: String(vehicle || '').trim() })
+	}
+	for (const s of slips.value) add(s.driver, s.vehicle_no)
+	add(driver.value, vehicleNo.value)
+	dayDrivers.value = [...seen.values()]
+}
+
+function addDriver() {
+	const key = newDriver.value.trim()
+	if (!key) return
+	const existing = dayDrivers.value.find((d) => d.driver.toLowerCase() === key.toLowerCase())
+	if (existing) {
+		if (newVehicle.value.trim()) existing.vehicle_no = newVehicle.value.trim()
+	} else {
+		dayDrivers.value.push({ driver: key, vehicle_no: newVehicle.value.trim() })
+	}
+	newDriver.value = ''
+	newVehicle.value = ''
+}
+
+function onCardDragStart(s, event) {
+	dragSlip.value = s
+	event.dataTransfer.effectAllowed = 'move'
+}
+
+async function onDropToDriver(d) {
+	const s = dragSlip.value
+	dragSlip.value = null
+	if (!s || !s.editable) return
+	error.value = ''
+	try {
+		await savePackingSlip(s.sales_order, s.lines, d.driver, d.vehicle_no)
+		s.driver = d.driver
+		s.vehicle_no = d.vehicle_no
+	} catch (e) {
+		error.value = e.message || `Gagal menugaskan driver untuk ${s.customer_name}.`
+	}
+}
+
 async function saveCard(s) {
 	if (!s.editable) return
 	error.value = ''
@@ -184,6 +236,7 @@ async function load() {
 		// Driver per hari: prefill dari data existing, jangan menimpa yang sedang diedit.
 		if (typeof res.driver === 'string' && res.driver && !driver.value) driver.value = res.driver
 		if (typeof res.vehicle_no === 'string' && res.vehicle_no && !vehicleNo.value) vehicleNo.value = res.vehicle_no
+		syncDayDrivers()
 	} catch (e) {
 		error.value = e.message || 'Gagal memuat daftar packing slip.'
 	} finally {
@@ -459,14 +512,35 @@ function fmtQty(value) {
 
 			<!-- ===== Sheet ala papan klip (embedded): kartu per customer, edit langsung ===== -->
 			<template v-else-if="embedded">
+				<!-- Panel driver: lepas kartu customer ke driver yang bawa -->
+				<div class="drv-panel">
+					<div
+						v-for="(d, i) in dayDrivers"
+						:key="i"
+						class="drv-zone"
+						@dragover.prevent
+						@drop.prevent="onDropToDriver(d)"
+					>
+						<b>{{ d.driver || '(tanpa nama)' }}</b>
+						<span>{{ d.vehicle_no || '—' }}</span>
+						<small>Lepas kartu kiriman di sini</small>
+					</div>
+					<div class="drv-add">
+						<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver" />
+						<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil" @keyup.enter="addDriver" />
+						<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
+					</div>
+				</div>
 				<div class="sheet-grid">
-					<div v-for="s in filteredSlips" :key="s.name" class="sheet-card">
+					<div v-for="s in filteredSlips" :key="s.name" class="sheet-card" :draggable="!!s.editable" @dragstart="onCardDragStart(s, $event)" @dragend="dragSlip = null">
 						<div class="sc-cap">
 							<button type="button" class="sc-name" title="Buka editor penuh" @click="openSlip(s)">
 								{{ s.customer_name }}
 							</button>
 							<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
-							<span class="sc-colly">Colly<br /><b>{{ (s.totals?.total_dry_colly || 0) + (s.totals?.total_frozen_colly || 0) }}</b></span>
+							<span class="sc-dry">Colly : {{ (s.totals?.total_dry_colly || 0) + (s.totals?.total_frozen_colly || 0) }}</span>
+							<span class="sc-wblank" title="Diisi tulis tangan"></span>
+							<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
 						</div>
 						<table class="sc-tbl">
 							<thead>
@@ -833,8 +907,15 @@ function fmtQty(value) {
 .sc-name { flex: 1; border: 0; background: none; padding: 0; font-weight: bold; font-size: 12.5px; text-align: left; cursor: pointer; color: inherit; }
 .sc-name:hover { text-decoration: underline; }
 .sc-dry { white-space: nowrap; font-size: 11px; }
-.sc-colly { text-align: center; background: #fff; border: 1px solid #111; padding: 0 6px; font-size: 9px; line-height: 1.2; }
-.sc-colly b { font-size: 13px; }
+.sc-wblank { display: inline-block; width: 42px; height: 16px; background: #fff; border: 1px solid #111; }
+.sc-driver { margin-left: auto; font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }
+.sheet-card.dragging { opacity: 0.5; }
+.drv-panel { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-bottom: 10px; }
+.drv-zone { display: flex; flex-direction: column; justify-content: center; min-width: 130px; border: 1.5px dashed #111; background: #fffdf2; padding: 6px 10px; border-radius: 6px; }
+.drv-zone b { font-size: 12.5px; }
+.drv-zone span { font-size: 11px; color: #444; }
+.drv-zone small { font-size: 9px; color: #888; }
+.drv-add { display: flex; gap: 6px; align-items: center; }
 .sc-tbl { width: 100%; border-collapse: collapse; font-size: 10.5px; }
 .sc-tbl th, .sc-tbl td { border: 1px solid #111; padding: 2px 4px; text-align: left; }
 .sc-tbl th { background: #ffe94a; font-size: 9.5px; }

@@ -127,7 +127,7 @@ class TestSheetCard(unittest.TestCase):
 	def test_totals_and_dry_count(self):
 		html = sheet_card_html("CUST", self._lines())
 		self.assertIn("Dry : 1", html)
-		self.assertIn("<b>2</b>", html)  # colly total
+		self.assertIn("Colly : 2", html)  # colly total, tulisan sama kaya Dry
 		self.assertIn("<td>2</td>", html)  # baris Total
 
 	def test_koli_total(self):
