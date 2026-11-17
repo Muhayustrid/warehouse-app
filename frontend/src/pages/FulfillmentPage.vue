@@ -217,8 +217,9 @@ async function printAllLabels() {
 	if (labelPrinting.value) return
 	labelPrinting.value = true
 	try {
-		const res = await fetchPackingSlipsLabelsHtml(company.value, pickDate.value)
-		printModalTitle.value = 'Label Koli Gabungan'
+		const tab = packingRef?.sheetTab || 'dry'
+		const res = await fetchPackingSlipsLabelsHtml(company.value, pickDate.value, tab)
+		printModalTitle.value = `Label Koli ${tab === 'dry' ? 'Dry' : 'Frozen'}`
 		printModalItems.value = [{ label: 'Label Koli', name: pickDate.value, html: res }]
 		printModalOpen.value = true
 	} catch (e) {

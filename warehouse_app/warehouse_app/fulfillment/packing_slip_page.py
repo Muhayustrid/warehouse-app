@@ -674,10 +674,14 @@ def packing_slip_labels_html(name: str) -> str:
 	return _labels_page(_slip_label_divs(name), f"Label Koli {escape_html(name)}")
 
 
-def packing_slips_labels_html(company: str | None = None, date: str | None = None) -> str:
+def packing_slips_labels_html(company: str | None = None, date: str | None = None, category: str | None = None) -> str:
 	"""All koli labels for packing slips packed on `date` (company-wide),
-	concatenated in one print run."""
+	concatenated in one print run. `category` ("dry"/"frozen") keeps only
+	that category's labels."""
 	require_read()
+	category = (category or "").lower() or None
+	if category not in (None, "dry", "frozen"):
+		frappe.throw("Category must be dry or frozen.", frappe.ValidationError)
 	company = company or frappe.defaults.get_user_default("Company")
 	if not company:
 		frappe.throw("Company is required.", frappe.ValidationError)
@@ -686,7 +690,7 @@ def packing_slips_labels_html(company: str | None = None, date: str | None = Non
 	for row in res["slips"]:
 		if not (row.get("packing") or {}).get("packed"):
 			continue
-		divs.append(_slip_label_divs(row["name"]))
+		divs.append(_slip_label_divs(row["name"], category))
 	title = f"Label Koli {company} {date or ''}".strip()
 	return _labels_page("".join(divs), title)
 
@@ -848,11 +852,16 @@ def _label_groups(lines: list[dict]) -> list[dict]:
 	return sorted(groups.values(), key=lambda g: (0 if g["category"] == "frozen" else 1, g["koli_no"]))
 
 
-def _slip_label_divs(name: str) -> str:
-	"""Label <div>s for one packing slip, in koli order (1/total first)."""
+def _slip_label_divs(name: str, category: str | None = None) -> str:
+	"""Label <div>s for one packing slip, in koli order (1/total first).
+	`category` ("dry"/"frozen") keeps only that category's labels."""
 	data = load_packing_slip(name)
 	header = data["header"]
 	lines = data["lines"]
+	if category:
+		lines = [l for l in lines if l.get("category") == category]
+		if not lines:
+			return ""
 
 	# Numbering per category: FROZEN 1/N, DRY 1/M (mixed koli -> two labels).
 	groups = _label_groups(lines)

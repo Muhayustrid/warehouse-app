@@ -198,8 +198,8 @@ export function fetchPackingSlipLabelsHtml(name) {
 }
 
 // Semua label koli untuk packing slip yang sudah diinput pada `date` (per company).
-export function fetchPackingSlipsLabelsHtml(company, date) {
-	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slips_labels_html', { company, date })
+export function fetchPackingSlipsLabelsHtml(company, date, category) {
+	return callGet('warehouse_app.warehouse_app.fulfillment.api.get_packing_slips_labels_html', { company, date, category })
 }
 
 // Sheet gabungan satu hari (tampilan Image 2): slip + lines per SO.

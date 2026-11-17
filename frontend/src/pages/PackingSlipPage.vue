@@ -89,7 +89,7 @@ function addFilterRow() {
 function toggleFilter() {
 	showFilter.value = !showFilter.value
 }
-defineExpose({ toggleFilter, printSheet })
+defineExpose({ toggleFilter, printSheet, sheetTab })
 
 // ===== Sheet view (embedded): edit Koli/Berat langsung di kartu customer =====
 // ===== Drag & drop kiriman ke driver =====
@@ -1096,11 +1096,15 @@ function fmtQty(value) {
 .sc-name:hover { text-decoration: underline; }
 .sc-dry { white-space: nowrap; font-size: 11px; }
 
-.sheet-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
-.sheet-tab {
-	padding: 5px 18px; border: 1.5px solid #111; background: #fff; font-weight: 600;
-	font-size: 13px; cursor: pointer; border-radius: 4px 4px 0 0;
+.sheet-tabs {
+	display: inline-flex; margin-bottom: 12px; width: max-content;
+	border: 1.5px solid #111; border-radius: 8px; overflow: hidden;
 }
+.sheet-tab {
+	padding: 7px 26px; border: none; background: #fff;
+	font-weight: 600; font-size: 13px; cursor: pointer;
+}
+.sheet-tab + .sheet-tab { border-left: 1.5px solid #111; }
 .sheet-tab.active { background: #ffe94a; }
 .sc-wblank { display: inline-block; width: 42px; height: 16px; background: #fff; border: 1px solid #111; }
 .sc-blank { width: 48px; height: 14px; background: #fff; border: 1.5px solid #111; display: inline-block; }

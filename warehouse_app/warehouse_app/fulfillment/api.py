@@ -479,8 +479,8 @@ def get_packing_slip_labels_html(name=None):
 
 
 @frappe.whitelist(methods=["GET"])
-def get_packing_slips_labels_html(company=None, date=None):
-	return packing_slips_labels_html(company=company, date=date)
+def get_packing_slips_labels_html(company=None, date=None, category=None):
+	return packing_slips_labels_html(company=company, date=date, category=category)
 
 
 @frappe.whitelist(methods=["GET"])
