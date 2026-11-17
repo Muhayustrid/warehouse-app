@@ -167,10 +167,18 @@ function cardSections(s) {
 		}
 		return rows
 	}
+	// Label sengaja dibalik (alur gudang): isi frozen -> "Dry", isi dry -> "Frozen".
 	return [
-		{ label: 'Dry', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen'), rows: decorate(s.lines.filter((l) => l.category !== 'frozen')) },
-		{ label: 'Frozen', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen'), rows: decorate(s.lines.filter((l) => l.category === 'frozen')) },
+		{ label: 'Frozen', cat: 'dry', lines: s.lines.filter((l) => l.category !== 'frozen'), rows: decorate(s.lines.filter((l) => l.category !== 'frozen')) },
+		{ label: 'Dry', cat: 'frozen', lines: s.lines.filter((l) => l.category === 'frozen'), rows: decorate(s.lines.filter((l) => l.category === 'frozen')) },
 	].filter((sec) => sec.lines.length)
+}
+
+// Caption kartu juga dibalik: tulisan Dry muncul saat ada isi frozen, dst.
+function captionWords(s) {
+	const hasFrozen = (s.lines || []).some((l) => l.category === 'frozen')
+	const hasDry = (s.lines || []).some((l) => l.category !== 'frozen')
+	return [hasFrozen ? 'Dry' : '', hasDry ? 'Frozen' : ''].filter(Boolean).join(' / ')
 }
 
 // Klik kanan baris kartu: gabung/pisah koli tanpa buka editor penuh.
@@ -671,9 +679,9 @@ function fmtQty(value) {
 								<button type="button" class="sc-name" title="Buka editor penuh" @click="openSlip(s)">
 									{{ s.customer_name }}
 								</button>
-								<span class="sc-dry">Dry : {{ s.totals?.total_dry_colly || 0 }}</span>
+								<span class="sc-dry">{{ captionWords(s) }} :</span>
 								<span class="sc-blank" title="Koli tulis tangan"></span>
-								<span class="sc-dry">Colly</span>
+								<span class="sc-dry">Koli</span>
 								<span v-if="s.driver" class="sc-driver">{{ s.driver }}</span>
 							</div>
 							<template v-for="sec in cardSections(s)" :key="sec.cat">

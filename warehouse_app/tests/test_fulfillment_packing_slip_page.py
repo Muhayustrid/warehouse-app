@@ -36,10 +36,10 @@ class TestCsvEstimasi(unittest.TestCase):
 
 class TestSheetCardColly(unittest.TestCase):
 	def test_cap_colly_without_number(self):
-		# Colly di caption kartu dicatat tulis tangan: tanpa angka.
+		# Koli di caption kartu dicatat tulis tangan: tanpa angka.
 		html = sheet_card_html("RS Uji", [_item()])
-		self.assertIn("Colly", html)
-		self.assertNotRegex(html, r"Colly\s*:\s*\d")
+		self.assertIn("Koli", html)
+		self.assertNotRegex(html, r"Koli\s*:\s*\d")
 
 
 	def test_profile_classification_overrides_box_size(self):
@@ -202,14 +202,16 @@ class TestSheetCard(unittest.TestCase):
 
 	def test_totals_and_dry_count(self):
 		html = sheet_card_html("CUST", self._lines())
-		self.assertIn("Dry : 1", html)
-		self.assertIn("Colly", html)  # colly tanpa angka/titik dua, diisi tulis tangan
-		self.assertIn("blank", html)  # kotak kosong antara Dry dan Colly
-		self.assertIn("DRY", html)
+		# Keterangan dibalik (alur gudang): isi frozen -> Dry, isi dry -> Frozen.
+		self.assertIn("Dry / Frozen :", html)  # kartu campuran: kedua keterangan tampil
+		self.assertIn("Koli", html)  # koli tanpa angka/titik dua, diisi tulis tangan
+		self.assertIn("blank", html)  # kotak kosong sebelum Koli
+		# Header tabel juga dibalik: tabel dry items berjudul FROZEN, dst.
 		self.assertIn("FROZEN", html)
-		self.assertIn("Total DRY", html)
+		self.assertIn("DRY", html)
 		self.assertIn("Total FROZEN", html)
-		self.assertLess(html.index("DRY"), html.index("FROZEN"))  # dry dulu, kayak picking list
+		self.assertIn("Total DRY", html)
+		self.assertLess(html.index("FROZEN"), html.index("DRY"))  # dry items dulu, judul FROZEN
 		self.assertIn("<td>1</td>", html)  # total per tabel (1 koli dry + 1 koli frozen)
 
 	def test_koli_total(self):

@@ -698,9 +698,10 @@ def sheet_koli_total(lines: list[dict]) -> int:
 
 def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 	"""One customer card of the combined packing sheet (pure, testable): yellow
-	caption row (customer, Dry count, Colly total) + DRY and FROZEN tables
-	(Item/Qty/Koli/Berat/B-K/Picker/Estimasi), each with its own Total row.
-	B/K and Picker stay blank (hand-filled on paper)."""
+	caption row (customer, inverted Dry/Frozen note, blank koli box) + DRY and
+	FROZEN tables (Item/Qty/Koli/Berat/B-K/Picker/Estimasi), each with its own
+	Total row. Note is inverted on purpose: frozen content -> "Dry", dry
+	content -> "Frozen". B/K and Picker stay blank (hand-filled on paper)."""
 
 	def cat_table(cat_lines: list[dict], label: str) -> str:
 		rows = []
@@ -725,16 +726,17 @@ def sheet_card_html(customer_name: str, lines: list[dict]) -> str:
 
 	dry = [l for l in lines if l.get("category") != "frozen"]
 	frozen = [l for l in lines if l.get("category") == "frozen"]
+	# Keterangan sengaja dibalik (alur gudang): isi frozen -> tulisan Dry,
+	# isi dry -> tulisan Frozen; angka koli diisi manual dari gudang.
+	caption = " / ".join(w for has, w in ((bool(frozen), "Dry"), (bool(dry), "Frozen")) if has)
 	body = ""
 	if dry:
-		body += cat_table(dry, "DRY")
+		body += cat_table(dry, "FROZEN")
 	if frozen:
-		body += cat_table(frozen, "FROZEN")
-	dry_koli = sum(max(1, int(flt(l.get("koli")) or 1)) for l in dry)
-	koli_sum = sheet_koli_total(lines)
+		body += cat_table(frozen, "DRY")
 	return (
 		f"<div class='card'><div class='cap'><span class='cust'>{escape_html(customer_name)}</span>"
-		f"<span class='dry'>Dry : {dry_koli}</span><span class='blank'></span><span class='colly'>Colly</span></div>"
+		f"<span class='dry'>{caption} :</span><span class='blank'></span><span class='colly'>Koli</span></div>"
 		f"{body}</div>"
 	)
 
