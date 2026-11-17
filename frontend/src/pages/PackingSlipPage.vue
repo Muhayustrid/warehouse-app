@@ -89,7 +89,6 @@ function addFilterRow() {
 function toggleFilter() {
 	showFilter.value = !showFilter.value
 }
-defineExpose({ toggleFilter, printSheet, sheetTab })
 
 // ===== Sheet view (embedded): edit Koli/Berat langsung di kartu customer =====
 // ===== Drag & drop kiriman ke driver =====
@@ -147,6 +146,8 @@ const driverGroups = computed(() => {
 // Kartu: tabel DRY dan FROZEN terpisah (seperti picking list), masing-masing ada Total.
 // Tab Dry/Frozen: layar & cetak packing sheet hanya menampilkan satu kategori.
 const sheetTab = ref('dry')
+
+defineExpose({ toggleFilter, printSheet, sheetTab })
 
 function cardSections(s) {
 	// Grup koli = baris berurutan dengan koli_no sama; hanya run berurutan
