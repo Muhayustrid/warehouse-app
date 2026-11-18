@@ -88,9 +88,8 @@ const STEPS = computed(() => {
 	}
 	return [
 		{ key: 'picking', label: '1. Picking' },
-		{ key: 'delivery', label: '2. Surat Jalan (DN)' },
-		{ key: 'packing', label: '3. Packing Slip' },
-		{ key: 'review', label: '4. Review & Kirim' },
+		{ key: 'packing', label: '2. Packing Slip' },
+		{ key: 'review', label: '3. Surat Jalan' },
 	]
 })
 const loading = ref(true)
@@ -183,6 +182,29 @@ const displayWarehouse = computed(() => {
 
 const hasRun = computed(() => Boolean(workspace.value?.run))
 const isDispatched = computed(() => workspace.value?.run?.status === 'DISPATCHED')
+const isDone = computed(() => ['READY', 'DISPATCHED'].includes(workspace.value?.run?.status))
+
+// Read-only document rows shown once packing is complete
+const doneRows = computed(() => {
+	if (!isDone.value) return []
+	const rows = [{
+		name: workspace.value?.delivery_note?.name,
+		kind: 'Surat Jalan (DN)',
+		detail: `${workspace.value?.delivery_note?.items?.length || 0} item`,
+		status: isDispatched.value ? 'Submitted' : 'Draft',
+	}]
+	for (const ps of workspace.value?.packing?.submitted || []) {
+		rows.push({
+			name: ps.name,
+			kind: 'Packing Slip',
+			detail: `Koli ${ps.from_case_no || '—'}${ps.total_packages ? ` / ${ps.total_packages}` : ''} · ${ps.items_count || 0} item`,
+			status: 'Submitted',
+		})
+	}
+	return rows
+})
+
+// Item Surat Jalan (DN) utk step 3 ketika packing selesai — read-only.
 
 const statusBadgeClass = computed(() => {
 	if (isDispatched.value) return 'b-done'
@@ -384,7 +406,13 @@ function syncTabToRunState(ws) {
 	if (!ws) return
 	const actionKey = ws.next_action?.key || ws.next_action?.action
 	if (actionKey === 'create_delivery_note') {
-		activeTab.value = 'delivery'
+		if (enablePackingSlip.value) {
+			// Step "Surat Jalan (DN)" hidden: create draft DN automatically, land on packing.
+			activeTab.value = 'packing'
+			autoCreateDraftDn()
+		} else {
+			activeTab.value = 'delivery'
+		}
 	} else if (actionKey === 'pack_all') {
 		activeTab.value = enablePackingSlip.value ? 'packing' : 'review'
 	} else if (actionKey === 'submit_delivery_note' || actionKey === 'done') {
@@ -660,7 +688,12 @@ async function handlePickAll() {
 		await completePicking(workspace.value.run.name, updatedExpected)
 		toast.success('Picking selesai (100% lengkap).')
 		await refresh()
-		activeTab.value = 'delivery'
+		if (enablePackingSlip.value) {
+			await autoCreateDraftDn()
+			activeTab.value = 'packing'
+		} else {
+			activeTab.value = 'delivery'
+		}
 	} catch (e) {
 		toast.error(e.message || 'Gagal menyelesaikan picking.')
 	} finally {
@@ -709,7 +742,12 @@ async function handleFinishPicking(payload = {}) {
 		await completePicking(workspace.value.run.name, expectedModified, shortPickReason)
 		toast.success(shortPickReason ? 'Picking selesai dengan konfirmasi stok kurang.' : 'Picking berhasil diselesaikan.')
 		await refresh()
-		activeTab.value = 'delivery'
+		if (enablePackingSlip.value) {
+			await autoCreateDraftDn()
+			activeTab.value = 'packing'
+		} else {
+			activeTab.value = 'delivery'
+		}
 	} catch (e) {
 		toast.error(e.message || 'Gagal menyelesaikan picking.')
 	} finally {
@@ -756,6 +794,32 @@ async function handleRejectShortPick(reason) {
 		toast.error(e.message || 'Gagal menolak short-pick.')
 	} finally {
 		busy.value = false
+	}
+}
+
+// Draft DN is created in the background; the "Surat Jalan (DN)" step is hidden
+// from the stepper (flow: Picking -> Packing Slip -> Surat Jalan submit).
+const autoDnAttempted = new Set()
+async function autoCreateDraftDn() {
+	const run = workspace.value?.run?.name
+	if (!run || autoDnAttempted.has(run) || workspace.value?.delivery_note?.name) return
+	autoDnAttempted.add(run)
+	try {
+		await createDeliveryNote(run, `auto-${Date.now()}`, {})
+		toast.success('Draft Surat Jalan otomatis dibuat.')
+		await refresh()
+	} catch (e) {
+		toast.error(e.message || 'Gagal membuat draft Surat Jalan otomatis.')
+	}
+}
+
+// "Lanjut ke Surat Jalan": with packing slip flow, land on packing (auto-create draft DN).
+function goAfterPicking() {
+	if (enablePackingSlip.value) {
+		autoCreateDraftDn()
+		activeTab.value = 'packing'
+	} else {
+		activeTab.value = 'delivery'
 	}
 }
 
@@ -1021,6 +1085,18 @@ async function handleSubmitDeliveryNote() {
 							<span>Cetak Packing Slip</span>
 						</button>
 					</div>
+
+					<!-- Step Review/Surat Jalan -> Cetak Surat Jalan -->
+					<div v-else-if="activeTab === 'review' && workspace?.delivery_note?.name" class="single-print-btn">
+						<button
+							type="button"
+							class="btn btn-outline ws-label-print"
+							@click="openPrintDeliveryNote"
+						>
+							<Printer :size="14" :stroke-width="2" />
+							<span>Cetak Surat Jalan</span>
+						</button>
+					</div>
 				</div>
 
 				<!-- Loading state -->
@@ -1180,6 +1256,32 @@ async function handleSubmitDeliveryNote() {
 					</div>
 				</div>
 
+				<!-- CASE 2a: Run done + tab Picking -> read-only summary table.
+				     Tab Packing & Surat Jalan punya tampilan read-only sendiri. -->
+				<div v-else-if="isDone && activeTab === 'picking'" class="panel ws-done-panel">
+					<div class="preview-group-head">
+						<h4>Ringkasan Fulfillment (Read-only)</h4>
+						<span class="preview-count">{{ doneRows.length }} Dokumen</span>
+					</div>
+					<div class="preview-table">
+						<div class="preview-thead">
+							<span>No. Dokumen</span>
+							<span>Jenis</span>
+							<span>Detail</span>
+							<span>Status</span>
+						</div>
+						<div v-for="row in doneRows" :key="row.name" class="preview-trow">
+							<div class="preview-item-info">
+								<strong class="mono">{{ row.name }}</strong>
+							</div>
+							<span>{{ row.kind }}</span>
+							<span>{{ row.detail }}</span>
+							<span><span class="badge b-done">{{ row.status }}</span></span>
+						</div>
+					</div>
+					<p class="preview-empty">Edit tidak tersedia di sini — gunakan halaman Packing gabungan untuk perubahan sebelum DN disubmit.</p>
+				</div>
+
 				<!-- CASE 2: Active Run Exists -> Render Step Panels -->
 				<template v-else-if="workspace?.run">
 					<!-- Step 1: Picking -->
@@ -1194,7 +1296,7 @@ async function handleSubmitDeliveryNote() {
 						@request-approval="handleRequestApproval"
 						@approve-short-pick="handleApproveShortPick"
 						@reject-short-pick="handleRejectShortPick"
-						@go-delivery="activeTab = 'delivery'"
+						@go-delivery="goAfterPicking"
 					/>
 
 					<!-- Step 2: Surat Jalan (Delivery Note) -->
@@ -1210,18 +1312,20 @@ async function handleSubmitDeliveryNote() {
 					/>
 
 					<!-- Step 3: Packing Slip -->
+					<!-- Packing slip flow hides the DN step; back-navigation lands on the submit step -->
 					<PackingPanel
 						v-else-if="activeTab === 'packing' && enablePackingSlip"
 						:workspace="workspace"
 						:busy="busy"
 						@pack-all="handlePackAll"
 						@reset-packing="handleResetPacking"
-						@go-delivery="activeTab = 'delivery'"
+						@go-delivery="activeTab = 'review'"
+						@go-picking="activeTab = 'picking'"
 						@go-review="activeTab = 'review'"
 						@refresh="refresh"
 					/>
 
-					<!-- Step 4: Review & Kirim -->
+					<!-- Step 3 Surat Jalan: panel review (info DN + daftar item + submit) -->
 					<ReviewPanel
 						v-else-if="activeTab === 'review'"
 						ref="reviewPanelRef"
@@ -1229,7 +1333,7 @@ async function handleSubmitDeliveryNote() {
 						:busy="busy"
 						@submit-dn="handleSubmitDeliveryNote"
 						@go-packing="activeTab = 'packing'"
-						@go-delivery="activeTab = 'delivery'"
+						@go-delivery="activeTab = 'review'"
 						@refresh="refresh"
 					/>
 				</template>
@@ -1773,6 +1877,11 @@ async function handleSubmitDeliveryNote() {
 .preview-count {
 	font-size: 12px;
 	color: var(--muted, #64748b);
+}
+
+.ws-done-panel .preview-thead,
+.ws-done-panel .preview-trow {
+	grid-template-columns: 2fr 1fr 1fr 1fr;
 }
 
 .preview-table {

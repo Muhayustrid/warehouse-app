@@ -67,6 +67,7 @@ function emptyProfile() {
 		frozen_print_copies: 1,
 		allow_partial_delivery: 0,
 		enable_packing_slip: 1,
+		skip_packing_dry: 0,
 		short_pick_approval_required: 1,
 		require_all_packed: 1,
 		require_checker_approval: 1,
@@ -90,6 +91,9 @@ function normalizeProfile(profile, company) {
 	}
 	if (p.enable_packing_slip !== undefined) {
 		p.enable_packing_slip = p.enable_packing_slip ? 1 : 0
+	}
+	if (p.skip_packing_dry !== undefined) {
+		p.skip_packing_dry = p.skip_packing_dry ? 1 : 0
 	}
 	return p
 }
@@ -399,6 +403,23 @@ async function save() {
 				</label>
 				<p class="hint">
 					Aktif menggunakan pembagian koli Packing Slip. Jika dinonaktifkan, alur langsung dari Pick List ke pembuatan Surat Jalan & Kirim (tanpa Packing Slip).
+				</p>
+			</div>
+
+			<div class="field ff-policy-field">
+				<label class="ff-check">
+					<input
+						id="ff-skip-packing-dry"
+						v-model="ffProfile.skip_packing_dry"
+						type="checkbox"
+						:true-value="1"
+						:false-value="0"
+						:disabled="ffLocked || !ffCanEdit"
+					/>
+					<span>Skip Packing Slip Dry (Non-Frozen)</span>
+				</label>
+				<p class="hint">
+					Jika aktif, kartu sheet Dry disembunyikan otomatis — hanya Frozen yang diisi manual (packing slip &amp; label). Pengepakan Dry langsung mengikuti Surat Jalan tanpa Packing Slip.
 				</p>
 			</div>
 
