@@ -238,23 +238,23 @@ function splitRow() {
 </template>
 
 <style scoped>
-.sc-cap { display: flex; align-items: center; gap: 8px; background: #ffe94a; border: 1.5px solid #111; border-bottom: 0; padding: 4px 8px; }
-.sc-cust { flex: 1; font-weight: bold; font-size: 12.5px; text-align: left; }
-.sc-dry { white-space: nowrap; font-size: 11px; }
-.sc-blank { width: 48px; height: 14px; background: #fff; border: 1.5px solid #111; display: inline-block; }
-.sc-driver { font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }
-.sc-sect { font-weight: 700; font-size: 12px; margin: 0; background: #ffc000; border: 1px solid #111; border-top: 0; text-align: center; padding: 3px 6px; letter-spacing: 1px; text-transform: uppercase; }
-.sc-tbl { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-.sc-tbl th, .sc-tbl td { border: 1px solid #111; padding: 2px 4px; text-align: left; }
-.sc-tbl th { background: #ffc000; font-size: 10px; font-weight: 700; text-align: center; }
+.sc-cap { display: flex; align-items: center; gap: 8px; background: #dcebf7; border: 1px solid #9dbdd8; border-bottom: 0; border-radius: 10px 10px 0 0; padding: 7px 10px; }
+.sc-cust { flex: 1; font-weight: bold; font-size: 12.5px; text-align: left; color: #1d3a52; }
+.sc-dry { white-space: nowrap; font-size: 11px; color: #35566f; }
+.sc-blank { width: 48px; height: 14px; background: #fff; border: 1px solid #9dbdd8; border-radius: 3px; display: inline-block; }
+.sc-driver { font-size: 10.5px; font-weight: 700; background: #2f5f82; color: #fff; padding: 2px 8px; border-radius: 9px; white-space: nowrap; }
+.sc-sect { font-weight: 700; font-size: 12px; margin: 0; background: #cfe2f2; border: 1px solid #9dbdd8; border-top: 0; border-bottom: 0; text-align: center; padding: 4px 6px; letter-spacing: 1px; text-transform: uppercase; color: #1d3a52; }
+.sc-tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; border: 1px solid #9dbdd8; background: #fff; }
+.sc-tbl th, .sc-tbl td { border: 1px solid #c8dcea; padding: 4px 7px; text-align: left; }
+.sc-tbl th { background: #dcebf7; font-size: 10.5px; font-weight: 700; text-align: center; color: #1d3a52; }
 .sc-tbl th[draggable='true'] { cursor: grab; }
 .sc-tbl tbody tr[draggable='true'] { cursor: grab; }
-.sc-tbl tbody tr[draggable='true']:hover { background: #fff8d6; }
+.sc-tbl tbody tr[draggable='true']:hover { background: #f1f7fb; }
 .sc-tbl .num { text-align: center; }
-.sc-in { width: 100%; border: 0; background: #f8f8f8; text-align: center; font: inherit; padding: 0; }
-.sc-in:focus { background: #fff; outline: 1px solid #111; }
-.sc-in.qty-hl { background: #ffe94a; font-weight: 600; }
-.sc-tbl .tf td { background: #ffe94a; font-weight: bold; }
+.sc-in { width: 100%; border: 0; background: #f6f9fc; text-align: center; font: inherit; padding: 1px 2px; border-radius: 3px; }
+.sc-in:focus { background: #fff; outline: 1px solid #6f9dc0; }
+.sc-in.qty-hl { background: #dcebf7; font-weight: 600; }
+.sc-tbl .tf td { background: #cfe2f2; font-weight: bold; color: #1d3a52; }
 .sc-addrow { margin-top: 6px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .ctx-wrap { position: relative; }
 .ctx-overlay { position: fixed; inset: 0; z-index: 90; }

@@ -112,6 +112,11 @@ const activeFilterCount = computed(() => {
 const packingRef = ref(null)
 // Tab kategori sheet Packing (dry/frozen) — dimiliki di sini, ikut toolbar.
 const sheetTab = ref('dry')
+// skip_packing_dry: hide the Dry sheet tab on the combined packing page.
+const skipPackingDry = computed(() => !!profile.value?.skip_packing_dry)
+watch(skipPackingDry, (skip) => {
+	if (skip && sheetTab.value === 'dry') sheetTab.value = 'frozen'
+}, { immediate: true })
 const packingFilterCount = ref(0)
 
 function onFilterClick() {
@@ -355,7 +360,7 @@ function statusLabel(row) {
 					</template>
 					<!-- Filter: di tab Packing membuka panel filter ala ERPNext pada list Packing Slip -->
 					<div v-if="activeTab === 'packing'" class="sheet-tabs">
-						<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'dry' }" @click="sheetTab = 'dry'">Dry</button>
+						<button v-if="!skipPackingDry" type="button" class="sheet-tab" :class="{ active: sheetTab === 'dry' }" @click="sheetTab = 'dry'">Dry</button>
 						<button type="button" class="sheet-tab" :class="{ active: sheetTab === 'frozen' }" @click="sheetTab = 'frozen'">Frozen</button>
 					</div>
 				<div ref="filterPopoverRef" class="ff-filter-popover-wrap">
@@ -590,15 +595,16 @@ function statusLabel(row) {
 <style scoped>
 /* Tab Dry/Frozen segmented control (toolbar, ikut tab Packing) */
 .sheet-tabs {
-	display: inline-flex; width: max-content;
-	border: 1.5px solid #111; border-radius: 8px; overflow: hidden;
+	display: inline-flex; height: 34px; width: max-content;
+	border: 1px solid #d3dce6; border-radius: 6px; overflow: hidden; background: #fff;
 }
 .sheet-tab {
-	padding: 6px 22px; border: none; background: #fff;
-	font-weight: 600; font-size: 13px; cursor: pointer;
+	padding: 0 18px; border: none; background: #fff;
+	font-weight: 600; font-size: 13px; cursor: pointer; height: 100%;
+	display: inline-flex; align-items: center;
 }
-.sheet-tab + .sheet-tab { border-left: 1.5px solid #111; }
-.sheet-tab.active { background: #ffe94a; }
+.sheet-tab + .sheet-tab { border-left: 1px solid #d3dce6; }
+.sheet-tab.active { background: #dcebf7; color: #1d4a6e; }
 
 .ff-page-container {
 	max-width: 1400px; /* sama lebar dengan halaman Inventory Report (.content) */
@@ -1059,7 +1065,7 @@ function statusLabel(row) {
 	background: var(--brand-dark, #2a567f);
 	border-color: var(--brand-dark, #2a567f);
 }
-/* Tombol Cetak Packing List: kuning ala sheet packing (label tetap hitam-putih) */
+/* Tombol Cetak Packing List: biru soft */
 .ff-packing-btn {
 	display: inline-flex;
 	align-items: center;
@@ -1069,12 +1075,12 @@ function statusLabel(row) {
 	font-size: 13px;
 	font-weight: 600;
 	border-radius: 6px;
-	border: 1.5px solid #111;
-	background: #ffe94a;
-	color: #111;
+	border: 1px solid #7fa8cc;
+	background: #dcebf7;
+	color: #1d4a6e;
 }
 .ff-packing-btn:hover {
-	background: #f5dd35;
+	background: #cfe2f2;
 }
 .ff-manifest-btn:disabled {
 	opacity: 0.6;

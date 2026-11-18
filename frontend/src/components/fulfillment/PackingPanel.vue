@@ -5,14 +5,15 @@ import {
 	ArrowLeft,
 	ArrowRight,
 	ArrowRightLeft,
-	ExternalLink,
 	LoaderCircle,
 	Package,
 	PackageCheck,
 	RotateCcw,
 	X,
 } from 'lucide-vue-next'
-import { fmtDate, fmtDateTime, fmtQty } from '@/lib/format'
+import { fmtQty } from '@/lib/format'
+import { fetchPackingSlip, savePackingSlip } from '@/data/fulfillment'
+import { toast } from '@/lib/toast'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import SheetCard from './SheetCard.vue'
 
@@ -55,7 +56,9 @@ const frozenItems = computed(() => {
 	})
 })
 
-const dryItems = computed(() => {
+// Klasifikasi kategori per item DN (terlepas dari flag skip) — dipakai
+// sheetSlip agar item Dry tetap dikenali meski kartunya disembunyikan.
+const dryItemsAll = computed(() => {
 	const items = deliveryNote.value?.items || []
 	return items.filter((it) => {
 		if (dryItemExceptions.value.has(it.item_code)) return true
@@ -66,17 +69,72 @@ const dryItems = computed(() => {
 	})
 })
 
+const dryItems = computed(() => {
+	// skip_packing_dry: dry sheet is hidden; only Frozen is packed manually.
+	if (props.workspace?.profile?.skip_packing_dry) return []
+	return dryItemsAll.value
+})
+
 const hasDryItems = computed(() => dryItems.value.length > 0)
 const hasFrozenItems = computed(() => frozenItems.value.length > 0)
 
 
+// Kartu sheet di state "Packing Slip Terbit" = sama persis dengan tab Packing
+// gabungan: sheet per SO via fetchPackingSlip, editable selama DN masih draft.
+const slipSheet = ref(null)
+const slipSheetLoading = ref(false)
+
+async function loadSlipSheet() {
+	const soName = props.workspace?.sales_order?.name
+	if (!soName || !isFullyPacked.value) {
+		slipSheet.value = null
+		return
+	}
+	slipSheetLoading.value = true
+	try {
+		slipSheet.value = await fetchPackingSlip(soName)
+	} catch (e) {
+		toast.error(e.message || 'Gagal memuat packing slip.')
+		slipSheet.value = null
+	} finally {
+		slipSheetLoading.value = false
+	}
+}
+
+watch(
+	() => [props.workspace?.sales_order?.name, isFullyPacked.value, submittedSlips.value.length],
+	loadSlipSheet,
+	{ immediate: true },
+)
+
+const slipSheetCats = computed(() => {
+	const lines = slipSheet.value?.lines || []
+	const cats = []
+	if (!props.workspace?.profile?.skip_packing_dry && lines.some((l) => l.category === 'dry')) cats.push('dry')
+	if (lines.some((l) => l.category === 'frozen')) cats.push('frozen')
+	return cats
+})
+
+async function onSubmittedSheetSave(sheet) {
+	try {
+		await savePackingSlip(sheet.name, sheet.lines, sheet.driver || '', sheet.vehicle_no || '')
+		await loadSlipSheet()
+		emit('refresh')
+	} catch (e) {
+		toast.error(e.message || 'Gagal menyimpan packing slip.')
+	}
+}
+
+
 // Sheet-driven allocation: kartu sheet (SheetCard) adalah sumber kebenaran.
 const sheetSlip = computed(() => {
-	const dryNames = new Set(dryItems.value.map((d) => d.name))
+	const dryNames = new Set(dryItemsAll.value.map((d) => d.name))
 	const lines = []
 	const counters = { dry: 0, frozen: 0 }
 	for (const it of deliveryNote.value?.items || []) {
 		const cat = dryNames.has(it.name) ? 'dry' : 'frozen'
+		// skip_packing_dry: item Dry tidak di-pack manual, langsung ikut DN.
+		if (props.workspace?.profile?.skip_packing_dry && cat === 'dry') continue
 		if (!hasDryItems.value && cat === 'dry') continue
 		if (!hasFrozenItems.value && cat === 'frozen') continue
 		lines.push({
@@ -203,9 +261,9 @@ function onConfirmReset() {
 			<div class="ehint">
 				Selesaikan picking dan buat draft Surat Jalan (Delivery Note) terlebih dahulu sebelum mengemas barang ke Packing Slip.
 			</div>
-			<button type="button" class="btn btn-sm btn-outline mt-2" @click="$emit('go-delivery')">
+			<button type="button" class="btn btn-sm btn-outline mt-2" @click="$emit('go-picking')">
 				<ArrowLeft :size="14" :stroke-width="2" />
-				<span>Kembali ke Tahap Surat Jalan</span>
+				<span>Kembali ke Picking List</span>
 			</button>
 		</div>
 
@@ -274,64 +332,28 @@ function onConfirmReset() {
 				</div>
 
 				<div class="slips-list">
-					<div
-						v-for="slip in submittedSlips"
-						:key="slip.name"
-						class="slip-item-card"
-					>
-						<div class="slip-item-header">
-							<div class="slip-title-row">
-								<PackageCheck :size="17" :stroke-width="2" class="slip-icon" />
-								<span class="slip-name mono font-bold">{{ slip.name }}</span>
-								<span v-if="slip.from_case_no" class="badge b-koli">
-									Koli {{ slip.from_case_no }} / {{ slip.total_packages || submittedSlips.length }}
-								</span>
-								<span class="badge b-done">Submitted</span>
-							</div>
-
-							<a
-								class="slip-audit-link"
-								:href="`/app/packing-slip/${encodeURIComponent(slip.name)}`"
-								target="_blank"
-								rel="noopener"
-								title="Buka dokumen di Desk"
-							>
-								<span>Buka di Desk</span>
-								<ExternalLink :size="12" :stroke-width="2" />
-							</a>
-						</div>
-
-						<div class="slip-meta-grid">
-							<div class="slip-meta-item">
-								<span class="sm-label">Tanggal Kemas</span>
-								<span class="sm-val">{{ fmtDate(slip.creation || slip.modified) || '—' }}</span>
-							</div>
-							<div class="slip-meta-item">
-								<span class="sm-label">Isi Kemasan</span>
-								<span class="sm-val">{{ slip.items_count || 1 }} Item ({{ fmtQty(slip.items?.reduce((a, b) => a + Number(b.qty || 0), 0) || 0) }} Unit)</span>
-							</div>
-							<div class="slip-meta-item">
-								<span class="sm-label">Nomor Paket</span>
-								<span class="sm-val">Paket #{{ slip.from_case_no || 1 }}</span>
-							</div>
-						</div>
-
-						<!-- Items breakdown in this package -->
-						<div v-if="slip.items?.length" class="slip-items-summary">
-							<span v-for="it in slip.items" :key="it.item_code" class="slip-item-pill">
-								{{ it.item_name || it.item_code }} ({{ fmtQty(it.qty) }} pcs)
-							</span>
-						</div>
+					<div v-if="slipSheetLoading" class="slip-loading">
+						<LoaderCircle :size="20" :stroke-width="2" class="spin" />
+						<span>Memuat packing slip…</span>
 					</div>
+					<template v-else-if="slipSheet && slipSheetCats.length">
+						<SheetCard
+							v-for="cat in slipSheetCats"
+							:key="cat"
+							:slip="slipSheet"
+							:sheet-tab="cat"
+							@save="onSubmittedSheetSave"
+						/>
+					</template>
 				</div>
 			</div>
 
 			<!-- Action Footer (Single source of action buttons) -->
 			<div class="panel-foot packing-footer">
 				<div class="footer-left">
-					<button type="button" class="btn btn-outline btn-sm" @click="$emit('go-delivery')">
+					<button type="button" class="btn btn-outline btn-sm" @click="$emit('go-picking')">
 						<ArrowLeft :size="14" :stroke-width="2" />
-						<span>Kembali ke Surat Jalan</span>
+						<span>Kembali ke Picking List</span>
 					</button>
 				</div>
 
@@ -352,7 +374,7 @@ function onConfirmReset() {
 						:class="isFullyPacked ? 'btn btn-primary' : 'btn btn-outline'"
 						@click="$emit('go-review')"
 					>
-						<span>Lanjut ke Review & Kirim</span>
+						<span>Lanjut ke Surat Jalan</span>
 						<ArrowRight :size="15" :stroke-width="2" />
 					</button>
 				</div>
@@ -1004,23 +1026,8 @@ function onConfirmReset() {
 	font-weight: 700;
 }
 
-.slip-items-summary {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	margin-top: 4px;
-}
-
-.slip-item-pill {
-	display: inline-flex;
-	align-items: center;
-	font-size: 11.5px;
-	padding: 2px 8px;
-	background: #ffffff;
-	border: 1px solid var(--line, #e2e8f0);
-	border-radius: 4px;
-	color: #334155;
-}
+.slip-sheet-wrap { margin-top: 6px; }
+.slip-sheet-wrap :deep(.sc-cap) { border-radius: 8px 8px 0 0; }
 
 /* Slips Card */
 .slips-head {
@@ -1068,9 +1075,26 @@ function onConfirmReset() {
 
 .slips-list {
 	padding: 16px 20px;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+	gap: 12px;
+	align-items: start;
+}
+
+.slip-loading {
 	display: flex;
-	flex-direction: column;
-	gap: 10px;
+	align-items: center;
+	gap: 8px;
+	color: #64748b;
+	font-size: 13px;
+}
+
+.slip-loading .spin {
+	animation: pp-spin 0.9s linear infinite;
+}
+
+@keyframes pp-spin {
+	to { transform: rotate(360deg); }
 }
 
 .slip-item-card {

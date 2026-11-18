@@ -465,12 +465,12 @@ function fmtQty(value) {
 	const n = Number(value) || 0
 	return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100)
 }
-</script>
-
 
 const sheetTab = computed({ get: () => props.sheetTab, set: (v) => emit('sheet-tab', v) })
 
 defineExpose({ toggleFilter, printSheet })
+</script>
+
 
 <template>
 	<div class="ps-page">
@@ -515,7 +515,7 @@ defineExpose({ toggleFilter, printSheet })
 
 			<!-- Driver: default global + tambah driver baru, dua kelompok rapi -->
 			<div class="ps-driver-row">
-				<div class="drv-main">
+				<div class="drv-group">
 					<label>
 						<span>Driver</span>
 						<input v-model="driver" class="input input-sm" type="text" placeholder="Nama driver" />
@@ -529,13 +529,11 @@ defineExpose({ toggleFilter, printSheet })
 					</button>
 					<span class="muted">Berlaku utk semua packing {{ fromDate }}</span>
 				</div>
-				<div class="drv-extra">
-					<span class="drv-sep"></span>
-					<span class="drv-add">
-						<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver baru" />
-						<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil baru" @keyup.enter="addDriver" />
-						<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
-					</span>
+				<div class="drv-group drv-new">
+					<span class="drv-new-label">Tambah driver:</span>
+					<input v-model="newDriver" class="input input-sm" type="text" placeholder="Nama driver baru" />
+					<input v-model="newVehicle" class="input input-sm" type="text" placeholder="No. mobil baru" @keyup.enter="addDriver" />
+					<button type="button" class="btn btn-sm" @click="addDriver">+ Driver</button>
 				</div>
 			</div>
 
@@ -875,11 +873,13 @@ defineExpose({ toggleFilter, printSheet })
 .ps-paper-head { background: #f7a600; color: #fff; padding: 14px; text-align: center; }
 .ps-paper-head h1 { font-size: 26px; letter-spacing: 0.12em; margin: 0 0 6px; font-weight: 800; }
 .ps-to { font-size: 14px; margin: 2px 0; }
-.ps-driver-row { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid #eee; flex-wrap: wrap; }
-.drv-main, .drv-extra { display: flex; gap: 10px; align-items: center; flex-wrap: nowrap; }
-.drv-main .muted { white-space: nowrap; }
-.ps-driver-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
-.ps-driver-row input { width: 180px; }
+.ps-driver-row { display: flex; gap: 10px; align-items: center; padding: 8px 14px; border-bottom: 1px solid #eee; flex-wrap: nowrap; white-space: nowrap; }
+.drv-group { display: flex; gap: 6px; align-items: center; }
+.ps-driver-row label { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
+.drv-group .muted { white-space: nowrap; font-size: 12px; }
+.drv-new { padding-left: 10px; border-left: 1px solid #e5e7eb; }
+.drv-new-label { font-size: 12px; font-weight: 600; color: #64748b; white-space: nowrap; }
+.ps-driver-row .input { width: 120px; min-width: 0; }
 .ps-no { margin-left: auto; }
 .ps-cols { display: flex; gap: 12px; padding: 14px; }
 .ps-col { flex: 1; min-width: 0; overflow-x: auto; }
@@ -919,7 +919,6 @@ defineExpose({ toggleFilter, printSheet })
 .sc-blank { width: 48px; height: 14px; background: #fff; border: 1.5px solid #111; display: inline-block; }
 .sc-driver { margin-left: auto; font-size: 10.5px; font-weight: 700; background: #111; color: #fff; padding: 1px 7px; border-radius: 9px; white-space: nowrap; }
 .sheet-card.dragging { opacity: 0.5; }
-.drv-add { display: flex; gap: 6px; align-items: center; }
 .sc-tbl { width: 100%; border-collapse: collapse; font-size: 10.5px; }
 .sc-tbl th, .sc-tbl td { border: 1px solid #111; padding: 2px 4px; text-align: left; }
 .sc-tbl th { background: #FFC000; font-size: 10px; font-weight: 700; text-align: center; }
@@ -930,9 +929,6 @@ defineExpose({ toggleFilter, printSheet })
 .sc-tbl .tf td { background: #ffe94a; font-weight: bold; }
 
 /* Section per driver + tabel DRY/FROZEN + add-row inline */
-.drv-sep { width: 1px; height: 26px; background: #d0d5dd; margin: 0 4px; }
-.drv-add { display: inline-flex; gap: 6px; align-items: center; }
-.drv-add .input { width: 160px; }
 .drv-section { margin-bottom: 18px; }
 .drv-section.drop-hot { outline: 2px dashed #2b6cb0; outline-offset: 4px; border-radius: 8px; }
 .drv-head { display: inline-flex; align-items: center; gap: 10px; border: 1.5px dashed #111; background: #fffdf2; padding: 6px 12px; border-radius: 6px; margin-bottom: 10px; cursor: default; }
