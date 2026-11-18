@@ -65,6 +65,7 @@ def get_run_workspace(run: str) -> dict:
 			"frozen_parent_warehouse": profile.frozen_parent_warehouse,
 			"dry_item_exceptions": sorted(list(resolve_dry_exceptions(profile))),
 			"enable_packing_slip": 1 if getattr(profile, "enable_packing_slip", None) is None else int(profile.enable_packing_slip),
+			"skip_packing_dry": int(getattr(profile, "skip_packing_dry", 0) or 0),
 		},
 		"groups": groups,
 		"short_pick": {"rows": short, "fingerprint": fingerprint, "blocker": blocker},
@@ -209,7 +210,7 @@ def _delivery_projection(name: str | None) -> tuple[dict | None, dict]:
 		slip_items = frappe.get_all(
 			"Packing Slip Item",
 			filters={"parent": row.name},
-			fields=["item_code", "item_name", "qty"],
+			fields=["item_code", "item_name", "qty", "stock_uom"],
 			order_by="idx asc",
 		)
 		submitted_slips.append({

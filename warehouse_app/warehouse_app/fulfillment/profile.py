@@ -25,6 +25,7 @@ def get_profile(company: str):
 			"frozen_display_name",
 			"dry_item_exceptions",
 			"enable_packing_slip",
+			"skip_packing_dry",
 		],
 		limit_page_length=1,
 	)

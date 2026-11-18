@@ -16,6 +16,27 @@ from warehouse_app.warehouse_app.fulfillment.short_pick import finish_blocker, s
 from warehouse_app.warehouse_app.fulfillment.workspace import get_run_workspace
 
 RUN = "Warehouse Fulfillment Run"
+PROFILE = "Warehouse Fulfillment Profile"
+
+
+def _mark_dry_items_packed(dn, run_doc) -> None:
+	"""skip_packing_dry: dry items ship with the DN without manual packing,
+	so their packed_qty is set = qty (otherwise fully_packed never turns true)."""
+	from warehouse_app.warehouse_app.fulfillment.dispatch import _dry_item_codes
+
+	profile = None
+	if getattr(run_doc, "profile", None) and frappe.db.exists(PROFILE, run_doc.profile):
+		profile = frappe.get_doc(PROFILE, run_doc.profile)
+	elif not run_doc.policy_snapshot:
+		return
+	codes = _dry_item_codes(dn, profile)
+	changed = False
+	for item in dn.items:
+		if item.item_code in codes and flt(item.packed_qty) < flt(item.qty):
+			frappe.db.set_value("Delivery Note Item", item.name, "packed_qty", flt(item.qty), update_modified=False)
+			changed = True
+	if changed:
+		dn.reload()
 
 
 def distribute_items_across_packages(items: list[dict], num_packages: int) -> list[list[dict]]:
@@ -221,6 +242,7 @@ def pack_all(
 	)
 	if existing_submitted_ps:
 		dn.reload()
+		_mark_dry_items_packed(dn, run_doc)
 		if any(flt(item.packed_qty) < flt(item.qty) for item in dn.items):
 			for ps_name in existing_submitted_ps:
 				ps_doc = frappe.get_doc("Packing Slip", ps_name)
@@ -242,6 +264,17 @@ def pack_all(
 	)
 	num_dry = 0
 	num_frozen = 0
+	# skip_packing_dry: only frozen packing slips are created; dry slips are dropped.
+	skip_dry = False
+	if getattr(run_doc, "profile", None) and frappe.db.exists(PROFILE, run_doc.profile):
+		skip_dry = bool(frappe.db.get_value(PROFILE, run_doc.profile, "skip_packing_dry"))
+	elif run_doc.policy_snapshot:
+		try:
+			skip_dry = bool(json.loads(run_doc.policy_snapshot).get("skip_packing_dry"))
+		except Exception:
+			pass
+	if skip_dry and isinstance(custom_slips, list):
+		custom_slips = [s for s in custom_slips if "frozen" in (s.get("category") or "").lower()]
 	if isinstance(custom_slips, str):
 		try:
 			custom_slips = json.loads(custom_slips)
@@ -390,6 +423,8 @@ def pack_all(
 		)
 
 	dn.reload()
+	if skip_dry:
+		_mark_dry_items_packed(dn, run_doc)
 	submitted_slips = frappe.get_all(
 		"Packing Slip",
 		filters={"delivery_note": dn.name, "docstatus": 1},

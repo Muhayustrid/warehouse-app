@@ -30,6 +30,25 @@ RUN = "Warehouse Fulfillment Run"
 REQUEST_TYPE = "SubmitDeliveryNote"
 
 
+def _dry_item_codes(dn, profile) -> set[str]:
+	"""Item codes classified as Dry (not Frozen) for a DN, when skip_packing_dry is on."""
+	from warehouse_app.warehouse_app.fulfillment.profile import resolve_dry_exceptions, resolve_frozen
+
+	frozen = resolve_frozen(profile)
+	if frozen is None:
+		return set()
+	dry_exc = resolve_dry_exceptions(profile)
+	codes = set()
+	for item in dn.items:
+		if item.item_code in dry_exc:
+			codes.add(item.item_code)
+			continue
+		group = getattr(item, "item_group", None) or frappe.db.get_value("Item", item.item_code, "item_group")
+		if group not in frozen:
+			codes.add(item.item_code)
+	return codes
+
+
 def submit_delivery_note(
 	run: str,
 	idempotency_key: str,
@@ -110,11 +129,13 @@ def submit_delivery_note(
 
 	enable_packing_slip = True
 	require_all_packed = True
+	skip_dry = False
 	if profile:
 		if getattr(profile, "enable_packing_slip", None) is not None:
 			enable_packing_slip = bool(profile.enable_packing_slip)
 		if getattr(profile, "require_all_packed", None) is not None:
 			require_all_packed = bool(profile.require_all_packed)
+		skip_dry = bool(getattr(profile, "skip_packing_dry", 0))
 	elif run_doc.policy_snapshot:
 		try:
 			snap = json.loads(run_doc.policy_snapshot)
@@ -122,11 +143,18 @@ def submit_delivery_note(
 				enable_packing_slip = bool(snap.get("enable_packing_slip"))
 			if "require_all_packed" in snap:
 				require_all_packed = bool(snap.get("require_all_packed"))
+			skip_dry = bool(snap.get("skip_packing_dry"))
 		except Exception:
 			pass
 
+	# skip_packing_dry: only Frozen items must be packed before submit.
+	dry_items: set[str] = set()
+	if enable_packing_slip and require_all_packed and skip_dry:
+		dry_items = _dry_item_codes(dn, profile)
+
 	if enable_packing_slip and require_all_packed:
-		if not dn.items or not all(flt(item.packed_qty) >= flt(item.qty) for item in dn.items):
+		check_items = [it for it in dn.items if it.item_code not in dry_items] if skip_dry else dn.items
+		if check_items and not all(flt(item.packed_qty) >= flt(item.qty) for item in check_items):
 			submitted_slips = frappe.get_all(
 				"Packing Slip",
 				filters={"delivery_note": dn.name, "docstatus": 1},
@@ -138,7 +166,8 @@ def submit_delivery_note(
 					ps_doc.update_prevdoc_status()
 				dn.reload()
 
-			if not dn.items or not all(flt(item.packed_qty) >= flt(item.qty) for item in dn.items):
+			check_items = [it for it in dn.items if it.item_code not in dry_items] if skip_dry else dn.items
+			if check_items and not all(flt(item.packed_qty) >= flt(item.qty) for item in check_items):
 				raise FulfillmentError(
 					"DN_NOT_FULLY_PACKED",
 					"All Delivery Note items must be packed before submit.",

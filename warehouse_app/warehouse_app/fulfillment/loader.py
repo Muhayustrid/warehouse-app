@@ -298,6 +298,7 @@ def _profile_payload(profile, frozen: set[str] | None) -> dict:
 		"frozen_display_name": (profile.get("frozen_display_name") if profile else None)
 		or "Frozen",
 		"enable_packing_slip": 1 if val is None else int(val),
+		"skip_packing_dry": int(profile.get("skip_packing_dry") or 0) if profile else 0,
 	}
 
 

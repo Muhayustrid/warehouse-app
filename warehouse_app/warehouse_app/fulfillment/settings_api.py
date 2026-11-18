@@ -29,6 +29,7 @@ EDITABLE_FIELDS = (
 	"frozen_print_copies",
 	"allow_partial_delivery",
 	"enable_packing_slip",
+	"skip_packing_dry",
 	"short_pick_approval_required",
 	"require_all_packed",
 	"require_checker_approval",

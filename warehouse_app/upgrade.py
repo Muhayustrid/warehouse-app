@@ -1574,6 +1574,8 @@ def ensure_profile_dry_exceptions():
             changed = True
         if not frappe.db.has_column("Warehouse Fulfillment Profile", "enable_packing_slip"):
             frappe.db.sql("ALTER TABLE `tabWarehouse Fulfillment Profile` ADD COLUMN `enable_packing_slip` INT(1) NOT NULL DEFAULT 1")
+        if not frappe.db.has_column("Warehouse Fulfillment Profile", "skip_packing_dry"):
+            frappe.db.sql("ALTER TABLE `tabWarehouse Fulfillment Profile` ADD COLUMN `skip_packing_dry` INT(1) NOT NULL DEFAULT 0")
             changed = True
         frappe.clear_cache(doctype="Warehouse Fulfillment Profile")
 

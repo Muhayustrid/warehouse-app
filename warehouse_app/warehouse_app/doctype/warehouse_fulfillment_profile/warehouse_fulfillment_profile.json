@@ -28,6 +28,7 @@
   "allow_draft_print",
   "policies_section",
   "enable_packing_slip",
+  "skip_packing_dry",
   "allow_partial_delivery",
   "short_pick_approval_required",
   "require_all_packed",
@@ -53,6 +54,12 @@
    "reqd": 1,
    "unique": 1
   },
+   {
+    "default": "0",
+    "fieldname": "skip_packing_dry",
+    "fieldtype": "Check",
+    "label": "Skip Packing Slip Dry"
+   },
   {
    "default": "0",
    "fieldname": "enabled",

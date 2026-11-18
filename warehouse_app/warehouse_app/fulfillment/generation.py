@@ -106,6 +106,7 @@ def profile_policy_snapshot(profile: Mapping) -> dict:
 		"short_pick_approval_required": profile.get("short_pick_approval_required") or 0,
 		"require_all_packed": profile.get("require_all_packed") or 0,
 		"enable_packing_slip": 1 if profile.get("enable_packing_slip") is None else (profile.get("enable_packing_slip") or 0),
+		"skip_packing_dry": profile.get("skip_packing_dry") or 0,
 		"require_checker_approval": profile.get("require_checker_approval") or 0,
 		"allow_cross_group_packing": profile.get("allow_cross_group_packing") or 0,
 		"dry_parent_warehouse": profile.get("dry_parent_warehouse"),
